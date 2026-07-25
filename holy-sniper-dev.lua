@@ -129369,6 +129369,10 @@ HOLY_GUILD_RUNTIME = {
     UpdatingUI = false,
     RefreshQueued = false,
     LastSnapshotAt = 0,
+
+    KickConfirmUserId = nil,
+    KickConfirmUsername = nil,
+    KickConfirmExpiresAt = 0,
 }
 
 HOLY_GUILD_UI = {}
@@ -132266,6 +132270,11 @@ function HolyGuildRefreshMemberList()
 
         row.MouseButton1Click:Connect(function()
 
+            local kickConfirmationCancelled =
+                HolyGuildCancelKickConfirmation(
+                    false
+                )
+
             HOLY_GUILD_STATE.SelectedMemberUserId =
                 member.UserId
 
@@ -132281,7 +132290,15 @@ function HolyGuildRefreshMemberList()
             HolyGuildRefreshMemberList()
             HolyGuildRefreshSelectedMemberPanel()
             HolyGuildRefreshRoleAction()
+
+            if kickConfirmationCancelled == true then
+
+                HolyGuildSetStatus(
+                    "Kick confirmation cancelled."
+                )
+            end
         end)
+
     end
 
     HolyGuildSetInfoPanelHeight(
@@ -135490,6 +135507,32 @@ function HolyGuildRefreshContributionList()
     HolyGuildRefreshContestProgressPanel()
 end
 
+function HolyGuildCancelKickConfirmation(
+    refreshActions
+)
+    local hadConfirmation =
+        HOLY_GUILD_RUNTIME.KickConfirmUserId
+        ~= nil
+
+    HOLY_GUILD_RUNTIME.KickConfirmUserId =
+        nil
+
+    HOLY_GUILD_RUNTIME.KickConfirmUsername =
+        nil
+
+    HOLY_GUILD_RUNTIME.KickConfirmExpiresAt =
+        0
+
+    if refreshActions ~= false
+    and type(HolyGuildRefreshRoleAction)
+        == "function" then
+
+        HolyGuildRefreshRoleAction()
+    end
+
+    return hadConfirmation
+end
+
 function HolyGuildRefreshRoleAction()
 
     local actions =
@@ -135499,11 +135542,30 @@ function HolyGuildRefreshRoleAction()
         return
     end
 
+    if HOLY_GUILD_RUNTIME.KickConfirmUserId
+        ~= nil
+    and os.clock()
+        > (
+            tonumber(
+                HOLY_GUILD_RUNTIME.KickConfirmExpiresAt
+            )
+            or 0
+        ) then
+
+        HolyGuildCancelKickConfirmation(
+            false
+        )
+    end
+
     local selected =
         HolyGuildGetSelectedMember()
 
     local localMember =
         HolyGuildGetLocalMember()
+
+    local busy =
+        HOLY_GUILD_RUNTIME.Busy.Action
+        == true
 
     local text =
         "Select a Member"
@@ -135551,8 +135613,39 @@ function HolyGuildRefreshRoleAction()
 
     allowed =
         allowed == true
-        and HOLY_GUILD_RUNTIME.Busy.Action
-            ~= true
+        and busy ~= true
+
+    local kickAllowed =
+        type(selected) == "table"
+        and type(localMember) == "table"
+        and localMember.Role == "Owner"
+        and selected.UserId
+            ~= LocalPlayer.UserId
+        and selected.Role ~= "Owner"
+        and busy ~= true
+
+    local kickText =
+        "Kick Member"
+
+    local kickConfirming =
+        kickAllowed == true
+        and HOLY_GUILD_RUNTIME.KickConfirmUserId
+            == selected.UserId
+        and HOLY_GUILD_RUNTIME.KickConfirmUsername
+            == selected.Username
+        and os.clock()
+            <= (
+                tonumber(
+                    HOLY_GUILD_RUNTIME.KickConfirmExpiresAt
+                )
+                or 0
+            )
+
+    if kickConfirming == true then
+
+        kickText =
+            "Confirm Kick"
+    end
 
     pcall(function()
 
@@ -135566,12 +135659,21 @@ function HolyGuildRefreshRoleAction()
             allowed ~= true
         )
 
+        actions:SetText(
+            "KickAction",
+            kickText
+        )
+
+        actions:SetDisabled(
+            "KickAction",
+            kickAllowed ~= true
+        )
+
         actions:SetDisabled(
             "Refresh",
             HOLY_GUILD_RUNTIME.Busy.Snapshot
                 == true
-            or HOLY_GUILD_RUNTIME.Busy.Action
-                == true
+            or busy == true
         )
     end)
 end
@@ -136454,11 +136556,249 @@ function HolyGuildApplyIcon()
     end)
 end
 
+function HolyGuildRunKickAction()
+
+    if HOLY_GUILD_RUNTIME.Busy.Action == true then
+        return
+    end
+
+    local selected =
+        HolyGuildGetSelectedMember()
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    if type(selected) ~= "table"
+    or type(localMember) ~= "table"
+    or localMember.Role ~= "Owner"
+    or selected.UserId
+        == LocalPlayer.UserId
+    or selected.Role == "Owner" then
+
+        HolyGuildCancelKickConfirmation(
+            true
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            "This member cannot be kicked by the current account.",
+            4
+        )
+
+        return
+    end
+
+    local userId =
+        tonumber(
+            selected.UserId
+        )
+
+    local username =
+        tostring(
+            selected.Username
+        )
+
+    local confirmationReady =
+        HOLY_GUILD_RUNTIME.KickConfirmUserId
+            == userId
+        and HOLY_GUILD_RUNTIME.KickConfirmUsername
+            == username
+        and os.clock()
+            <= (
+                tonumber(
+                    HOLY_GUILD_RUNTIME.KickConfirmExpiresAt
+                )
+                or 0
+            )
+
+    if confirmationReady ~= true then
+
+        local confirmationExpiresAt =
+            os.clock()
+            + 5
+
+        local confirmationMessage =
+            "Press Confirm Kick within 5 seconds to kick @"
+            .. username
+            .. "."
+
+        HOLY_GUILD_RUNTIME.KickConfirmUserId =
+            userId
+
+        HOLY_GUILD_RUNTIME.KickConfirmUsername =
+            username
+
+        HOLY_GUILD_RUNTIME.KickConfirmExpiresAt =
+            confirmationExpiresAt
+
+        HolyGuildSetStatus(
+            confirmationMessage
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            confirmationMessage,
+            5
+        )
+
+        task.delay(
+            5.1,
+            function()
+
+                if HOLY_GUILD_RUNTIME.KickConfirmUserId
+                    == userId
+                and HOLY_GUILD_RUNTIME.KickConfirmUsername
+                    == username
+                and HOLY_GUILD_RUNTIME.KickConfirmExpiresAt
+                    == confirmationExpiresAt
+                and os.clock()
+                    >= confirmationExpiresAt then
+
+                    HolyGuildCancelKickConfirmation(
+                        false
+                    )
+
+                    if HOLY_GUILD_STATE.Status
+                        == confirmationMessage then
+
+                        HolyGuildSetStatus(
+                            "Kick confirmation expired."
+                        )
+
+                    else
+
+                        HolyGuildRefreshRoleAction()
+                    end
+                end
+            end
+        )
+
+        return
+    end
+
+    HolyGuildCancelKickConfirmation(
+        false
+    )
+
+    HOLY_GUILD_RUNTIME.Busy.Action =
+        true
+
+    HolyGuildSetStatus(
+        "Kicking @"
+        .. username
+        .. "..."
+    )
+
+    task.spawn(function()
+
+        local ok,
+            first,
+            second =
+            HolyGuildCall(
+                "Kick",
+                userId
+            )
+
+        local accepted =
+            ok == true
+            and HolyGuildResultAccepted(
+                first,
+                second
+            )
+
+        local confirmed =
+            false
+
+        if accepted == true then
+
+            for _ = 1, 10 do
+
+                task.wait(
+                    0.35
+                )
+
+                local snapshotRefreshed =
+                    HolyGuildRefreshSnapshot(
+                        true
+                    )
+
+                if snapshotRefreshed == true
+                and HolyGuildGetMember(
+                    userId
+                ) == nil then
+
+                    confirmed =
+                        true
+
+                    break
+                end
+            end
+        end
+
+        if confirmed == true then
+
+            HOLY_GUILD_STATE.SelectedMemberUserId =
+                nil
+
+            HOLY_GUILD_STATE.OnlineMembers[
+                userId
+            ] =
+                nil
+
+            HolyGuildRefreshUI()
+
+            HolyGuildRefreshPresence(
+                true
+            )
+
+            HolyGuildRefreshLeaderboard(
+                true
+            )
+        end
+
+        HOLY_GUILD_RUNTIME.Busy.Action =
+            false
+
+        local message =
+            confirmed
+            and (
+                "@"
+                .. username
+                .. " was kicked from the guild."
+            )
+            or (
+                accepted
+                and "Kick request was sent, but removal has not been confirmed yet."
+                or HolyGuildResultMessage(
+                    first,
+                    second,
+                    "Kick request was rejected"
+                )
+            )
+
+        HolyGuildSetStatus(
+            message
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            message,
+            confirmed
+            and 3
+            or 5
+        )
+    end)
+end
+
 function HolyGuildRunRoleAction()
 
     if HOLY_GUILD_RUNTIME.Busy.Action == true then
         return
     end
+
+    HolyGuildCancelKickConfirmation(
+        false
+    )
 
     local selected =
         HolyGuildGetSelectedMember()
@@ -151024,13 +151364,30 @@ HOLY_GUILD_UI.MemberActions =
 
                 {
                     Id =
+                        "KickAction",
+
+                    Text =
+                        "Kick Member",
+
+                    Tooltip =
+                        "Requires two clicks within five seconds, then confirms that the member disappeared from Guild.",
+
+                    Callback =
+                        function()
+
+                            HolyGuildRunKickAction()
+                        end,
+                },
+
+                {
+                    Id =
                         "Refresh",
 
                     Text =
                         "Refresh",
 
                     Tooltip =
-                        "Reloads the selected member from GetMyGuild.",
+                        "Reloads the selected member from Guild.",
 
                     Callback =
                         function()
