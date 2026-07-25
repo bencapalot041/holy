@@ -129304,6 +129304,3404 @@ HOLY_MAIL_RUNTIME.Stop =
 
 
 --==================================================
+-- [3.95] GUILD CORE
+--==================================================
+
+if type(HOLY_GUILD_RUNTIME) == "table" then
+
+    HOLY_GUILD_RUNTIME.Running =
+        false
+
+    for _, connection in pairs(
+        HOLY_GUILD_RUNTIME.Connections
+        or {}
+    ) do
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+end
+
+HOLY_GUILD_STATE = {
+    Page = "Overview",
+    MemberSort = "Role",
+
+    Snapshot = nil,
+    Competition = nil,
+    Leaderboard = {},
+
+    OnlineMembers = {},
+    NameCache = {},
+
+    SelectedMemberUserId = nil,
+    SelectedGuildId = nil,
+    InviteUserId = nil,
+
+    IconDraft = "",
+    IconDraftDirty = false,
+
+    Status = "Loading guild data...",
+}
+
+HOLY_GUILD_RUNTIME = {
+    Running = false,
+    Token = 0,
+
+    Networking = nil,
+    Connections = {},
+
+    Busy = {
+        Snapshot = false,
+        Presence = false,
+        Competition = false,
+        Leaderboard = false,
+        Action = false,
+        All = false,
+    },
+
+    NameResolving = {},
+    MemberDisplayMap = {},
+    PlayerDisplayMap = {},
+    GuildDisplayMap = {},
+
+    UpdatingUI = false,
+    RefreshQueued = false,
+    LastSnapshotAt = 0,
+}
+
+HOLY_GUILD_UI = {}
+
+function HolyGuildKey(value)
+
+    return tostring(
+        value
+        or ""
+    )
+        :lower()
+        :gsub(
+            "[^%w]",
+            ""
+        )
+end
+
+function HolyGuildField(source, aliases, fallback)
+
+    if type(source) ~= "table" then
+        return fallback
+    end
+
+    for _, alias in ipairs(
+        aliases
+        or {}
+    ) do
+
+        if source[alias] ~= nil then
+            return source[alias]
+        end
+    end
+
+    local wanted = {}
+
+    for _, alias in ipairs(
+        aliases
+        or {}
+    ) do
+
+        wanted[
+            HolyGuildKey(alias)
+        ] = true
+    end
+
+    for key, value in pairs(source) do
+
+        if wanted[
+            HolyGuildKey(key)
+        ] == true then
+
+            return value
+        end
+    end
+
+    return fallback
+end
+
+function HolyGuildSingleValue(value)
+
+    if type(value) ~= "table" then
+
+        return HolyCleanText(
+            value
+        )
+    end
+
+    for key, enabled in pairs(value) do
+
+        if enabled == true then
+
+            return HolyCleanText(
+                key
+            )
+        end
+    end
+
+    return HolyCleanText(
+        value[1]
+    )
+end
+
+function HolyGuildFirstTable(...)
+
+    local packed =
+        table.pack(...)
+
+    for index = 1, packed.n do
+
+        if type(packed[index]) == "table" then
+            return packed[index]
+        end
+    end
+
+    return nil
+end
+
+function HolyGuildSnapshotRoot(snapshot)
+
+    if type(snapshot) ~= "table" then
+        return nil
+    end
+
+    local directGuild =
+        HolyGuildField(
+            snapshot,
+            {
+                "Guild",
+                "MyGuild",
+                "GuildData",
+            }
+        )
+
+    if type(directGuild) == "table" then
+        return directGuild
+    end
+
+    local data =
+        HolyGuildField(
+            snapshot,
+            {
+                "Data",
+                "Result",
+            }
+        )
+
+    if type(data) == "table" then
+
+        local nestedGuild =
+            HolyGuildField(
+                data,
+                {
+                    "Guild",
+                    "MyGuild",
+                    "GuildData",
+                }
+            )
+
+        if type(nestedGuild) == "table" then
+            return nestedGuild
+        end
+
+        if HolyGuildField(
+            data,
+            {
+                "Members",
+                "GuildMembers",
+                "GuildId",
+                "Id",
+            }
+        ) ~= nil then
+
+            return data
+        end
+    end
+
+    return snapshot
+end
+
+function HolyGuildGetNetworking()
+
+    if type(HOLY_GUILD_RUNTIME.Networking) == "table" then
+
+        return HOLY_GUILD_RUNTIME.Networking
+    end
+
+    local sharedModules =
+        ReplicatedStorage:FindFirstChild(
+            "SharedModules"
+        )
+
+    local networkingModule =
+        sharedModules
+        and sharedModules:FindFirstChild(
+            "Networking"
+        )
+
+    if typeof(networkingModule) ~= "Instance"
+    or networkingModule:IsA("ModuleScript") ~= true then
+
+        return nil,
+            "SharedModules.Networking was not found"
+    end
+
+    local ok,
+        networking =
+        pcall(
+            require,
+            networkingModule
+        )
+
+    if ok ~= true
+    or type(networking) ~= "table" then
+
+        return nil,
+            tostring(
+                networking
+                or "Networking could not be loaded"
+            )
+    end
+
+    HOLY_GUILD_RUNTIME.Networking =
+        networking
+
+    return networking
+end
+
+function HolyGuildGetPacket(packetName)
+
+    local networking,
+        networkError =
+        HolyGuildGetNetworking()
+
+    local packet =
+        type(networking) == "table"
+        and type(networking.Guild) == "table"
+        and networking.Guild[packetName]
+        or nil
+
+    if type(packet) ~= "table"
+    or type(packet.Fire) ~= "function" then
+
+        return nil,
+            networkError
+            or (
+                "Guild."
+                .. tostring(packetName)
+                .. " is unavailable"
+            )
+    end
+
+    return packet
+end
+
+function HolyGuildCall(packetName, ...)
+
+    local packet,
+        packetError =
+        HolyGuildGetPacket(
+            packetName
+        )
+
+    if type(packet) ~= "table" then
+
+        return false,
+            packetError
+    end
+
+    local arguments =
+        table.pack(...)
+
+    local ok,
+        first,
+        second,
+        third =
+        pcall(function()
+
+            return packet:Fire(
+                table.unpack(
+                    arguments,
+                    1,
+                    arguments.n
+                )
+            )
+        end)
+
+    if ok ~= true then
+
+        return false,
+            tostring(first)
+    end
+
+    return true,
+        first,
+        second,
+        third
+end
+
+function HolyGuildResultAccepted(first, second)
+
+    if first == false then
+        return false
+    end
+
+    if type(first) == "table" then
+
+        local success =
+            HolyGuildField(
+                first,
+                {
+                    "Success",
+                    "Accepted",
+                    "Ok",
+                }
+            )
+
+        if success == false then
+            return false
+        end
+    end
+
+    local message =
+        tostring(
+            second
+            or (
+                type(first) == "string"
+                and first
+            )
+            or ""
+        )
+        :lower()
+
+    if message:find("error", 1, true)
+    or message:find("failed", 1, true)
+    or message:find("cannot", 1, true)
+    or message:find("not allowed", 1, true) then
+
+        return false
+    end
+
+    return true
+end
+
+function HolyGuildResultMessage(first, second, fallback)
+
+    if type(second) == "string"
+    and HolyCleanText(second) ~= "" then
+
+        return HolyCleanText(second)
+    end
+
+    if type(first) == "string"
+    and HolyCleanText(first) ~= "" then
+
+        return HolyCleanText(first)
+    end
+
+    if type(first) == "table" then
+
+        local message =
+            HolyGuildField(
+                first,
+                {
+                    "Message",
+                    "Reason",
+                    "Error",
+                }
+            )
+
+        if message ~= nil
+        and HolyCleanText(message) ~= "" then
+
+            return HolyCleanText(message)
+        end
+    end
+
+    return tostring(
+        fallback
+        or "Request completed"
+    )
+end
+
+function HolyGuildFormatNumber(value)
+
+    local numberValue =
+        tonumber(value)
+
+    if numberValue == nil then
+
+        return tostring(
+            value
+            or "0"
+        )
+    end
+
+    local absolute =
+        math.abs(numberValue)
+
+    if absolute >= 1000000000000 then
+
+        return string.format(
+            "%.2fT",
+            numberValue / 1000000000000
+        ):gsub("%.00", "")
+    end
+
+    if absolute >= 1000000000 then
+
+        return string.format(
+            "%.2fB",
+            numberValue / 1000000000
+        ):gsub("%.00", "")
+    end
+
+    if absolute >= 1000000 then
+
+        return string.format(
+            "%.2fM",
+            numberValue / 1000000
+        ):gsub("%.00", "")
+    end
+
+    if absolute >= 1000 then
+
+        return string.format(
+            "%.1fK",
+            numberValue / 1000
+        ):gsub("%.0K", "K")
+    end
+
+    if numberValue % 1 == 0 then
+
+        return tostring(
+            math.floor(numberValue)
+        )
+    end
+
+    return string.format(
+        "%.2f",
+        numberValue
+    )
+end
+
+function HolyGuildEpoch(value)
+
+    local epoch =
+        tonumber(value)
+
+    if epoch == nil then
+        return nil
+    end
+
+    if epoch > 100000000000 then
+        epoch = epoch / 1000
+    end
+
+    return math.floor(epoch)
+end
+
+function HolyGuildFormatDate(value)
+
+    local epoch =
+        HolyGuildEpoch(value)
+
+    if epoch == nil
+    or epoch <= 0 then
+
+        return "Unknown"
+    end
+
+    local ok,
+        formatted =
+        pcall(
+            os.date,
+            "%b %d, %Y",
+            epoch
+        )
+
+    return ok == true
+        and formatted
+        or tostring(epoch)
+end
+
+function HolyGuildFormatDuration(seconds)
+
+    seconds =
+        math.max(
+            0,
+            math.floor(
+                tonumber(seconds)
+                or 0
+            )
+        )
+
+    local days =
+        math.floor(
+            seconds / 86400
+        )
+
+    local hours =
+        math.floor(
+            (
+                seconds % 86400
+            ) / 3600
+        )
+
+    local minutes =
+        math.floor(
+            (
+                seconds % 3600
+            ) / 60
+        )
+
+    if days > 0 then
+
+        return tostring(days)
+            .. "d "
+            .. tostring(hours)
+            .. "h"
+    end
+
+    if hours > 0 then
+
+        return tostring(hours)
+            .. "h "
+            .. tostring(minutes)
+            .. "m"
+    end
+
+    return tostring(minutes)
+        .. "m"
+end
+
+function HolyGuildGetGuildId()
+
+    local root =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    return HolyCleanText(
+        HolyGuildField(
+            root,
+            {
+                "GuildId",
+                "GuildID",
+                "Id",
+                "ID",
+            },
+            ""
+        )
+    )
+end
+
+function HolyGuildRole(value)
+
+    local role =
+        HolyCleanText(
+            value
+        )
+
+    local lower =
+        role:lower()
+
+    if lower == "owner"
+    or lower == "leader" then
+        return "Owner"
+    end
+
+    if lower == "elder"
+    or lower == "officer" then
+        return "Elder"
+    end
+
+    return "Member"
+end
+
+function HolyGuildRoleRank(role)
+
+    role =
+        HolyGuildRole(
+            role
+        )
+
+    if role == "Owner" then
+        return 1
+    end
+
+    if role == "Elder" then
+        return 2
+    end
+
+    return 3
+end
+
+function HolyGuildRequestName(userId)
+
+    userId =
+        tonumber(userId)
+
+    if userId == nil
+    or userId <= 0
+    or HOLY_GUILD_STATE.NameCache[userId] ~= nil
+    or HOLY_GUILD_RUNTIME.NameResolving[userId] == true then
+
+        return
+    end
+
+    HOLY_GUILD_RUNTIME.NameResolving[userId] =
+        true
+
+    task.spawn(function()
+
+        local ok,
+            username =
+            pcall(
+                Players.GetNameFromUserIdAsync,
+                Players,
+                userId
+            )
+
+        if ok == true
+        and HolyCleanText(username) ~= "" then
+
+            HOLY_GUILD_STATE.NameCache[userId] =
+                tostring(username)
+        end
+
+        HOLY_GUILD_RUNTIME.NameResolving[userId] =
+            nil
+
+        HolyGuildRefreshUI()
+    end)
+end
+
+function HolyGuildCollectOnline(value, output, depth)
+
+    output =
+        type(output) == "table"
+        and output
+        or {}
+
+    depth =
+        tonumber(depth)
+        or 0
+
+    if depth > 4 then
+        return output
+    end
+
+    if type(value) == "number"
+    or (
+        type(value) == "string"
+        and tonumber(value) ~= nil
+    ) then
+
+        output[
+            tonumber(value)
+        ] =
+            true
+
+        return output
+    end
+
+    if type(value) ~= "table" then
+        return output
+    end
+
+    local directUserId =
+        tonumber(
+            HolyGuildField(
+                value,
+                {
+                    "UserId",
+                    "UserID",
+                    "PlayerId",
+                    "Id",
+                }
+            )
+        )
+
+    local online =
+        HolyGuildField(
+            value,
+            {
+                "Online",
+                "IsOnline",
+                "Present",
+            }
+        )
+
+    if directUserId
+    and online ~= false then
+
+        output[directUserId] =
+            true
+    end
+
+    for key, child in pairs(value) do
+
+        local numericKey =
+            tonumber(key)
+
+        if numericKey
+        and type(child) == "boolean"
+        and child == true then
+
+            output[numericKey] =
+                true
+
+        elseif type(child) == "number" then
+
+            local keyText =
+                HolyGuildKey(key)
+
+            if type(key) == "number"
+            or keyText:find("userid", 1, true)
+            or keyText:find("playerid", 1, true) then
+
+                output[child] =
+                    true
+            end
+
+        elseif type(child) == "table" then
+
+            HolyGuildCollectOnline(
+                child,
+                output,
+                depth + 1
+            )
+        end
+    end
+
+    return output
+end
+
+function HolyGuildBuildMembers()
+
+    local root =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    local rawMembers =
+        HolyGuildField(
+            root,
+            {
+                "Members",
+                "MemberList",
+                "GuildMembers",
+            },
+            {}
+        )
+
+    local rows = {}
+
+    if type(rawMembers) ~= "table" then
+        return rows
+    end
+
+    for key, rawMember in pairs(rawMembers) do
+
+        local member =
+            type(rawMember) == "table"
+            and rawMember
+            or {}
+
+        local userId =
+            tonumber(
+                HolyGuildField(
+                    member,
+                    {
+                        "UserId",
+                        "UserID",
+                        "PlayerId",
+                        "Id",
+                    }
+                )
+            )
+
+        if userId == nil then
+
+            userId =
+                tonumber(
+                    type(rawMember) == "number"
+                    and rawMember
+                    or key
+                )
+        end
+
+        if userId then
+
+            local username =
+                HolyCleanText(
+                    HolyGuildField(
+                        member,
+                        {
+                            "Username",
+                            "UserName",
+                            "Name",
+                            "PlayerName",
+                        },
+                        ""
+                    )
+                )
+
+            if username ~= "" then
+
+                HOLY_GUILD_STATE.NameCache[userId] =
+                    username
+
+            else
+
+                username =
+                    HOLY_GUILD_STATE.NameCache[userId]
+                    or ""
+
+                HolyGuildRequestName(
+                    userId
+                )
+            end
+
+            if userId == LocalPlayer.UserId then
+
+                username =
+                    LocalPlayer.Name
+
+                HOLY_GUILD_STATE.NameCache[userId] =
+                    username
+            end
+
+            rows[#rows + 1] = {
+                UserId = userId,
+
+                Username =
+                    username ~= ""
+                    and username
+                    or (
+                        "User "
+                        .. tostring(userId)
+                    ),
+
+                DisplayName =
+                    HolyCleanText(
+                        HolyGuildField(
+                            member,
+                            {
+                                "DisplayName",
+                            },
+                            ""
+                        )
+                    ),
+
+                Role =
+                    HolyGuildRole(
+                        HolyGuildField(
+                            member,
+                            {
+                                "Role",
+                                "GuildRole",
+                                "Rank",
+                            },
+                            "Member"
+                        )
+                    ),
+
+                Weekly =
+                    tonumber(
+                        HolyGuildField(
+                            member,
+                            {
+                                "WeeklyContribution",
+                                "WeeklyContributions",
+                                "WeeklyScore",
+                                "WeekContribution",
+                            },
+                            0
+                        )
+                    )
+                    or 0,
+
+                Lifetime =
+                    tonumber(
+                        HolyGuildField(
+                            member,
+                            {
+                                "LifetimeContribution",
+                                "LifetimeContributions",
+                                "TotalContribution",
+                                "Contribution",
+                            },
+                            0
+                        )
+                    )
+                    or 0,
+
+                JoinedAt =
+                    HolyGuildField(
+                        member,
+                        {
+                            "JoinedAt",
+                            "JoinTime",
+                            "Joined",
+                            "CreatedAt",
+                        }
+                    ),
+
+                Online =
+                    HOLY_GUILD_STATE.OnlineMembers[userId]
+                    == true,
+
+                Raw =
+                    member,
+            }
+        end
+    end
+
+    local sortMode =
+        tostring(
+            HOLY_GUILD_STATE.MemberSort
+            or "Role"
+        )
+
+    table.sort(
+        rows,
+        function(left, right)
+
+            if sortMode == "Online"
+            and left.Online ~= right.Online then
+
+                return left.Online == true
+            end
+
+            if sortMode == "Contribution"
+            and left.Weekly ~= right.Weekly then
+
+                return left.Weekly > right.Weekly
+            end
+
+            local leftRank =
+                HolyGuildRoleRank(
+                    left.Role
+                )
+
+            local rightRank =
+                HolyGuildRoleRank(
+                    right.Role
+                )
+
+            if leftRank ~= rightRank then
+                return leftRank < rightRank
+            end
+
+            if left.Online ~= right.Online then
+                return left.Online == true
+            end
+
+            return tostring(left.Username):lower()
+                < tostring(right.Username):lower()
+        end
+    )
+
+    return rows
+end
+
+function HolyGuildGetMember(userId)
+
+    userId =
+        tonumber(userId)
+
+    for _, member in ipairs(
+        HolyGuildBuildMembers()
+    ) do
+
+        if member.UserId == userId then
+            return member
+        end
+    end
+
+    return nil
+end
+
+function HolyGuildGetLocalMember()
+
+    return HolyGuildGetMember(
+        LocalPlayer.UserId
+    )
+end
+
+function HolyGuildMemberDisplay(member)
+
+    local marker =
+        member.Online == true
+        and "🟢"
+        or "⚫"
+
+    local you =
+        member.UserId == LocalPlayer.UserId
+        and " · You"
+        or ""
+
+    return marker
+        .. " "
+        .. tostring(member.Username)
+        .. " — "
+        .. tostring(member.Role)
+        .. you
+end
+
+function HolyGuildGetSelectedMember()
+
+    local selected =
+        HolyGuildGetMember(
+            HOLY_GUILD_STATE.SelectedMemberUserId
+        )
+
+    if selected then
+        return selected
+    end
+
+    local members =
+        HolyGuildBuildMembers()
+
+    selected =
+        HolyGuildGetMember(
+            LocalPlayer.UserId
+        )
+        or members[1]
+
+    HOLY_GUILD_STATE.SelectedMemberUserId =
+        selected
+        and selected.UserId
+        or nil
+
+    return selected
+end
+
+function HolyGuildBuildOverviewText()
+
+    local root =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    if type(root) ~= "table"
+    or HolyGuildGetGuildId() == "" then
+
+        return "You are not currently in a guild."
+    end
+
+    local name =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "Name",
+                    "GuildName",
+                },
+                "Unnamed Guild"
+            )
+        )
+
+    local tag =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "Tag",
+                    "GuildTag",
+                },
+                ""
+            )
+        )
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    local role =
+        localMember
+        and localMember.Role
+        or "Member"
+
+    return "🏰 "
+        .. name
+        .. (
+            tag ~= ""
+            and (
+                "  ["
+                .. tag
+                .. "]"
+            )
+            or ""
+        )
+        .. "\nYour role: "
+        .. role
+end
+
+function HolyGuildBuildDescriptionText()
+
+    local root =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    local description =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "Description",
+                    "GuildDescription",
+                },
+                ""
+            )
+        )
+
+    return description ~= ""
+        and (
+            "\""
+            .. description
+            .. "\""
+        )
+        or "No guild description."
+end
+
+function HolyGuildBuildOverviewStats()
+
+    local root =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    if type(root) ~= "table"
+    or HolyGuildGetGuildId() == "" then
+
+        return "Members: 0\nOnline: 0\nGuild Coins: 0"
+    end
+
+    local members =
+        HolyGuildBuildMembers()
+
+    local onlineCount = 0
+    local elderCount = 0
+    local weeklySum = 0
+    local lifetimeSum = 0
+
+    for _, member in ipairs(members) do
+
+        if member.Online == true then
+            onlineCount = onlineCount + 1
+        end
+
+        if member.Role == "Elder" then
+            elderCount = elderCount + 1
+        end
+
+        weeklySum =
+            weeklySum
+            + member.Weekly
+
+        lifetimeSum =
+            lifetimeSum
+            + member.Lifetime
+    end
+
+    local capacity =
+        tonumber(
+            HolyGuildField(
+                root,
+                {
+                    "MaxMembers",
+                    "MemberLimit",
+                    "Capacity",
+                    "MemberCapacity",
+                    "Slots",
+                    "SlotCount",
+                }
+            )
+        )
+
+    local guildCoins =
+        HolyGuildField(
+            root,
+            {
+                "GuildCoins",
+                "Coins",
+                "Balance",
+            },
+            0
+        )
+
+    local weekly =
+        HolyGuildField(
+            root,
+            {
+                "WeeklyContribution",
+                "WeeklyContributions",
+                "WeeklyScore",
+            },
+            weeklySum
+        )
+
+    local lifetime =
+        HolyGuildField(
+            root,
+            {
+                "LifetimeContribution",
+                "LifetimeContributions",
+                "TotalContribution",
+            },
+            lifetimeSum
+        )
+
+    return "Members: "
+        .. tostring(#members)
+        .. (
+            capacity
+            and (
+                " / "
+                .. tostring(capacity)
+            )
+            or ""
+        )
+        .. "\nOnline: "
+        .. tostring(onlineCount)
+        .. "\nElders: "
+        .. tostring(elderCount)
+        .. "\nGuild Coins: "
+        .. HolyGuildFormatNumber(guildCoins)
+        .. "\nWeekly Contribution: "
+        .. HolyGuildFormatNumber(weekly)
+        .. "\nLifetime Contribution: "
+        .. HolyGuildFormatNumber(lifetime)
+end
+
+function HolyGuildBuildSelectedMemberText()
+
+    local member =
+        HolyGuildGetSelectedMember()
+
+    if type(member) ~= "table" then
+        return "Select a guild member."
+    end
+
+    local displayName =
+        member.DisplayName ~= ""
+        and (
+            member.DisplayName
+            .. " (@"
+            .. member.Username
+            .. ")"
+        )
+        or (
+            "@"
+            .. member.Username
+        )
+
+    return displayName
+        .. "\nRole: "
+        .. member.Role
+        .. "\nStatus: "
+        .. (
+            member.Online
+            and "Online"
+            or "Offline"
+        )
+        .. "\nWeekly Contribution: "
+        .. HolyGuildFormatNumber(member.Weekly)
+        .. "\nLifetime Contribution: "
+        .. HolyGuildFormatNumber(member.Lifetime)
+        .. "\nJoined: "
+        .. HolyGuildFormatDate(member.JoinedAt)
+end
+
+function HolyGuildContestRoot()
+
+    local competition =
+        HOLY_GUILD_STATE.Competition
+
+    if type(competition) ~= "table" then
+        return nil
+    end
+
+    local data =
+        HolyGuildField(
+            competition,
+            {
+                "Data",
+                "CompetitionData",
+            }
+        )
+
+    return type(data) == "table"
+        and data
+        or competition
+end
+
+function HolyGuildBuildContestText()
+
+    local root =
+        HolyGuildContestRoot()
+
+    if type(root) ~= "table" then
+        return "Competition data is not loaded."
+    end
+
+    local phase =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "Phase",
+                    "Status",
+                    "State",
+                },
+                "Unknown"
+            )
+        )
+
+    local phaseLower =
+        phase:lower()
+
+    local active =
+        HolyGuildField(
+            root,
+            {
+                "CurrentCompetition",
+                "Current",
+                "ActiveCompetition",
+                "Competition",
+            }
+        )
+
+    local previous =
+        HolyGuildField(
+            root,
+            {
+                "PreviousCompetition",
+                "Previous",
+                "LastCompetition",
+            }
+        )
+
+    local shown =
+        phaseLower == "active"
+        and type(active) == "table"
+        and active
+        or (
+            type(previous) == "table"
+            and previous
+            or (
+                type(active) == "table"
+                and active
+                or root
+            )
+        )
+
+    local name =
+        HolyCleanText(
+            HolyGuildField(
+                shown,
+                {
+                    "Name",
+                    "Title",
+                    "DisplayName",
+                },
+                phaseLower == "pending"
+                and "Next Guild Competition"
+                or "Guild Competition"
+            )
+        )
+
+    local objective =
+        HolyCleanText(
+            HolyGuildField(
+                shown,
+                {
+                    "Objective",
+                    "Description",
+                    "ObjectiveDescription",
+                    "ObjectiveTag",
+                    "Tag",
+                },
+                "Objective unavailable"
+            )
+        )
+
+    local mode =
+        HolyCleanText(
+            HolyGuildField(
+                shown,
+                {
+                    "Mode",
+                    "WinMode",
+                    "ScoringMode",
+                },
+                ""
+            )
+        )
+
+    local scoreFormat =
+        HolyCleanText(
+            HolyGuildField(
+                shown,
+                {
+                    "ScoreFormat",
+                    "Format",
+                    "Unit",
+                },
+                "Number"
+            )
+        )
+
+    local startsAt =
+        HolyGuildEpoch(
+            HolyGuildField(
+                root,
+                {
+                    "NextCompetitionStart",
+                    "NextStartAt",
+                    "StartsAt",
+                    "StartTime",
+                }
+            )
+            or HolyGuildField(
+                shown,
+                {
+                    "StartsAt",
+                    "StartTime",
+                }
+            )
+        )
+
+    local endsAt =
+        HolyGuildEpoch(
+            HolyGuildField(
+                shown,
+                {
+                    "EndsAt",
+                    "EndTime",
+                }
+            )
+        )
+
+    local timing =
+        "Timing unavailable"
+
+    if phaseLower == "pending"
+    and startsAt then
+
+        timing =
+            "Starts in "
+            .. HolyGuildFormatDuration(
+                startsAt
+                - os.time()
+            )
+
+    elseif phaseLower == "active"
+    and endsAt then
+
+        timing =
+            "Ends in "
+            .. HolyGuildFormatDuration(
+                endsAt
+                - os.time()
+            )
+    end
+
+    return "Status: "
+        .. phase
+        .. "\n"
+        .. name
+        .. "\n"
+        .. timing
+        .. "\nObjective: "
+        .. objective
+        .. (
+            mode ~= ""
+            and (
+                "\nMode: "
+                .. mode
+            )
+            or ""
+        )
+        .. "\nScore Format: "
+        .. scoreFormat
+end
+
+function HolyGuildBuildContestProgressText()
+
+    local root =
+        HolyGuildContestRoot()
+
+    if type(root) ~= "table" then
+        return "Guild Score: 0\nYour Contribution: 0\nPlacement: Not ranked"
+    end
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    local score =
+        HolyGuildField(
+            root,
+            {
+                "GuildScore",
+                "Score",
+                "CurrentScore",
+            },
+            0
+        )
+
+    local placement =
+        HolyGuildField(
+            root,
+            {
+                "GuildPlacement",
+                "Placement",
+                "Rank",
+            }
+        )
+
+    local bracket =
+        HolyGuildField(
+            root,
+            {
+                "Bracket",
+                "League",
+                "Tier",
+            }
+        )
+
+    return "Guild Score: "
+        .. HolyGuildFormatNumber(score)
+        .. "\nYour Contribution: "
+        .. HolyGuildFormatNumber(
+            localMember
+            and localMember.Weekly
+            or 0
+        )
+        .. "\nPlacement: "
+        .. (
+            tonumber(placement)
+            and (
+                "#"
+                .. tostring(placement)
+            )
+            or "Not ranked"
+        )
+        .. (
+            bracket ~= nil
+            and (
+                "\nBracket: "
+                .. tostring(bracket)
+            )
+            or ""
+        )
+end
+
+function HolyGuildLeaderboardArray()
+
+    local source =
+        HOLY_GUILD_STATE.Leaderboard
+
+    if type(source) ~= "table" then
+        return {}
+    end
+
+    local nested =
+        HolyGuildField(
+            source,
+            {
+                "Leaderboard",
+                "Entries",
+                "Rows",
+                "Guilds",
+                "Data",
+            }
+        )
+
+    if type(nested) == "table" then
+        source = nested
+    end
+
+    local rows = {}
+
+    for key, rawRow in pairs(source) do
+
+        if type(rawRow) == "table" then
+
+            local rank =
+                tonumber(
+                    HolyGuildField(
+                        rawRow,
+                        {
+                            "Rank",
+                            "Placement",
+                            "Position",
+                        },
+                        key
+                    )
+                )
+
+            local guild =
+                HolyGuildField(
+                    rawRow,
+                    {
+                        "Guild",
+                        "GuildData",
+                    }
+                )
+
+            guild =
+                type(guild) == "table"
+                and guild
+                or rawRow
+
+            local name =
+                HolyCleanText(
+                    HolyGuildField(
+                        guild,
+                        {
+                            "Name",
+                            "GuildName",
+                        },
+                        ""
+                    )
+                )
+
+            if name ~= "" then
+
+                rows[#rows + 1] = {
+                    Rank =
+                        rank
+                        or (
+                            #rows
+                            + 1
+                        ),
+
+                    Id =
+                        HolyCleanText(
+                            HolyGuildField(
+                                guild,
+                                {
+                                    "GuildId",
+                                    "GuildID",
+                                    "Id",
+                                    "ID",
+                                },
+                                ""
+                            )
+                        ),
+
+                    Name = name,
+
+                    Tag =
+                        HolyCleanText(
+                            HolyGuildField(
+                                guild,
+                                {
+                                    "Tag",
+                                    "GuildTag",
+                                },
+                                ""
+                            )
+                        ),
+
+                    Score =
+                        HolyGuildField(
+                            rawRow,
+                            {
+                                "Score",
+                                "Value",
+                                "WeeklyScore",
+                                "WeeklyContribution",
+                            },
+                            HolyGuildField(
+                                guild,
+                                {
+                                    "Score",
+                                    "WeeklyScore",
+                                    "WeeklyContribution",
+                                },
+                                0
+                            )
+                        ),
+
+                    Members =
+                        HolyGuildField(
+                            guild,
+                            {
+                                "MemberCount",
+                                "MembersCount",
+                            }
+                        ),
+
+                    MaxMembers =
+                        HolyGuildField(
+                            guild,
+                            {
+                                "MaxMembers",
+                                "MemberLimit",
+                                "Capacity",
+                            }
+                        ),
+
+                    Raw =
+                        rawRow,
+                }
+            end
+        end
+    end
+
+    table.sort(
+        rows,
+        function(left, right)
+
+            return (
+                tonumber(left.Rank)
+                or math.huge
+            )
+                < (
+                    tonumber(right.Rank)
+                    or math.huge
+                )
+        end
+    )
+
+    return rows
+end
+
+function HolyGuildLeaderboardDisplay(row)
+
+    return "#"
+        .. tostring(row.Rank)
+        .. "  "
+        .. tostring(row.Name)
+        .. (
+            row.Tag ~= ""
+            and (
+                " ["
+                .. row.Tag
+                .. "]"
+            )
+            or ""
+        )
+        .. " — "
+        .. HolyGuildFormatNumber(row.Score)
+end
+
+function HolyGuildGetSelectedLeaderboardGuild()
+
+    local selectedId =
+        tostring(
+            HOLY_GUILD_STATE.SelectedGuildId
+            or ""
+        )
+
+    local rows =
+        HolyGuildLeaderboardArray()
+
+    for _, row in ipairs(rows) do
+
+        local rowId =
+            row.Id ~= ""
+            and row.Id
+            or (
+                tostring(row.Rank)
+                .. ":"
+                .. row.Name
+            )
+
+        if rowId == selectedId then
+            return row
+        end
+    end
+
+    local first =
+        rows[1]
+
+    if first then
+
+        HOLY_GUILD_STATE.SelectedGuildId =
+            first.Id ~= ""
+            and first.Id
+            or (
+                tostring(first.Rank)
+                .. ":"
+                .. first.Name
+            )
+    end
+
+    return first
+end
+
+function HolyGuildBuildSelectedGuildText()
+
+    local row =
+        HolyGuildGetSelectedLeaderboardGuild()
+
+    if type(row) ~= "table" then
+        return "Select a guild from the leaderboard."
+    end
+
+    return row.Name
+        .. (
+            row.Tag ~= ""
+            and (
+                " ["
+                .. row.Tag
+                .. "]"
+            )
+            or ""
+        )
+        .. "\nGlobal Rank: #"
+        .. tostring(row.Rank)
+        .. "\nWeekly Score: "
+        .. HolyGuildFormatNumber(row.Score)
+        .. (
+            row.Members ~= nil
+            and (
+                "\nMembers: "
+                .. tostring(row.Members)
+                .. (
+                    row.MaxMembers ~= nil
+                    and (
+                        " / "
+                        .. tostring(row.MaxMembers)
+                    )
+                    or ""
+                )
+            )
+            or ""
+        )
+end
+
+function HolyGuildRefreshPlayerDropdown()
+
+    local dropdown =
+        HOLY_GUILD_UI.InviteDropdown
+
+    if type(dropdown) ~= "table" then
+        return
+    end
+
+    local values = {}
+    local displayMap = {}
+
+    for _, player in ipairs(
+        Players:GetPlayers()
+    ) do
+
+        if player ~= LocalPlayer then
+
+            local display =
+                player.DisplayName ~= player.Name
+                and (
+                    player.DisplayName
+                    .. " (@"
+                    .. player.Name
+                    .. ")"
+                )
+                or (
+                    "@"
+                    .. player.Name
+                )
+
+            values[#values + 1] =
+                display
+
+            displayMap[display] =
+                player.UserId
+        end
+    end
+
+    table.sort(values)
+
+    if #values <= 0 then
+
+        values[1] =
+            "No other players in this server"
+    end
+
+    HOLY_GUILD_RUNTIME.PlayerDisplayMap =
+        displayMap
+
+    local selectedDisplay =
+        nil
+
+    for display, userId in pairs(displayMap) do
+
+        if userId == HOLY_GUILD_STATE.InviteUserId then
+
+            selectedDisplay =
+                display
+
+            break
+        end
+    end
+
+    if selectedDisplay == nil
+    and displayMap[values[1]] then
+
+        selectedDisplay =
+            values[1]
+
+        HOLY_GUILD_STATE.InviteUserId =
+            displayMap[selectedDisplay]
+    end
+
+    HOLY_GUILD_RUNTIME.UpdatingUI =
+        true
+
+    pcall(function()
+
+        dropdown:SetValues(
+            values
+        )
+
+        dropdown:SetValue(
+            selectedDisplay
+            or values[1],
+            true
+        )
+    end)
+
+    HOLY_GUILD_RUNTIME.UpdatingUI =
+        false
+
+    local inviteButton =
+        HOLY_GUILD_UI.InviteButton
+
+    if type(inviteButton) == "table"
+    and type(inviteButton.SetDisabled) == "function" then
+
+        inviteButton:SetDisabled(
+            HOLY_GUILD_STATE.InviteUserId == nil
+            or HOLY_GUILD_RUNTIME.Busy.Action == true
+        )
+    end
+end
+
+function HolyGuildRefreshMemberDropdown()
+
+    local dropdown =
+        HOLY_GUILD_UI.MemberDropdown
+
+    if type(dropdown) ~= "table" then
+        return
+    end
+
+    local values = {}
+    local displayMap = {}
+    local selectedDisplay = nil
+
+    for _, member in ipairs(
+        HolyGuildBuildMembers()
+    ) do
+
+        local display =
+            HolyGuildMemberDisplay(
+                member
+            )
+
+        values[#values + 1] =
+            display
+
+        displayMap[display] =
+            member.UserId
+
+        if member.UserId
+            == HOLY_GUILD_STATE.SelectedMemberUserId then
+
+            selectedDisplay =
+                display
+        end
+    end
+
+    if #values <= 0 then
+        values[1] = "No guild members"
+    end
+
+    if selectedDisplay == nil
+    and displayMap[values[1]] then
+
+        selectedDisplay =
+            values[1]
+
+        HOLY_GUILD_STATE.SelectedMemberUserId =
+            displayMap[selectedDisplay]
+    end
+
+    HOLY_GUILD_RUNTIME.MemberDisplayMap =
+        displayMap
+
+    HOLY_GUILD_RUNTIME.UpdatingUI =
+        true
+
+    pcall(function()
+
+        dropdown:SetValues(
+            values
+        )
+
+        dropdown:SetValue(
+            selectedDisplay
+            or values[1],
+            true
+        )
+    end)
+
+    HOLY_GUILD_RUNTIME.UpdatingUI =
+        false
+end
+
+function HolyGuildRefreshLeaderboardUI()
+
+    local dropdown =
+        HOLY_GUILD_UI.LeaderboardDropdown
+
+    local values = {}
+    local displayMap = {}
+    local selectedDisplay = nil
+    local statusRows = {}
+
+    for _, row in ipairs(
+        HolyGuildLeaderboardArray()
+    ) do
+
+        local display =
+            HolyGuildLeaderboardDisplay(
+                row
+            )
+
+        local rowId =
+            row.Id ~= ""
+            and row.Id
+            or (
+                tostring(row.Rank)
+                .. ":"
+                .. row.Name
+            )
+
+        values[#values + 1] =
+            display
+
+        displayMap[display] =
+            rowId
+
+        if rowId
+            == HOLY_GUILD_STATE.SelectedGuildId then
+
+            selectedDisplay =
+                display
+        end
+
+        if #statusRows < 10 then
+
+            statusRows[#statusRows + 1] = {
+                Key =
+                    "#"
+                    .. tostring(row.Rank)
+                    .. " "
+                    .. row.Name,
+
+                Value =
+                    HolyGuildFormatNumber(
+                        row.Score
+                    ),
+            }
+        end
+    end
+
+    if #values <= 0 then
+        values[1] = "Leaderboard unavailable"
+    end
+
+    if #statusRows <= 0 then
+
+        statusRows[1] = {
+            Key = "No leaderboard data",
+            Value = "",
+        }
+    end
+
+    HOLY_GUILD_RUNTIME.GuildDisplayMap =
+        displayMap
+
+    if type(dropdown) == "table" then
+
+        HOLY_GUILD_RUNTIME.UpdatingUI =
+            true
+
+        pcall(function()
+
+            dropdown:SetValues(
+                values
+            )
+
+            dropdown:SetValue(
+                selectedDisplay
+                or values[1],
+                true
+            )
+        end)
+
+        HOLY_GUILD_RUNTIME.UpdatingUI =
+            false
+    end
+
+    local list =
+        HOLY_GUILD_UI.LeaderboardList
+
+    if type(list) == "table"
+    and type(list.SetRows) == "function" then
+
+        list:SetRows(
+            statusRows
+        )
+    end
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.SelectedGuildLabel,
+        HolyGuildBuildSelectedGuildText()
+    )
+end
+
+function HolyGuildRefreshContributionList()
+
+    local list =
+        HOLY_GUILD_UI.ContributionList
+
+    if type(list) ~= "table"
+    or type(list.SetRows) ~= "function" then
+        return
+    end
+
+    local members =
+        HolyGuildBuildMembers()
+
+    table.sort(
+        members,
+        function(left, right)
+
+            if left.Weekly ~= right.Weekly then
+                return left.Weekly > right.Weekly
+            end
+
+            return tostring(left.Username):lower()
+                < tostring(right.Username):lower()
+        end
+    )
+
+    local rows = {}
+
+    for _, member in ipairs(members) do
+
+        rows[#rows + 1] = {
+            Key =
+                (
+                    member.Online
+                    and "🟢 "
+                    or "⚫ "
+                )
+                .. member.Username,
+
+            Value =
+                HolyGuildFormatNumber(
+                    member.Weekly
+                ),
+        }
+    end
+
+    if #rows <= 0 then
+
+        rows[1] = {
+            Key = "No contribution data",
+            Value = "",
+        }
+    end
+
+    list:SetRows(
+        rows
+    )
+end
+
+function HolyGuildRefreshRoleAction()
+
+    local actions =
+        HOLY_GUILD_UI.MemberActions
+
+    if type(actions) ~= "table" then
+        return
+    end
+
+    local selected =
+        HolyGuildGetSelectedMember()
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    local text =
+        "Role Action"
+
+    local allowed =
+        false
+
+    if selected
+    and selected.Role == "Member" then
+
+        text =
+            "Promote to Elder"
+
+        allowed =
+            true
+
+    elseif selected
+    and selected.Role == "Elder" then
+
+        text =
+            "Demote to Member"
+
+        allowed =
+            true
+    end
+
+    allowed =
+        allowed == true
+        and localMember ~= nil
+        and localMember.Role == "Owner"
+        and selected.UserId ~= LocalPlayer.UserId
+        and HOLY_GUILD_RUNTIME.Busy.Action ~= true
+
+    pcall(function()
+
+        actions:SetText(
+            "RoleAction",
+            text
+        )
+
+        actions:SetDisabled(
+            "RoleAction",
+            allowed ~= true
+        )
+
+        actions:SetDisabled(
+            "Refresh",
+            HOLY_GUILD_RUNTIME.Busy.Snapshot == true
+            or HOLY_GUILD_RUNTIME.Busy.Action == true
+        )
+    end)
+end
+
+function HolyGuildRefreshUI()
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.IdentityLabel,
+        HolyGuildBuildOverviewText()
+    )
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.DescriptionLabel,
+        HolyGuildBuildDescriptionText()
+    )
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.OverviewStatsLabel,
+        HolyGuildBuildOverviewStats()
+    )
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.StatusLabel,
+        "Status: "
+        .. tostring(
+            HOLY_GUILD_STATE.Status
+            or "Ready"
+        )
+    )
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.SelectedMemberLabel,
+        HolyGuildBuildSelectedMemberText()
+    )
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.ContestLabel,
+        HolyGuildBuildContestText()
+    )
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.ContestProgressLabel,
+        HolyGuildBuildContestProgressText()
+    )
+
+    HolyGuildRefreshPlayerDropdown()
+    HolyGuildRefreshMemberDropdown()
+    HolyGuildRefreshLeaderboardUI()
+    HolyGuildRefreshContributionList()
+    HolyGuildRefreshRoleAction()
+
+    local root =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    local iconId =
+        HolyGuildField(
+            root,
+            {
+                "IconId",
+                "GuildIconId",
+                "Icon",
+            }
+        )
+
+    if iconId ~= nil
+    and HOLY_GUILD_STATE.IconDraftDirty ~= true
+    and type(HOLY_GUILD_UI.IconInput) == "table"
+    and type(HOLY_GUILD_UI.IconInput.SetValue) == "function" then
+
+        HOLY_GUILD_STATE.IconDraft =
+            tostring(iconId)
+
+        HOLY_GUILD_RUNTIME.UpdatingUI =
+            true
+
+        pcall(function()
+
+            HOLY_GUILD_UI.IconInput:SetValue(
+                HOLY_GUILD_STATE.IconDraft,
+                true
+            )
+        end)
+
+        HOLY_GUILD_RUNTIME.UpdatingUI =
+            false
+    end
+end
+
+function HolyGuildSetStatus(status)
+
+    HOLY_GUILD_STATE.Status =
+        tostring(
+            status
+            or "Ready"
+        )
+
+    HolyGuildRefreshUI()
+end
+
+function HolyGuildNormalizePage(value)
+
+    local text =
+        HolyCleanText(
+            value
+        )
+        :lower()
+
+    if text:find("member", 1, true) then
+        return "Members"
+    end
+
+    if text:find("contest", 1, true) then
+        return "Contest"
+    end
+
+    if text:find("leader", 1, true) then
+        return "Leaderboard"
+    end
+
+    return "Overview"
+end
+
+function HolyGuildSetPage(value)
+
+    local page =
+        HolyGuildNormalizePage(
+            value
+        )
+
+    HOLY_GUILD_STATE.Page =
+        page
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.OverviewBox,
+        page == "Overview"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.ActionsBox,
+        page == "Overview"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.MembersBox,
+        page == "Members"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.SelectedMemberBox,
+        page == "Members"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.ContestBox,
+        page == "Contest"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.ProgressBox,
+        page == "Contest"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.LeaderboardBox,
+        page == "Leaderboard"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.SelectedGuildBox,
+        page == "Leaderboard"
+    )
+
+    if HOLY_GUILD_UI.Tab
+    and type(HOLY_GUILD_UI.Tab.RefreshSides) == "function" then
+
+        task.defer(function()
+
+            HOLY_GUILD_UI.Tab:RefreshSides()
+        end)
+    end
+
+    HolyGuildRefreshUI()
+end
+
+function HolyGuildRefreshSnapshot(quiet)
+
+    if HOLY_GUILD_RUNTIME.Busy.Snapshot == true then
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Snapshot =
+        true
+
+    local ok,
+        first,
+        second,
+        third =
+        HolyGuildCall(
+            "GetMyGuild"
+        )
+
+    HOLY_GUILD_RUNTIME.Busy.Snapshot =
+        false
+
+    if ok ~= true then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "Guild refresh failed: "
+                .. tostring(first)
+            )
+        end
+
+        return false
+    end
+
+    local snapshot =
+        HolyGuildFirstTable(
+            first,
+            second,
+            third
+        )
+
+    HOLY_GUILD_STATE.Snapshot =
+        snapshot
+
+    HOLY_GUILD_RUNTIME.LastSnapshotAt =
+        os.clock()
+
+    HOLY_GUILD_STATE.NameCache[
+        LocalPlayer.UserId
+    ] =
+        LocalPlayer.Name
+
+    HolyGuildRefreshUI()
+
+    return snapshot ~= nil
+end
+
+function HolyGuildRefreshPresence(quiet)
+
+    if HOLY_GUILD_RUNTIME.Busy.Presence == true then
+        return false
+    end
+
+    local guildId =
+        HolyGuildGetGuildId()
+
+    if guildId == "" then
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Presence =
+        true
+
+    local ok,
+        first,
+        second,
+        third =
+        HolyGuildCall(
+            "GetOnlineMembers",
+            guildId
+        )
+
+    HOLY_GUILD_RUNTIME.Busy.Presence =
+        false
+
+    if ok ~= true then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "Online-member refresh failed: "
+                .. tostring(first)
+            )
+        end
+
+        return false
+    end
+
+    local result =
+        HolyGuildFirstTable(
+            first,
+            second,
+            third
+        )
+
+    if type(result) == "table" then
+
+        HOLY_GUILD_STATE.OnlineMembers =
+            HolyGuildCollectOnline(
+                result,
+                {},
+                0
+            )
+    end
+
+    HolyGuildRefreshUI()
+
+    return true
+end
+
+function HolyGuildRefreshCompetition(quiet)
+
+    if HOLY_GUILD_RUNTIME.Busy.Competition == true then
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Competition =
+        true
+
+    local ok,
+        first,
+        second,
+        third =
+        HolyGuildCall(
+            "GetCompetition"
+        )
+
+    HOLY_GUILD_RUNTIME.Busy.Competition =
+        false
+
+    if ok ~= true then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "Competition refresh failed: "
+                .. tostring(first)
+            )
+        end
+
+        return false
+    end
+
+    HOLY_GUILD_STATE.Competition =
+        HolyGuildFirstTable(
+            first,
+            second,
+            third
+        )
+
+    HolyGuildRefreshUI()
+
+    return HOLY_GUILD_STATE.Competition
+        ~= nil
+end
+
+function HolyGuildRefreshLeaderboard(quiet)
+
+    if HOLY_GUILD_RUNTIME.Busy.Leaderboard == true then
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Leaderboard =
+        true
+
+    local ok,
+        first,
+        second,
+        third =
+        HolyGuildCall(
+            "GetLeaderboard",
+            "weekly"
+        )
+
+    HOLY_GUILD_RUNTIME.Busy.Leaderboard =
+        false
+
+    if ok ~= true then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "Leaderboard refresh failed: "
+                .. tostring(first)
+            )
+        end
+
+        return false
+    end
+
+    HOLY_GUILD_STATE.Leaderboard =
+        HolyGuildFirstTable(
+            first,
+            second,
+            third
+        )
+        or {}
+
+    HolyGuildRefreshUI()
+
+    return true
+end
+
+function HolyGuildRefreshAll(notifyUser)
+
+    if HOLY_GUILD_RUNTIME.Busy.All == true then
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.All =
+        true
+
+    HolyGuildSetStatus(
+        "Refreshing guild dashboard..."
+    )
+
+    local snapshotOk =
+        HolyGuildRefreshSnapshot(
+            true
+        )
+
+    if snapshotOk == true then
+
+        HolyGuildRefreshPresence(
+            true
+        )
+
+        HolyGuildRefreshCompetition(
+            true
+        )
+    end
+
+    HolyGuildRefreshLeaderboard(
+        true
+    )
+
+    HOLY_GUILD_RUNTIME.Busy.All =
+        false
+
+    HolyGuildSetStatus(
+        snapshotOk == true
+        and "Guild dashboard is up to date"
+        or "No active guild snapshot was returned"
+    )
+
+    if notifyUser == true then
+
+        HolyNotify(
+            "HOLY Guild",
+            snapshotOk == true
+            and "Guild dashboard refreshed."
+            or "No guild snapshot was returned.",
+            4
+        )
+    end
+
+    return snapshotOk
+end
+
+function HolyGuildQueueSnapshotRefresh(delay)
+
+    if HOLY_GUILD_RUNTIME.RefreshQueued == true then
+        return
+    end
+
+    HOLY_GUILD_RUNTIME.RefreshQueued =
+        true
+
+    task.delay(
+        tonumber(delay)
+        or 0.35,
+        function()
+
+            HOLY_GUILD_RUNTIME.RefreshQueued =
+                false
+
+            if HOLY_GUILD_RUNTIME.Running ~= true then
+                return
+            end
+
+            if os.clock()
+                - (
+                    HOLY_GUILD_RUNTIME.LastSnapshotAt
+                    or 0
+                )
+                < 2 then
+
+                return
+            end
+
+            HolyGuildRefreshSnapshot(
+                true
+            )
+        end
+    )
+end
+
+function HolyGuildApplyPresence(value)
+
+    if type(value) ~= "table" then
+        return false
+    end
+
+    local payload =
+        HolyGuildField(
+            value,
+            {
+                "Data",
+                "Value",
+                "Payload",
+                "OnlineMembers",
+                "Members",
+                "UserIds",
+            },
+            value
+        )
+
+    if type(payload) ~= "table" then
+        return false
+    end
+
+    HOLY_GUILD_STATE.OnlineMembers =
+        HolyGuildCollectOnline(
+            payload,
+            {},
+            0
+        )
+
+    HolyGuildRefreshUI()
+
+    return true
+end
+
+function HolyGuildHandleTickUpdate(...)
+
+    local packed =
+        table.pack(...)
+
+    local kind =
+        ""
+
+    local payload =
+        nil
+
+    for index = 1, packed.n do
+
+        local value =
+            packed[index]
+
+        if type(value) == "string" then
+
+            local lower =
+                value:lower()
+
+            if lower:find(
+                "guildpresence",
+                1,
+                true
+            ) then
+
+                kind =
+                    "GuildPresence"
+
+                payload =
+                    packed[
+                        index + 1
+                    ]
+
+            elseif lower:find(
+                "guildmatecontrib",
+                1,
+                true
+            ) then
+
+                kind =
+                    "GuildmateContribs"
+
+                payload =
+                    packed[
+                        index + 1
+                    ]
+            end
+        end
+
+        if type(value) == "table" then
+
+            local foundKind =
+                HolyCleanText(
+                    HolyGuildField(
+                        value,
+                        {
+                            "Kind",
+                            "Type",
+                            "UpdateType",
+                        },
+                        ""
+                    )
+                )
+
+            if foundKind ~= "" then
+
+                kind =
+                    foundKind
+
+                payload =
+                    value
+
+                break
+            end
+        end
+    end
+
+    if kind:lower():find(
+        "guildpresence",
+        1,
+        true
+    ) then
+
+        if HolyGuildApplyPresence(
+            payload
+        ) ~= true then
+
+            task.spawn(function()
+
+                HolyGuildRefreshPresence(
+                    true
+                )
+            end)
+        end
+
+    elseif kind:lower():find(
+        "guildmatecontrib",
+        1,
+        true
+    ) then
+
+        HolyGuildQueueSnapshotRefresh(
+            0.35
+        )
+    end
+end
+
+function HolyGuildInviteSelected()
+
+    if HOLY_GUILD_RUNTIME.Busy.Action == true then
+        return
+    end
+
+    local userId =
+        tonumber(
+            HOLY_GUILD_STATE.InviteUserId
+        )
+
+    if userId == nil then
+
+        HolyNotify(
+            "HOLY Guild",
+            "Select a player from the current server first.",
+            4
+        )
+
+        return
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Action =
+        true
+
+    HolyGuildSetStatus(
+        "Sending guild invitation..."
+    )
+
+    task.spawn(function()
+
+        local ok,
+            first,
+            second =
+            HolyGuildCall(
+                "Invite",
+                userId
+            )
+
+        local accepted =
+            ok == true
+            and HolyGuildResultAccepted(
+                first,
+                second
+            )
+
+        local message =
+            HolyGuildResultMessage(
+                first,
+                second,
+                accepted
+                and "Guild invitation sent"
+                or "Guild invitation was rejected"
+            )
+
+        HOLY_GUILD_RUNTIME.Busy.Action =
+            false
+
+        HolyGuildSetStatus(
+            message
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            message,
+            accepted
+            and 3
+            or 5
+        )
+    end)
+end
+
+function HolyGuildApplyIcon()
+
+    if HOLY_GUILD_RUNTIME.Busy.Action == true then
+        return
+    end
+
+    local iconText =
+        tostring(
+            HOLY_GUILD_STATE.IconDraft
+            or ""
+        )
+
+    local iconId =
+        tonumber(
+            iconText:match("%d+")
+        )
+
+    if iconId == nil then
+
+        HolyNotify(
+            "HOLY Guild",
+            "Enter a valid numeric guild icon ID.",
+            4
+        )
+
+        return
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Action =
+        true
+
+    HolyGuildSetStatus(
+        "Applying guild icon..."
+    )
+
+    task.spawn(function()
+
+        local ok,
+            first,
+            second =
+            HolyGuildCall(
+                "EditGuild",
+                "",
+                "",
+                "",
+                "",
+                iconId,
+                "",
+                ""
+            )
+
+        local accepted =
+            ok == true
+            and HolyGuildResultAccepted(
+                first,
+                second
+            )
+
+        local confirmed =
+            false
+
+        if accepted == true then
+
+            for _ = 1, 8 do
+
+                task.wait(
+                    0.35
+                )
+
+                HolyGuildRefreshSnapshot(
+                    true
+                )
+
+                local root =
+                    HolyGuildSnapshotRoot(
+                        HOLY_GUILD_STATE.Snapshot
+                    )
+
+                local currentIcon =
+                    tonumber(
+                        HolyGuildField(
+                            root,
+                            {
+                                "IconId",
+                                "GuildIconId",
+                                "Icon",
+                            }
+                        )
+                    )
+
+                if currentIcon == iconId then
+
+                    confirmed =
+                        true
+
+                    break
+                end
+            end
+        end
+
+        HOLY_GUILD_RUNTIME.Busy.Action =
+            false
+
+        HOLY_GUILD_STATE.IconDraftDirty =
+            confirmed ~= true
+
+        local message =
+            confirmed
+            and "Guild icon updated and confirmed."
+            or (
+                accepted
+                and "The icon request was sent, but the new icon was not confirmed."
+                or HolyGuildResultMessage(
+                    first,
+                    second,
+                    "Guild icon update was rejected"
+                )
+            )
+
+        HolyGuildSetStatus(
+            message
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            message,
+            confirmed
+            and 3
+            or 5
+        )
+    end)
+end
+
+function HolyGuildRunRoleAction()
+
+    if HOLY_GUILD_RUNTIME.Busy.Action == true then
+        return
+    end
+
+    local selected =
+        HolyGuildGetSelectedMember()
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    if type(selected) ~= "table"
+    or type(localMember) ~= "table"
+    or localMember.Role ~= "Owner"
+    or selected.UserId == LocalPlayer.UserId
+    or (
+        selected.Role ~= "Member"
+        and selected.Role ~= "Elder"
+    ) then
+
+        HolyNotify(
+            "HOLY Guild",
+            "This member cannot be promoted or demoted by the current account.",
+            4
+        )
+
+        return
+    end
+
+    local packetName =
+        selected.Role == "Member"
+        and "Promote"
+        or "Demote"
+
+    local expectedRole =
+        selected.Role == "Member"
+        and "Elder"
+        or "Member"
+
+    local userId =
+        selected.UserId
+
+    local username =
+        selected.Username
+
+    HOLY_GUILD_RUNTIME.Busy.Action =
+        true
+
+    HolyGuildSetStatus(
+        packetName
+        .. " request for @"
+        .. username
+        .. "..."
+    )
+
+    task.spawn(function()
+
+        local ok,
+            first,
+            second =
+            HolyGuildCall(
+                packetName,
+                userId
+            )
+
+        local accepted =
+            ok == true
+            and HolyGuildResultAccepted(
+                first,
+                second
+            )
+
+        local confirmed =
+            false
+
+        if accepted == true then
+
+            for _ = 1, 10 do
+
+                task.wait(
+                    0.35
+                )
+
+                HolyGuildRefreshSnapshot(
+                    true
+                )
+
+                local refreshed =
+                    HolyGuildGetMember(
+                        userId
+                    )
+
+                if refreshed
+                and refreshed.Role == expectedRole then
+
+                    confirmed =
+                        true
+
+                    break
+                end
+            end
+        end
+
+        HOLY_GUILD_RUNTIME.Busy.Action =
+            false
+
+        local message =
+            confirmed
+            and (
+                "@"
+                .. username
+                .. " is now "
+                .. expectedRole
+                .. "."
+            )
+            or (
+                accepted
+                and (
+                    packetName
+                    .. " was sent, but the returned role did not change."
+                )
+                or HolyGuildResultMessage(
+                    first,
+                    second,
+                    packetName
+                    .. " was rejected"
+                )
+            )
+
+        HolyGuildSetStatus(
+            message
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            message,
+            confirmed
+            and 3
+            or 5
+        )
+    end)
+end
+
+function HolyGuildStart()
+
+    HOLY_GUILD_RUNTIME.Token =
+        HOLY_GUILD_RUNTIME.Token
+        + 1
+
+    local token =
+        HOLY_GUILD_RUNTIME.Token
+
+    HOLY_GUILD_RUNTIME.Running =
+        true
+
+    for _, connection in pairs(
+        HOLY_GUILD_RUNTIME.Connections
+        or {}
+    ) do
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+
+    HOLY_GUILD_RUNTIME.Connections =
+        {}
+
+    local networking =
+        HolyGuildGetNetworking()
+
+    local tickPacket =
+        type(networking) == "table"
+        and type(networking.Guild) == "table"
+        and networking.Guild.TickUpdate
+        or nil
+
+    local tickSignal =
+        nil
+
+    pcall(function()
+
+        tickSignal =
+            tickPacket.OnClientEvent
+    end)
+
+    if tickSignal ~= nil then
+
+        local connected,
+            connection =
+            pcall(function()
+
+                return tickSignal:Connect(
+                    HolyGuildHandleTickUpdate
+                )
+            end)
+
+        if connected == true
+        and connection then
+
+            HOLY_GUILD_RUNTIME.Connections[
+                #HOLY_GUILD_RUNTIME.Connections
+                + 1
+            ] =
+                connection
+        end
+    end
+
+    HOLY_GUILD_RUNTIME.Connections[
+        #HOLY_GUILD_RUNTIME.Connections
+        + 1
+    ] =
+        Players.PlayerAdded:Connect(function()
+
+            HolyGuildRefreshPlayerDropdown()
+        end)
+
+    HOLY_GUILD_RUNTIME.Connections[
+        #HOLY_GUILD_RUNTIME.Connections
+        + 1
+    ] =
+        Players.PlayerRemoving:Connect(function(player)
+
+            if player.UserId
+                == HOLY_GUILD_STATE.InviteUserId then
+
+                HOLY_GUILD_STATE.InviteUserId =
+                    nil
+            end
+
+            HolyGuildRefreshPlayerDropdown()
+        end)
+
+    task.spawn(function()
+
+        HolyGuildRefreshAll(
+            false
+        )
+    end)
+
+    task.spawn(function()
+
+        while HOLY_GUILD_RUNTIME.Running == true
+        and HOLY_GUILD_RUNTIME.Token == token do
+
+            if HOLY_GUILD_STATE.Page == "Contest" then
+
+                HolySniperSetLabel(
+                    HOLY_GUILD_UI.ContestLabel,
+                    HolyGuildBuildContestText()
+                )
+            end
+
+            task.wait(
+                1
+            )
+        end
+    end)
+end
+
+--==================================================
 -- [4] WINDOW
 --==================================================
 
@@ -129411,6 +132809,13 @@ local Tabs = {
             Name = "Mail",
             Icon = "mail",
             Description = "Mail delivery tools.",
+        }),
+
+    Guild =
+        Window:AddTab({
+            Name = "Guild",
+            Icon = "users-round",
+            Description = "Guild dashboard and management.",
         }),
 
     Sniper =
@@ -129542,6 +132947,94 @@ local MailUsageBox =
         "activity"
     )
 
+GuildOverviewBox =
+    HolyAddLeftGroupbox(
+        Tabs.Guild,
+        "Guild.Overview",
+        "Guild Overview",
+        "shield"
+    )
+
+GuildActionsBox =
+    HolyAddRightGroupbox(
+        Tabs.Guild,
+        "Guild.Actions",
+        "Guild Actions",
+        "settings"
+    )
+
+GuildMembersBox =
+    HolyAddLeftGroupbox(
+        Tabs.Guild,
+        "Guild.Members",
+        "Guild Members",
+        "users"
+    )
+
+GuildSelectedMemberBox =
+    HolyAddRightGroupbox(
+        Tabs.Guild,
+        "Guild.SelectedMember",
+        "Selected Member",
+        "user-round"
+    )
+
+GuildContestBox =
+    HolyAddLeftGroupbox(
+        Tabs.Guild,
+        "Guild.Contest",
+        "Current Competition",
+        "trophy"
+    )
+
+GuildProgressBox =
+    HolyAddRightGroupbox(
+        Tabs.Guild,
+        "Guild.Progress",
+        "Guild Progress",
+        "chart-no-axes-column-increasing"
+    )
+
+GuildLeaderboardBox =
+    HolyAddLeftGroupbox(
+        Tabs.Guild,
+        "Guild.Leaderboard",
+        "Global Guild Leaderboard",
+        "medal"
+    )
+
+GuildSelectedGuildBox =
+    HolyAddRightGroupbox(
+        Tabs.Guild,
+        "Guild.SelectedGuild",
+        "Selected Guild",
+        "landmark"
+    )
+
+HOLY_GUILD_UI.OverviewBox =
+    GuildOverviewBox
+
+HOLY_GUILD_UI.ActionsBox =
+    GuildActionsBox
+
+HOLY_GUILD_UI.MembersBox =
+    GuildMembersBox
+
+HOLY_GUILD_UI.SelectedMemberBox =
+    GuildSelectedMemberBox
+
+HOLY_GUILD_UI.ContestBox =
+    GuildContestBox
+
+HOLY_GUILD_UI.ProgressBox =
+    GuildProgressBox
+
+HOLY_GUILD_UI.LeaderboardBox =
+    GuildLeaderboardBox
+
+HOLY_GUILD_UI.SelectedGuildBox =
+    GuildSelectedGuildBox
+    
 local WebhookSetupBox =
     HolyAddLeftGroupbox(
         Tabs.Webhook,
@@ -139398,6 +142891,609 @@ task.defer(function()
         HolyMailRefreshInboxCount()
     end
 end)
+
+--==================================================
+-- [6.23] GUILD TAB
+--==================================================
+
+HOLY_GUILD_UI.Tab =
+    Tabs.Guild
+
+GuildModeControl =
+    Tabs.Guild:AddTopSegmentedControl({
+        Values = {
+            "Overview",
+            "Members",
+            "Contest",
+            "Leaderboard",
+        },
+
+        Default =
+            HolyGuildNormalizePage(
+                HOLY_GUILD_STATE.Page
+            ),
+
+        Width =
+            440,
+
+        Height =
+            46,
+
+        PillHeight =
+            32,
+
+        Callback =
+            function(value)
+
+                HolyGuildSetPage(
+                    value
+                )
+            end,
+    })
+
+HOLY_GUILD_UI.IdentityLabel =
+    HolySniperAddLabel(
+        GuildOverviewBox,
+        "Loading guild identity..."
+    )
+
+HOLY_GUILD_UI.DescriptionLabel =
+    HolySniperAddLabel(
+        GuildOverviewBox,
+        "Loading description..."
+    )
+
+GuildOverviewBox:AddDivider({
+    Text =
+        "Guild Statistics",
+
+    MarginTop =
+        6,
+
+    MarginBottom =
+        6,
+})
+
+HOLY_GUILD_UI.OverviewStatsLabel =
+    HolySniperAddLabel(
+        GuildOverviewBox,
+        "Members: --\nOnline: --\nGuild Coins: --"
+    )
+
+GuildOverviewBox:AddButton({
+    Text =
+        "Refresh Guild",
+
+    Tooltip =
+        "Reloads the live guild snapshot and online-member state.",
+
+    Func =
+        function()
+
+            task.spawn(function()
+
+                HolyGuildRefreshAll(
+                    true
+                )
+            end)
+        end,
+})
+
+HOLY_GUILD_UI.InviteDropdown =
+    GuildActionsBox:AddDropdown(
+        "HolyGuildInvitePlayer",
+        {
+            Text =
+                "Player in Current Server",
+
+            Values = {
+                "No other players in this server",
+            },
+
+            Default =
+                1,
+
+            Multi =
+                false,
+
+            Searchable =
+                true,
+
+            AllowNull =
+                false,
+
+            MaxVisibleDropdownItems =
+                8,
+
+            Tooltip =
+                "Selects a player currently in this server to invite to your guild.",
+        }
+    )
+
+HOLY_GUILD_UI.InviteDropdown:OnChanged(function(value)
+
+    if HOLY_GUILD_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local display =
+        HolyGuildSingleValue(
+            value
+        )
+
+    HOLY_GUILD_STATE.InviteUserId =
+        HOLY_GUILD_RUNTIME.PlayerDisplayMap[
+            display
+        ]
+
+    HolyGuildRefreshUI()
+end)
+
+HOLY_GUILD_UI.InviteButton =
+    GuildActionsBox:AddButton({
+        Text =
+            "Invite Player",
+
+        Tooltip =
+            "Sends the confirmed Guild.Invite request to the selected player.",
+
+        Func =
+            function()
+
+                HolyGuildInviteSelected()
+            end,
+    })
+
+GuildActionsBox:AddDivider({
+    Text =
+        "Guild Icon",
+
+    MarginTop =
+        8,
+
+    MarginBottom =
+        6,
+})
+
+HOLY_GUILD_UI.IconInput =
+    GuildActionsBox:AddInput(
+        "HolyGuildIconId",
+        {
+            Text =
+                "Icon ID",
+
+            Default =
+                HOLY_GUILD_STATE.IconDraft,
+
+            Placeholder =
+                "Roblox image asset ID",
+
+            Numeric =
+                true,
+
+            Finished =
+                true,
+
+            ClearTextOnFocus =
+                false,
+
+            Tooltip =
+                "Enter a guild icon ID. HOLY keeps all other guild fields unchanged.",
+        }
+    )
+
+HOLY_GUILD_UI.IconInput:OnChanged(function(value)
+
+    if HOLY_GUILD_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    HOLY_GUILD_STATE.IconDraft =
+        tostring(
+            value
+            or ""
+        )
+
+    HOLY_GUILD_STATE.IconDraftDirty =
+        true
+end)
+
+HOLY_GUILD_UI.IconButton =
+    GuildActionsBox:AddButton({
+        Text =
+            "Apply Guild Icon",
+
+        Tooltip =
+            "Applies the selected icon and waits for GetMyGuild to confirm the change.",
+
+        Func =
+            function()
+
+                HolyGuildApplyIcon()
+            end,
+    })
+
+HOLY_GUILD_UI.StatusLabel =
+    HolySniperAddLabel(
+        GuildActionsBox,
+        "Status: Loading guild data..."
+    )
+
+HOLY_GUILD_UI.MemberDropdown =
+    GuildMembersBox:AddDropdown(
+        "HolyGuildSelectedMember",
+        {
+            Text =
+                "Guild Members",
+
+            Values = {
+                "No guild members",
+            },
+
+            Default =
+                1,
+
+            Multi =
+                false,
+
+            Searchable =
+                true,
+
+            AllowNull =
+                false,
+
+            MaxVisibleDropdownItems =
+                12,
+
+            Tooltip =
+                "Online members use a green dot. The list includes every member's current role.",
+        }
+    )
+
+HOLY_GUILD_UI.MemberDropdown:OnChanged(function(value)
+
+    if HOLY_GUILD_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local display =
+        HolyGuildSingleValue(
+            value
+        )
+
+    local userId =
+        HOLY_GUILD_RUNTIME.MemberDisplayMap[
+            display
+        ]
+
+    if userId then
+
+        HOLY_GUILD_STATE.SelectedMemberUserId =
+            userId
+    end
+
+    HolyGuildRefreshUI()
+end)
+
+HOLY_GUILD_UI.MemberSortDropdown =
+    GuildMembersBox:AddDropdown(
+        "HolyGuildMemberSort",
+        {
+            Text =
+                "Sort Members",
+
+            Values = {
+                "Role",
+                "Online",
+                "Contribution",
+            },
+
+            Default =
+                HOLY_GUILD_STATE.MemberSort,
+
+            Multi =
+                false,
+
+            Searchable =
+                false,
+
+            AllowNull =
+                false,
+
+            MaxVisibleDropdownItems =
+                3,
+
+            Tooltip =
+                "Changes how the member list is ordered.",
+        }
+    )
+
+HOLY_GUILD_UI.MemberSortDropdown:OnChanged(function(value)
+
+    if HOLY_GUILD_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    HOLY_GUILD_STATE.MemberSort =
+        HolyGuildSingleValue(
+            value
+        )
+
+    HolyGuildRefreshMemberDropdown()
+end)
+
+GuildMembersBox:AddButton({
+    Text =
+        "Refresh Members",
+
+    Tooltip =
+        "Reloads roles, contributions, names and online status from the server.",
+
+    Func =
+        function()
+
+            task.spawn(function()
+
+                HolyGuildRefreshSnapshot(
+                    false
+                )
+
+                HolyGuildRefreshPresence(
+                    false
+                )
+
+                HolyGuildSetStatus(
+                    "Member list is up to date"
+                )
+            end)
+        end,
+})
+
+HOLY_GUILD_UI.SelectedMemberLabel =
+    HolySniperAddLabel(
+        GuildSelectedMemberBox,
+        "Select a guild member."
+    )
+
+HOLY_GUILD_UI.MemberActions =
+    GuildSelectedMemberBox:AddActionRow(
+        "HolyGuildMemberActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "RoleAction",
+
+                    Text =
+                        "Role Action",
+
+                    Tooltip =
+                        "Promotes a Member or demotes an Elder, then verifies the returned role.",
+
+                    Callback =
+                        function()
+
+                            HolyGuildRunRoleAction()
+                        end,
+                },
+
+                {
+                    Id =
+                        "Refresh",
+
+                    Text =
+                        "Refresh",
+
+                    Tooltip =
+                        "Reloads the selected member from GetMyGuild.",
+
+                    Callback =
+                        function()
+
+                            task.spawn(function()
+
+                                HolyGuildRefreshSnapshot(
+                                    false
+                                )
+
+                                HolyGuildRefreshPresence(
+                                    true
+                                )
+                            end)
+                        end,
+                },
+            },
+        }
+    )
+
+HOLY_GUILD_UI.ContestLabel =
+    HolySniperAddLabel(
+        GuildContestBox,
+        "Competition data is not loaded."
+    )
+
+GuildContestBox:AddButton({
+    Text =
+        "Refresh Competition",
+
+    Tooltip =
+        "Reloads the current, pending or previous guild competition.",
+
+    Func =
+        function()
+
+            task.spawn(function()
+
+                if HolyGuildRefreshCompetition(
+                    false
+                ) then
+
+                    HolyGuildSetStatus(
+                        "Competition data is up to date"
+                    )
+                end
+            end)
+        end,
+})
+
+HOLY_GUILD_UI.ContestProgressLabel =
+    HolySniperAddLabel(
+        GuildProgressBox,
+        "Guild Score: --\nYour Contribution: --\nPlacement: --"
+    )
+
+GuildProgressBox:AddDivider({
+    Text =
+        "Member Contributions",
+
+    MarginTop =
+        6,
+
+    MarginBottom =
+        6,
+})
+
+HOLY_GUILD_UI.ContributionList =
+    GuildProgressBox:AddStatusList(
+        "HolyGuildContributionList",
+        {
+            RowHeight =
+                24,
+
+            KeyWidth =
+                0.70,
+
+            Rows = {
+                {
+                    Key =
+                        "No contribution data",
+
+                    Value =
+                        "",
+                },
+            },
+        }
+    )
+
+HOLY_GUILD_UI.LeaderboardList =
+    GuildLeaderboardBox:AddStatusList(
+        "HolyGuildWeeklyLeaderboard",
+        {
+            RowHeight =
+                24,
+
+            KeyWidth =
+                0.72,
+
+            Rows = {
+                {
+                    Key =
+                        "Loading leaderboard...",
+
+                    Value =
+                        "",
+                },
+            },
+        }
+    )
+
+GuildLeaderboardBox:AddButton({
+    Text =
+        "Refresh Leaderboard",
+
+    Tooltip =
+        "Reloads the confirmed global weekly guild leaderboard.",
+
+    Func =
+        function()
+
+            task.spawn(function()
+
+                if HolyGuildRefreshLeaderboard(
+                    false
+                ) then
+
+                    HolyGuildSetStatus(
+                        "Global weekly leaderboard is up to date"
+                    )
+                end
+            end)
+        end,
+})
+
+HOLY_GUILD_UI.LeaderboardDropdown =
+    GuildSelectedGuildBox:AddDropdown(
+        "HolyGuildSelectedLeaderboardGuild",
+        {
+            Text =
+                "Select Global Guild",
+
+            Values = {
+                "Leaderboard unavailable",
+            },
+
+            Default =
+                1,
+
+            Multi =
+                false,
+
+            Searchable =
+                true,
+
+            AllowNull =
+                false,
+
+            MaxVisibleDropdownItems =
+                12,
+
+            Tooltip =
+                "Selects one of the top guilds from the global weekly leaderboard.",
+        }
+    )
+
+HOLY_GUILD_UI.LeaderboardDropdown:OnChanged(function(value)
+
+    if HOLY_GUILD_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local display =
+        HolyGuildSingleValue(
+            value
+        )
+
+    local guildId =
+        HOLY_GUILD_RUNTIME.GuildDisplayMap[
+            display
+        ]
+
+    if guildId then
+
+        HOLY_GUILD_STATE.SelectedGuildId =
+            guildId
+    end
+
+    HolySniperSetLabel(
+        HOLY_GUILD_UI.SelectedGuildLabel,
+        HolyGuildBuildSelectedGuildText()
+    )
+end)
+
+HOLY_GUILD_UI.SelectedGuildLabel =
+    HolySniperAddLabel(
+        GuildSelectedGuildBox,
+        "Select a guild from the leaderboard."
+    )
+
+HolyGuildSetPage(
+    HOLY_GUILD_STATE.Page
+)
+
+HolyGuildStart()
 
 --==================================================
 -- [6.25] SNIPER TAB
