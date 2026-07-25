@@ -130958,7 +130958,9 @@ function HolyGuildPanelImage(
         size
 
     imageLabel.Image =
-        tostring(image or "")
+        HolyGuildNormalizeImage(
+            image
+        )
 
     imageLabel.ScaleType =
         Enum.ScaleType.Crop
@@ -133735,6 +133737,7 @@ function HolyGuildRefreshLeaderboardPanel()
                     tostring(row.Name),
                     tostring(row.Tag),
                     tostring(row.Score),
+                    tostring(row.IconId),
                 },
                 "\31"
             )
@@ -134096,6 +134099,14 @@ function HolyGuildCreateLeaderboardButton(
         }
     )
 
+    HolyGuildPanelImage(
+        panel,
+        button,
+        rowData.IconId,
+        UDim2.fromOffset(40, 6),
+        UDim2.fromOffset(32, 32)
+    )
+
     HolyGuildPanelText(
         panel,
         button,
@@ -134112,8 +134123,8 @@ function HolyGuildCreateLeaderboardButton(
                 )
                 or ""
             ),
-        UDim2.fromOffset(45, 4),
-        UDim2.new(1, -125, 0, 19),
+        UDim2.fromOffset(80, 4),
+        UDim2.new(1, -160, 0, 19),
         {
             TextSize = 10,
             Truncate = true,
@@ -134126,8 +134137,8 @@ function HolyGuildCreateLeaderboardButton(
         rowData.IsOwn == true
             and "Your guild"
             or "Global guild",
-        UDim2.fromOffset(45, 22),
-        UDim2.new(1, -125, 0, 15),
+        UDim2.fromOffset(80, 22),
+        UDim2.new(1, -160, 0, 15),
         {
             TextSize = 8,
             Transparency = 0.50,
@@ -134184,6 +134195,18 @@ function HolyGuildCreateLeaderboardButton(
 
         HolyGuildRefreshLeaderboardPanel()
         HolyGuildRefreshSelectedGuildPanel()
+
+        if rowData.IsOwn ~= true
+        and rowId ~= "" then
+
+            task.spawn(function()
+
+                HolyGuildRefreshGuildDetails(
+                    rowId,
+                    true
+                )
+            end)
+        end
     end)
 
     return button
@@ -135152,6 +135175,26 @@ function HolyGuildLeaderboardArray()
                                 "MemberLimit",
                                 "Capacity",
                             }
+                        ),
+
+                    IconId =
+                        HolyGuildField(
+                            guild,
+                            {
+                                "IconId",
+                                "GuildIconId",
+                                "Icon",
+                                "ImageId",
+                            },
+                            HolyGuildField(
+                                rawRow,
+                                {
+                                    "IconId",
+                                    "GuildIconId",
+                                    "Icon",
+                                    "ImageId",
+                                }
+                            )
                         ),
 
                     Raw =
@@ -136671,6 +136714,3373 @@ function HolyGuildStart()
 end
 
 --==================================================
+-- [3.96] GUILD V3 INVITES + FULL GUILD DATA
+--==================================================
+
+HOLY_GUILD_STATE.PendingInvites =
+    {}
+
+HOLY_GUILD_STATE.InvitesKnown =
+    false
+
+HOLY_GUILD_STATE.SelectedInviteId =
+    nil
+
+HOLY_GUILD_STATE.GuildDetails =
+    {}
+
+HOLY_GUILD_STATE.TrustedSenders =
+    {}
+
+HOLY_GUILD_STATE.SelectedTrustedUserId =
+    nil
+
+HOLY_GUILD_STATE.TrustedSenderDraft =
+    ""
+
+HOLY_GUILD_STATE.AutoAcceptInvites =
+    false
+
+HOLY_GUILD_STATE.AutoDeclineUntrusted =
+    false
+
+HOLY_GUILD_STATE.NotifyAutoAccepted =
+    true
+
+HOLY_GUILD_RUNTIME.Busy.Invites =
+    false
+
+HOLY_GUILD_RUNTIME.GuildDetailsLoading =
+    {}
+
+HOLY_GUILD_RUNTIME.InviteAttempts =
+    {}
+
+HOLY_GUILD_RUNTIME.InviteAutomationRunning =
+    false
+
+HOLY_GUILD_RUNTIME.LastInviteRefreshAt =
+    0
+
+HOLY_GUILD_SETTINGS_FILE =
+    "HolyGAG2/HolyGuildSettings.json"
+
+function HolyGuildNormalizeImage(value)
+
+    if type(value) == "table" then
+
+        value =
+            HolyGuildField(
+                value,
+                {
+                    "Image",
+                    "ImageId",
+                    "AssetId",
+                    "Icon",
+                    "IconId",
+                    "GuildIconId",
+                }
+            )
+    end
+
+    if type(value) == "number" then
+
+        if value > 0 then
+
+            return "rbxassetid://"
+                .. tostring(
+                    math.floor(value)
+                )
+        end
+
+        return "rbxasset://textures/ui/GuiImagePlaceholder.png"
+    end
+
+    local text =
+        HolyCleanText(
+            value
+        )
+
+    if text == "" then
+
+        return "rbxasset://textures/ui/GuiImagePlaceholder.png"
+    end
+
+    if tonumber(text) ~= nil then
+
+        return "rbxassetid://"
+            .. tostring(
+                math.floor(
+                    tonumber(text)
+                )
+            )
+    end
+
+    local lower =
+        text:lower()
+
+    if lower:find(
+        "rbxasset",
+        1,
+        true
+    )
+    or lower:find(
+        "rbxthumb",
+        1,
+        true
+    )
+    or lower:find(
+        "http://",
+        1,
+        true
+    )
+    or lower:find(
+        "https://",
+        1,
+        true
+    ) then
+
+        return text
+    end
+
+    local assetId =
+        text:match(
+            "%d+"
+        )
+
+    if assetId then
+
+        return "rbxassetid://"
+            .. assetId
+    end
+
+    return "rbxasset://textures/ui/GuiImagePlaceholder.png"
+end
+
+function HolyGuildTableCount(value)
+
+    local count =
+        0
+
+    for _ in pairs(
+        type(value) == "table"
+        and value
+        or {}
+    ) do
+
+        count =
+            count + 1
+    end
+
+    return count
+end
+
+function HolyGuildSaveSettings()
+
+    if type(writefile) ~= "function" then
+        return false
+    end
+
+    local trusted = {}
+
+    for userId, username in pairs(
+        HOLY_GUILD_STATE.TrustedSenders
+        or {}
+    ) do
+
+        trusted[
+            #trusted
+            + 1
+        ] = {
+            UserId =
+                tonumber(userId),
+
+            Username =
+                tostring(
+                    username
+                    or ""
+                ),
+        }
+    end
+
+    table.sort(
+        trusted,
+        function(left, right)
+
+            return tostring(
+                left.Username
+            ):lower()
+                < tostring(
+                    right.Username
+                ):lower()
+        end
+    )
+
+    local data = {
+        Version =
+            1,
+
+        AutoAcceptInvites =
+            HOLY_GUILD_STATE.AutoAcceptInvites
+            == true,
+
+        AutoDeclineUntrusted =
+            HOLY_GUILD_STATE.AutoDeclineUntrusted
+            == true,
+
+        NotifyAutoAccepted =
+            HOLY_GUILD_STATE.NotifyAutoAccepted
+            ~= false,
+
+        TrustedSenders =
+            trusted,
+    }
+
+    local encodedOk,
+        encoded =
+        pcall(
+            HttpService.JSONEncode,
+            HttpService,
+            data
+        )
+
+    if encodedOk ~= true then
+        return false
+    end
+
+    pcall(function()
+
+        if type(isfolder) == "function"
+        and type(makefolder) == "function"
+        and isfolder(
+            "HolyGAG2"
+        ) ~= true then
+
+            makefolder(
+                "HolyGAG2"
+            )
+        end
+    end)
+
+    return pcall(
+        writefile,
+        HOLY_GUILD_SETTINGS_FILE,
+        encoded
+    )
+end
+
+function HolyGuildLoadSettings()
+
+    if type(readfile) ~= "function"
+    or type(isfile) ~= "function"
+    or isfile(
+        HOLY_GUILD_SETTINGS_FILE
+    ) ~= true then
+
+        return false
+    end
+
+    local readOk,
+        contents =
+        pcall(
+            readfile,
+            HOLY_GUILD_SETTINGS_FILE
+        )
+
+    if readOk ~= true then
+        return false
+    end
+
+    local decodeOk,
+        data =
+        pcall(
+            HttpService.JSONDecode,
+            HttpService,
+            contents
+        )
+
+    if decodeOk ~= true
+    or type(data) ~= "table" then
+
+        return false
+    end
+
+    HOLY_GUILD_STATE.AutoAcceptInvites =
+        data.AutoAcceptInvites == true
+
+    HOLY_GUILD_STATE.AutoDeclineUntrusted =
+        data.AutoDeclineUntrusted == true
+
+    HOLY_GUILD_STATE.NotifyAutoAccepted =
+        data.NotifyAutoAccepted ~= false
+
+    HOLY_GUILD_STATE.TrustedSenders =
+        {}
+
+    for _, entry in pairs(
+        type(data.TrustedSenders) == "table"
+        and data.TrustedSenders
+        or {}
+    ) do
+
+        local userId =
+            tonumber(
+                type(entry) == "table"
+                and entry.UserId
+                or nil
+            )
+
+        local username =
+            HolyCleanText(
+                type(entry) == "table"
+                and entry.Username
+                or ""
+            )
+
+        if userId
+        and userId > 0 then
+
+            HOLY_GUILD_STATE.TrustedSenders[
+                userId
+            ] =
+                username ~= ""
+                and username
+                or (
+                    "User "
+                    .. tostring(userId)
+                )
+
+            if username ~= "" then
+
+                HOLY_GUILD_STATE.NameCache[
+                    userId
+                ] =
+                    username
+            end
+        end
+    end
+
+    return true
+end
+
+HolyGuildLoadSettings()
+
+function HolyGuildInvalidateInvitePanels()
+
+    local panels = {
+        HOLY_GUILD_UI.IncomingInvitesPanel,
+        HOLY_GUILD_UI.SelectedInvitePanel,
+        HOLY_GUILD_UI.TrustedSendersPanel,
+        HOLY_GUILD_UI.SelectedGuildPanel,
+        HOLY_GUILD_UI.LeaderboardPanel,
+    }
+
+    for _, panel in ipairs(panels) do
+
+        if type(panel) == "table" then
+
+            panel.Signature =
+                ""
+        end
+    end
+end
+
+function HolyGuildRefreshGuildDetails(
+    guildId,
+    quiet
+)
+    guildId =
+        HolyCleanText(
+            guildId
+        )
+
+    if guildId == "" then
+        return false
+    end
+
+    if type(
+        HOLY_GUILD_STATE.GuildDetails[
+            guildId
+        ]
+    ) == "table" then
+
+        return true
+    end
+
+    if HOLY_GUILD_RUNTIME.GuildDetailsLoading[
+        guildId
+    ] == true then
+
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.GuildDetailsLoading[
+        guildId
+    ] =
+        true
+
+    local ok,
+        first,
+        second,
+        third =
+        HolyGuildCall(
+            "GetGuildById",
+            guildId
+        )
+
+    HOLY_GUILD_RUNTIME.GuildDetailsLoading[
+        guildId
+    ] =
+        nil
+
+    if ok ~= true then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "Guild details failed: "
+                .. tostring(first)
+            )
+        end
+
+        return false
+    end
+
+    local result =
+        HolyGuildFirstTable(
+            first,
+            second,
+            third
+        )
+
+    local root =
+        HolyGuildSnapshotRoot(
+            result
+        )
+
+    if type(root) ~= "table" then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "The selected guild returned no details."
+            )
+        end
+
+        return false
+    end
+
+    HOLY_GUILD_STATE.GuildDetails[
+        guildId
+    ] =
+        root
+
+    HolyGuildInvalidateInvitePanels()
+    HolyGuildRefreshInfoPanels()
+
+    return true
+end
+
+function HolyGuildBuildGuildSummary(row)
+
+    if type(row) ~= "table" then
+        return nil
+    end
+
+    local guildId =
+        HolyCleanText(
+            row.Id
+        )
+
+    local ownId =
+        HolyGuildGetGuildId()
+
+    local isOwn =
+        row.IsOwn == true
+        or (
+            guildId ~= ""
+            and guildId == ownId
+        )
+
+    local root =
+        isOwn
+        and HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+        or HOLY_GUILD_STATE.GuildDetails[
+            guildId
+        ]
+
+    root =
+        type(root) == "table"
+        and root
+        or {}
+
+    local rawMembers =
+        HolyGuildField(
+            root,
+            {
+                "Members",
+                "MemberList",
+                "GuildMembers",
+            }
+        )
+
+    local memberCount =
+        tonumber(
+            HolyGuildField(
+                root,
+                {
+                    "MemberCount",
+                    "MembersCount",
+                },
+                row.Members
+            )
+        )
+
+    if memberCount == nil
+    and type(rawMembers) == "table" then
+
+        memberCount =
+            HolyGuildTableCount(
+                rawMembers
+            )
+    end
+
+    local capacity =
+        tonumber(
+            HolyGuildField(
+                root,
+                {
+                    "MaxMembers",
+                    "MemberLimit",
+                    "Capacity",
+                    "MemberCapacity",
+                    "Slots",
+                },
+                row.MaxMembers
+            )
+        )
+
+    local iconId =
+        HolyGuildField(
+            root,
+            {
+                "IconId",
+                "GuildIconId",
+                "Icon",
+                "ImageId",
+            },
+            row.IconId
+        )
+
+    local name =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "Name",
+                    "GuildName",
+                },
+                row.Name
+            )
+        )
+
+    local tag =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "Tag",
+                    "GuildTag",
+                },
+                row.Tag
+            )
+        )
+
+    return {
+        Id =
+            guildId,
+
+        Name =
+            name ~= ""
+            and name
+            or "Unknown Guild",
+
+        Tag =
+            tag,
+
+        IconId =
+            iconId,
+
+        Members =
+            memberCount,
+
+        MaxMembers =
+            capacity,
+
+        Score =
+            HolyGuildField(
+                root,
+                {
+                    "WeeklyContribution",
+                    "WeeklyContributions",
+                    "WeeklyScore",
+                    "Score",
+                },
+                row.Score
+            ),
+
+        Rank =
+            row.Rank,
+
+        IsOwn =
+            isOwn,
+
+        Loaded =
+            isOwn
+            or type(
+                HOLY_GUILD_STATE.GuildDetails[
+                    guildId
+                ]
+            ) == "table",
+    }
+end
+
+function HolyGuildFindPendingInvites(
+    value,
+    depth,
+    visited
+)
+    if type(value) ~= "table" then
+
+        return nil,
+            false
+    end
+
+    depth =
+        tonumber(depth)
+        or 0
+
+    if depth > 6 then
+
+        return nil,
+            false
+    end
+
+    visited =
+        type(visited) == "table"
+        and visited
+        or {}
+
+    if visited[value] == true then
+
+        return nil,
+            false
+    end
+
+    visited[value] =
+        true
+
+    for key, child in pairs(value) do
+
+        local normalized =
+            HolyGuildKey(
+                key
+            )
+
+        if normalized == "pendinginvites"
+        or normalized == "pendingguildinvites"
+        or normalized == "guildinvites"
+        or normalized == "incomingguildinvites" then
+
+            if type(child) == "table" then
+
+                return child,
+                    true
+            end
+
+            return {},
+                true
+        end
+    end
+
+    for _, child in pairs(value) do
+
+        if type(child) == "table" then
+
+            local found,
+                matched =
+                HolyGuildFindPendingInvites(
+                    child,
+                    depth + 1,
+                    visited
+                )
+
+            if matched == true then
+
+                return found,
+                    true
+            end
+        end
+    end
+
+    return nil,
+        false
+end
+
+function HolyGuildNormalizePendingInvites(source)
+
+    if type(source) ~= "table" then
+        return {}
+    end
+
+    if HolyGuildField(
+        source,
+        {
+            "InviteId",
+            "InviteID",
+            "GuildInviteId",
+        }
+    ) ~= nil then
+
+        source = {
+            source,
+        }
+    end
+
+    local rows = {}
+
+    for key, rawInvite in pairs(source) do
+
+        local invite =
+            type(rawInvite) == "table"
+            and rawInvite
+            or {}
+
+        local guild =
+            HolyGuildField(
+                invite,
+                {
+                    "Guild",
+                    "GuildData",
+                    "GuildInfo",
+                },
+                {}
+            )
+
+        guild =
+            type(guild) == "table"
+            and guild
+            or {}
+
+        local inviter =
+            HolyGuildField(
+                invite,
+                {
+                    "Inviter",
+                    "Sender",
+                    "From",
+                    "InvitedBy",
+                },
+                {}
+            )
+
+        inviter =
+            type(inviter) == "table"
+            and inviter
+            or {}
+
+        local inviteId =
+            HolyCleanText(
+                HolyGuildField(
+                    invite,
+                    {
+                        "InviteId",
+                        "InviteID",
+                        "GuildInviteId",
+                        "RequestId",
+                    },
+                    type(key) == "string"
+                    and key
+                    or (
+                        type(rawInvite) == "string"
+                        and rawInvite
+                        or ""
+                    )
+                )
+            )
+
+        local guildId =
+            HolyCleanText(
+                HolyGuildField(
+                    invite,
+                    {
+                        "GuildId",
+                        "GuildID",
+                    },
+                    HolyGuildField(
+                        guild,
+                        {
+                            "GuildId",
+                            "GuildID",
+                            "Id",
+                            "ID",
+                        },
+                        ""
+                    )
+                )
+            )
+
+        local inviterUserId =
+            tonumber(
+                HolyGuildField(
+                    invite,
+                    {
+                        "InviterUserId",
+                        "InviterId",
+                        "SenderUserId",
+                        "FromUserId",
+                        "InvitedByUserId",
+                    },
+                    HolyGuildField(
+                        inviter,
+                        {
+                            "UserId",
+                            "UserID",
+                            "Id",
+                            "ID",
+                        }
+                    )
+                )
+            )
+
+        local inviterName =
+            HolyCleanText(
+                HolyGuildField(
+                    invite,
+                    {
+                        "InviterUsername",
+                        "InviterName",
+                        "SenderUsername",
+                        "SenderName",
+                        "FromUsername",
+                    },
+                    HolyGuildField(
+                        inviter,
+                        {
+                            "Username",
+                            "UserName",
+                            "Name",
+                        },
+                        ""
+                    )
+                )
+            )
+
+        if inviterUserId
+        and inviterName ~= "" then
+
+            HOLY_GUILD_STATE.NameCache[
+                inviterUserId
+            ] =
+                inviterName
+
+        elseif inviterUserId then
+
+            inviterName =
+                HOLY_GUILD_STATE.NameCache[
+                    inviterUserId
+                ]
+                or ""
+
+            HolyGuildRequestName(
+                inviterUserId
+            )
+        end
+
+        if inviteId ~= "" then
+
+            rows[
+                #rows
+                + 1
+            ] = {
+                Id =
+                    inviteId,
+
+                GuildId =
+                    guildId,
+
+                GuildName =
+                    HolyCleanText(
+                        HolyGuildField(
+                            invite,
+                            {
+                                "GuildName",
+                            },
+                            HolyGuildField(
+                                guild,
+                                {
+                                    "Name",
+                                    "GuildName",
+                                },
+                                "Unknown Guild"
+                            )
+                        )
+                    ),
+
+                GuildTag =
+                    HolyCleanText(
+                        HolyGuildField(
+                            invite,
+                            {
+                                "GuildTag",
+                            },
+                            HolyGuildField(
+                                guild,
+                                {
+                                    "Tag",
+                                    "GuildTag",
+                                },
+                                ""
+                            )
+                        )
+                    ),
+
+                IconId =
+                    HolyGuildField(
+                        invite,
+                        {
+                            "IconId",
+                            "GuildIconId",
+                            "Icon",
+                        },
+                        HolyGuildField(
+                            guild,
+                            {
+                                "IconId",
+                                "GuildIconId",
+                                "Icon",
+                                "ImageId",
+                            }
+                        )
+                    ),
+
+                Members =
+                    HolyGuildField(
+                        invite,
+                        {
+                            "MemberCount",
+                            "MembersCount",
+                        },
+                        HolyGuildField(
+                            guild,
+                            {
+                                "MemberCount",
+                                "MembersCount",
+                            }
+                        )
+                    ),
+
+                MaxMembers =
+                    HolyGuildField(
+                        invite,
+                        {
+                            "MaxMembers",
+                            "MemberLimit",
+                        },
+                        HolyGuildField(
+                            guild,
+                            {
+                                "MaxMembers",
+                                "MemberLimit",
+                                "Capacity",
+                            }
+                        )
+                    ),
+
+                Score =
+                    HolyGuildField(
+                        invite,
+                        {
+                            "WeeklyScore",
+                            "Score",
+                        },
+                        HolyGuildField(
+                            guild,
+                            {
+                                "WeeklyScore",
+                                "WeeklyContribution",
+                                "Score",
+                            },
+                            0
+                        )
+                    ),
+
+                InviterUserId =
+                    inviterUserId,
+
+                InviterName =
+                    inviterName,
+
+                ReceivedAt =
+                    HolyGuildField(
+                        invite,
+                        {
+                            "CreatedAt",
+                            "SentAt",
+                            "ReceivedAt",
+                            "Timestamp",
+                        },
+                        0
+                    ),
+
+                Raw =
+                    rawInvite,
+            }
+        end
+    end
+
+    table.sort(
+        rows,
+        function(left, right)
+
+            local leftTime =
+                tonumber(
+                    left.ReceivedAt
+                )
+                or 0
+
+            local rightTime =
+                tonumber(
+                    right.ReceivedAt
+                )
+                or 0
+
+            if leftTime ~= rightTime then
+
+                return leftTime
+                    > rightTime
+            end
+
+            return tostring(
+                left.GuildName
+            ):lower()
+                < tostring(
+                    right.GuildName
+                ):lower()
+        end
+    )
+
+    return rows
+end
+
+function HolyGuildApplyPendingInvites(source)
+
+    local rows =
+        HolyGuildNormalizePendingInvites(
+            source
+        )
+
+    HOLY_GUILD_STATE.PendingInvites =
+        rows
+
+    HOLY_GUILD_STATE.InvitesKnown =
+        true
+
+    local selectedStillExists =
+        false
+
+    for _, invite in ipairs(rows) do
+
+        if invite.Id
+            == HOLY_GUILD_STATE.SelectedInviteId then
+
+            selectedStillExists =
+                true
+        end
+
+        if invite.GuildId ~= ""
+        and type(
+            HOLY_GUILD_STATE.GuildDetails[
+                invite.GuildId
+            ]
+        ) ~= "table"
+        and HOLY_GUILD_RUNTIME.GuildDetailsLoading[
+            invite.GuildId
+        ] ~= true then
+
+            task.spawn(function()
+
+                HolyGuildRefreshGuildDetails(
+                    invite.GuildId,
+                    true
+                )
+            end)
+        end
+    end
+
+    if selectedStillExists ~= true then
+
+        HOLY_GUILD_STATE.SelectedInviteId =
+            rows[1]
+            and rows[1].Id
+            or nil
+    end
+
+    for inviteId in pairs(
+        HOLY_GUILD_RUNTIME.InviteAttempts
+    ) do
+
+        local exists =
+            false
+
+        for _, invite in ipairs(rows) do
+
+            if invite.Id == inviteId then
+
+                exists =
+                    true
+
+                break
+            end
+        end
+
+        if exists ~= true then
+
+            HOLY_GUILD_RUNTIME.InviteAttempts[
+                inviteId
+            ] =
+                nil
+        end
+    end
+
+    HolyGuildInvalidateInvitePanels()
+    HolyGuildRefreshInfoPanels()
+    HolyGuildRunInviteAutomation()
+
+    return true
+end
+
+function HolyGuildApplyMailboxUpdate(...)
+
+    local packed =
+        table.pack(...)
+
+    for index = 1, packed.n do
+
+        local pending,
+            found =
+            HolyGuildFindPendingInvites(
+                packed[index],
+                0,
+                {}
+            )
+
+        if found == true then
+
+            return HolyGuildApplyPendingInvites(
+                pending
+            )
+        end
+    end
+
+    return false
+end
+
+function HolyGuildRefreshInvites(quiet)
+
+    if HOLY_GUILD_RUNTIME.Busy.Invites == true then
+        return false
+    end
+
+    local networking,
+        networkingError =
+        HolyGuildGetNetworking()
+
+    local listPacket =
+        type(networking) == "table"
+        and type(networking.Mailbox) == "table"
+        and networking.Mailbox.List
+        or nil
+
+    if type(listPacket) ~= "table"
+    or type(listPacket.Fire) ~= "function" then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                networkingError
+                or "Mailbox.List is unavailable"
+            )
+        end
+
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Invites =
+        true
+
+    local callOk,
+        first,
+        second,
+        third =
+        pcall(function()
+
+            return listPacket:Fire()
+        end)
+
+    HOLY_GUILD_RUNTIME.Busy.Invites =
+        false
+
+    HOLY_GUILD_RUNTIME.LastInviteRefreshAt =
+        os.clock()
+
+    if callOk ~= true then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "Invite refresh failed: "
+                .. tostring(first)
+            )
+        end
+
+        return false
+    end
+
+    local applied =
+        HolyGuildApplyMailboxUpdate(
+            first,
+            second,
+            third
+        )
+
+    if applied ~= true
+    and quiet ~= true then
+
+        HolyGuildSetStatus(
+            "Mailbox refreshed. Waiting for pending-invite data."
+        )
+    end
+
+    HolyGuildRefreshInviteActions()
+
+    return applied
+end
+
+function HolyGuildGetSelectedInvite()
+
+    local selectedId =
+        tostring(
+            HOLY_GUILD_STATE.SelectedInviteId
+            or ""
+        )
+
+    for _, invite in ipairs(
+        HOLY_GUILD_STATE.PendingInvites
+        or {}
+    ) do
+
+        if tostring(invite.Id)
+            == selectedId then
+
+            return invite
+        end
+    end
+
+    local first =
+        (
+            HOLY_GUILD_STATE.PendingInvites
+            or {}
+        )[1]
+
+    HOLY_GUILD_STATE.SelectedInviteId =
+        first
+        and first.Id
+        or nil
+
+    return first
+end
+
+function HolyGuildBuildInviteInfo(invite)
+
+    if type(invite) ~= "table" then
+        return nil
+    end
+
+    local summary =
+        HolyGuildBuildGuildSummary({
+            Id =
+                invite.GuildId,
+
+            Name =
+                invite.GuildName,
+
+            Tag =
+                invite.GuildTag,
+
+            IconId =
+                invite.IconId,
+
+            Members =
+                invite.Members,
+
+            MaxMembers =
+                invite.MaxMembers,
+
+            Score =
+                invite.Score,
+        })
+        or {}
+
+    local inviterName =
+        HolyCleanText(
+            invite.InviterName
+        )
+
+    if inviterName == ""
+    and invite.InviterUserId then
+
+        inviterName =
+            HOLY_GUILD_STATE.NameCache[
+                invite.InviterUserId
+            ]
+            or (
+                "User "
+                .. tostring(
+                    invite.InviterUserId
+                )
+            )
+    end
+
+    summary.InviteId =
+        invite.Id
+
+    summary.InviterUserId =
+        invite.InviterUserId
+
+    summary.InviterName =
+        inviterName ~= ""
+        and inviterName
+        or "Unknown Player"
+
+    summary.Trusted =
+        invite.InviterUserId ~= nil
+        and HOLY_GUILD_STATE.TrustedSenders[
+            invite.InviterUserId
+        ] ~= nil
+
+    return summary
+end
+
+function HolyGuildRefreshIncomingInvitesPanel()
+
+    local panel =
+        HOLY_GUILD_UI.IncomingInvitesPanel
+
+    local rows =
+        HOLY_GUILD_STATE.PendingInvites
+        or {}
+
+    local signatureParts = {
+        tostring(
+            HOLY_GUILD_STATE.InvitesKnown
+        ),
+        tostring(
+            HOLY_GUILD_STATE.SelectedInviteId
+        ),
+        tostring(
+            HOLY_GUILD_RUNTIME.Busy.Invites
+        ),
+    }
+
+    for _, invite in ipairs(rows) do
+
+        local info =
+            HolyGuildBuildInviteInfo(
+                invite
+            )
+
+        signatureParts[
+            #signatureParts
+            + 1
+        ] =
+            table.concat(
+                {
+                    tostring(invite.Id),
+                    tostring(info.Name),
+                    tostring(info.Tag),
+                    tostring(info.IconId),
+                    tostring(info.InviterName),
+                    tostring(info.Trusted),
+                },
+                "\31"
+            )
+    end
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            table.concat(
+                signatureParts,
+                "\30"
+            )
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local totalHeight =
+        232
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            false
+        )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "INCOMING REQUESTS  •  "
+            .. tostring(#rows),
+        UDim2.fromOffset(10, 5),
+        UDim2.new(1, -20, 0, 23),
+        {
+            TextSize = 9,
+            Transparency = 0.40,
+        }
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        32
+    )
+
+    local scroll =
+        Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.Position =
+        UDim2.fromOffset(4, 36)
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            -8,
+            0,
+            190
+        )
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            math.max(
+                190,
+                #rows * 52
+            )
+        )
+
+    scroll.ScrollBarThickness =
+        #rows > 3
+        and 3
+        or 0
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.Parent =
+        card
+
+    HolyGuildTrackPanelObject(
+        panel,
+        scroll,
+        {
+            ScrollBarImageColor3 =
+                "AccentColor",
+        }
+    )
+
+    if #rows <= 0 then
+
+        local message =
+            HOLY_GUILD_STATE.InvitesKnown == true
+            and "No pending guild invitations."
+            or "Waiting for pending-invite data."
+
+        HolyGuildPanelText(
+            panel,
+            scroll,
+            message,
+            UDim2.fromOffset(8, 16),
+            UDim2.new(1, -16, 0, 48),
+            {
+                TextSize = 10,
+                Transparency = 0.42,
+                Wrapped = true,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+    end
+
+    for index, invite in ipairs(rows) do
+
+        local info =
+            HolyGuildBuildInviteInfo(
+                invite
+            )
+
+        local selected =
+            invite.Id
+            == HOLY_GUILD_STATE.SelectedInviteId
+
+        local button =
+            Instance.new("TextButton")
+
+        button.AutoButtonColor =
+            false
+
+        button.BackgroundColor3 =
+            selected
+            and Library.Scheme.AccentColor
+            or Library.Scheme.MainColor
+
+        button.BackgroundTransparency =
+            selected
+            and 0.82
+            or 1
+
+        button.BorderSizePixel =
+            0
+
+        button.Position =
+            UDim2.fromOffset(
+                0,
+                (index - 1) * 52
+            )
+
+        button.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                50
+            )
+
+        button.Text =
+            ""
+
+        button.Parent =
+            scroll
+
+        local corner =
+            Instance.new("UICorner")
+
+        corner.CornerRadius =
+            UDim.new(0, 4)
+
+        corner.Parent =
+            button
+
+        HolyGuildTrackPanelObject(
+            panel,
+            button,
+            {
+                BackgroundColor3 =
+                    selected
+                    and "AccentColor"
+                    or "MainColor",
+            }
+        )
+
+        HolyGuildPanelImage(
+            panel,
+            button,
+            info.IconId,
+            UDim2.fromOffset(6, 8),
+            UDim2.fromOffset(34, 34)
+        )
+
+        HolyGuildPanelText(
+            panel,
+            button,
+            info.Name
+                .. (
+                    info.Tag ~= ""
+                    and (
+                        " ["
+                        .. info.Tag
+                        .. "]"
+                    )
+                    or ""
+                ),
+            UDim2.fromOffset(48, 5),
+            UDim2.new(1, -56, 0, 20),
+            {
+                TextSize = 10,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            button,
+            "From @"
+                .. info.InviterName
+                .. (
+                    info.Trusted
+                    and "  •  Trusted"
+                    or ""
+                ),
+            UDim2.fromOffset(48, 25),
+            UDim2.new(1, -56, 0, 17),
+            {
+                TextSize = 8,
+                Transparency = 0.48,
+                Truncate = true,
+            }
+        )
+
+        button.MouseButton1Click:Connect(function()
+
+            HOLY_GUILD_STATE.SelectedInviteId =
+                invite.Id
+
+            HolyGuildInvalidateInvitePanels()
+            HolyGuildRefreshInfoPanels()
+        end)
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildRefreshSelectedInvitePanel()
+
+    local panel =
+        HOLY_GUILD_UI.SelectedInvitePanel
+
+    local invite =
+        HolyGuildGetSelectedInvite()
+
+    local info =
+        HolyGuildBuildInviteInfo(
+            invite
+        )
+
+    local signature =
+        type(info) == "table"
+        and table.concat(
+            {
+                tostring(info.InviteId),
+                tostring(info.Id),
+                tostring(info.Name),
+                tostring(info.Tag),
+                tostring(info.IconId),
+                tostring(info.Members),
+                tostring(info.MaxMembers),
+                tostring(info.Score),
+                tostring(info.InviterUserId),
+                tostring(info.InviterName),
+                tostring(info.Trusted),
+            },
+            "\31"
+        )
+        or "none"
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local totalHeight =
+        190
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            false
+        )
+
+    if type(info) ~= "table" then
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "Select an incoming guild invitation.",
+            UDim2.fromOffset(12, 18),
+            UDim2.new(1, -24, 0, 60),
+            {
+                TextSize = 10,
+                Transparency = 0.42,
+                Wrapped = true,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            totalHeight
+        )
+
+        return
+    end
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        info.IconId,
+        UDim2.fromOffset(12, 12),
+        UDim2.fromOffset(54, 54)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        info.Name,
+        UDim2.fromOffset(76, 10),
+        UDim2.new(1, -88, 0, 22),
+        {
+            TextSize = 13,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        info.Tag ~= ""
+        and (
+            "["
+            .. info.Tag
+            .. "]"
+        )
+        or "No guild tag",
+        UDim2.fromOffset(76, 31),
+        UDim2.new(1, -88, 0, 17),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        info.Trusted
+        and "TRUSTED"
+        or "UNTRUSTED",
+        UDim2.fromOffset(76, 49),
+        info.Trusted
+        and 67
+        or 78,
+        info.Trusted
+        and "Success"
+        or "Warning"
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        78
+    )
+
+    local details = {
+        {
+            "Invited by",
+            "@"
+                .. info.InviterName,
+        },
+        {
+            "Members",
+            info.Members ~= nil
+            and (
+                tostring(info.Members)
+                .. (
+                    info.MaxMembers ~= nil
+                    and (
+                        " / "
+                        .. tostring(
+                            info.MaxMembers
+                        )
+                    )
+                    or ""
+                )
+            )
+            or "Loading...",
+        },
+        {
+            "Weekly score",
+            HolyGuildFormatNumber(
+                info.Score
+                or 0
+            ),
+        },
+        {
+            "Automatic rule",
+            info.Trusted
+            and "Allowed"
+            or "Manual review",
+        },
+    }
+
+    for index, detail in ipairs(details) do
+
+        local y =
+            83
+            + (index - 1) * 24
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[1],
+            UDim2.fromOffset(12, y),
+            UDim2.new(0.46, -12, 0, 21),
+            {
+                TextSize = 9,
+                Transparency = 0.45,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[2],
+            UDim2.new(0.46, 0, 0, y),
+            UDim2.new(0.54, -12, 0, 21),
+            {
+                TextSize = 9,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildRefreshTrustedSendersPanel()
+
+    local panel =
+        HOLY_GUILD_UI.TrustedSendersPanel
+
+    local rows = {}
+
+    for userId, username in pairs(
+        HOLY_GUILD_STATE.TrustedSenders
+        or {}
+    ) do
+
+        rows[
+            #rows
+            + 1
+        ] = {
+            UserId =
+                tonumber(userId),
+
+            Username =
+                tostring(
+                    username
+                    or ""
+                ),
+        }
+    end
+
+    table.sort(
+        rows,
+        function(left, right)
+
+            return left.Username:lower()
+                < right.Username:lower()
+        end
+    )
+
+    local signatureParts = {
+        tostring(
+            HOLY_GUILD_STATE.SelectedTrustedUserId
+        ),
+    }
+
+    for _, row in ipairs(rows) do
+
+        signatureParts[
+            #signatureParts
+            + 1
+        ] =
+            tostring(row.UserId)
+            .. ":"
+            .. row.Username
+    end
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            table.concat(
+                signatureParts,
+                "\30"
+            )
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local totalHeight =
+        128
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            false
+        )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "TRUSTED SENDERS  •  "
+            .. tostring(#rows),
+        UDim2.fromOffset(10, 4),
+        UDim2.new(1, -20, 0, 22),
+        {
+            TextSize = 8,
+            Transparency = 0.45,
+        }
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        29
+    )
+
+    local scroll =
+        Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.Position =
+        UDim2.fromOffset(4, 33)
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            -8,
+            0,
+            90
+        )
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            math.max(
+                90,
+                #rows * 40
+            )
+        )
+
+    scroll.ScrollBarThickness =
+        #rows > 2
+        and 3
+        or 0
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.Parent =
+        card
+
+    HolyGuildTrackPanelObject(
+        panel,
+        scroll,
+        {
+            ScrollBarImageColor3 =
+                "AccentColor",
+        }
+    )
+
+    if #rows <= 0 then
+
+        HolyGuildPanelText(
+            panel,
+            scroll,
+            "No trusted senders added.",
+            UDim2.fromOffset(8, 10),
+            UDim2.new(1, -16, 0, 34),
+            {
+                TextSize = 9,
+                Transparency = 0.45,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+    end
+
+    for index, row in ipairs(rows) do
+
+        local selected =
+            row.UserId
+            == HOLY_GUILD_STATE.SelectedTrustedUserId
+
+        local button =
+            Instance.new("TextButton")
+
+        button.AutoButtonColor =
+            false
+
+        button.BackgroundColor3 =
+            selected
+            and Library.Scheme.AccentColor
+            or Library.Scheme.MainColor
+
+        button.BackgroundTransparency =
+            selected
+            and 0.82
+            or 1
+
+        button.BorderSizePixel =
+            0
+
+        button.Position =
+            UDim2.fromOffset(
+                0,
+                (index - 1) * 40
+            )
+
+        button.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                38
+            )
+
+        button.Text =
+            ""
+
+        button.Parent =
+            scroll
+
+        local corner =
+            Instance.new("UICorner")
+
+        corner.CornerRadius =
+            UDim.new(0, 4)
+
+        corner.Parent =
+            button
+
+        HolyGuildTrackPanelObject(
+            panel,
+            button,
+            {
+                BackgroundColor3 =
+                    selected
+                    and "AccentColor"
+                    or "MainColor",
+            }
+        )
+
+        HolyGuildPanelImage(
+            panel,
+            button,
+            "rbxthumb://type=AvatarHeadShot&id="
+                .. tostring(row.UserId)
+                .. "&w=150&h=150",
+            UDim2.fromOffset(5, 5),
+            UDim2.fromOffset(28, 28)
+        )
+
+        HolyGuildPanelText(
+            panel,
+            button,
+            "@"
+                .. row.Username,
+            UDim2.fromOffset(41, 1),
+            UDim2.new(1, -49, 1, 0),
+            {
+                TextSize = 9,
+                Truncate = true,
+            }
+        )
+
+        button.MouseButton1Click:Connect(function()
+
+            HOLY_GUILD_STATE.SelectedTrustedUserId =
+                row.UserId
+
+            HolyGuildInvalidateInvitePanels()
+            HolyGuildRefreshInfoPanels()
+        end)
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildRefreshInviteActions()
+
+    local invite =
+        HolyGuildGetSelectedInvite()
+
+    local busy =
+        HOLY_GUILD_RUNTIME.Busy.Action == true
+        or HOLY_GUILD_RUNTIME.Busy.Invites == true
+
+    local activeGuild =
+        HolyGuildGetGuildId() ~= ""
+
+    if type(
+        HOLY_GUILD_UI.InviteResponseActions
+    ) == "table" then
+
+        pcall(function()
+
+            HOLY_GUILD_UI.InviteResponseActions:SetDisabled(
+                "Accept",
+                invite == nil
+                or busy
+                or activeGuild
+            )
+
+            HOLY_GUILD_UI.InviteResponseActions:SetDisabled(
+                "Decline",
+                invite == nil
+                or busy
+            )
+
+            HOLY_GUILD_UI.InviteResponseActions:SetDisabled(
+                "Refresh",
+                HOLY_GUILD_RUNTIME.Busy.Invites
+                == true
+            )
+        end)
+    end
+
+    if type(
+        HOLY_GUILD_UI.TrustedSenderActions
+    ) == "table" then
+
+        pcall(function()
+
+            HOLY_GUILD_UI.TrustedSenderActions:SetDisabled(
+                "Remove",
+                HOLY_GUILD_STATE.SelectedTrustedUserId
+                == nil
+            )
+        end)
+    end
+end
+
+function HolyGuildAddTrustedSender()
+
+    local username =
+        HolyCleanText(
+            HOLY_GUILD_STATE.TrustedSenderDraft
+        ):gsub(
+            "^@",
+            ""
+        )
+
+    if username == "" then
+
+        HolyNotify(
+            "HOLY Guild",
+            "Enter a Roblox username first.",
+            4
+        )
+
+        return
+    end
+
+    HolyGuildSetStatus(
+        "Resolving @"
+        .. username
+        .. "..."
+    )
+
+    task.spawn(function()
+
+        local resolveOk,
+            userId =
+            pcall(
+                Players.GetUserIdFromNameAsync,
+                Players,
+                username
+            )
+
+        userId =
+            tonumber(userId)
+
+        if resolveOk ~= true
+        or userId == nil
+        or userId <= 0 then
+
+            HolyGuildSetStatus(
+                "Could not resolve @"
+                .. username
+            )
+
+            HolyNotify(
+                "HOLY Guild",
+                "That Roblox username could not be found.",
+                5
+            )
+
+            return
+        end
+
+        if userId == LocalPlayer.UserId then
+
+            HolyNotify(
+                "HOLY Guild",
+                "You cannot add your own account as a trusted inviter.",
+                4
+            )
+
+            return
+        end
+
+        local canonicalName =
+            username
+
+        pcall(function()
+
+            canonicalName =
+                Players:GetNameFromUserIdAsync(
+                    userId
+                )
+        end)
+
+        HOLY_GUILD_STATE.TrustedSenders[
+            userId
+        ] =
+            tostring(
+                canonicalName
+            )
+
+        HOLY_GUILD_STATE.NameCache[
+            userId
+        ] =
+            tostring(
+                canonicalName
+            )
+
+        HOLY_GUILD_STATE.SelectedTrustedUserId =
+            userId
+
+        HOLY_GUILD_STATE.TrustedSenderDraft =
+            ""
+
+        if type(
+            HOLY_GUILD_UI.TrustedSenderInput
+        ) == "table"
+        and type(
+            HOLY_GUILD_UI.TrustedSenderInput.SetValue
+        ) == "function" then
+
+            HOLY_GUILD_RUNTIME.UpdatingUI =
+                true
+
+            pcall(function()
+
+                HOLY_GUILD_UI.TrustedSenderInput:SetValue(
+                    "",
+                    true
+                )
+            end)
+
+            HOLY_GUILD_RUNTIME.UpdatingUI =
+                false
+        end
+
+        HolyGuildSaveSettings()
+        HolyGuildInvalidateInvitePanels()
+        HolyGuildRefreshInfoPanels()
+        HolyGuildRunInviteAutomation()
+
+        HolyGuildSetStatus(
+            "@"
+            .. tostring(canonicalName)
+            .. " is now trusted"
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            "@"
+            .. tostring(canonicalName)
+            .. " added to trusted senders.",
+            3
+        )
+    end)
+end
+
+function HolyGuildRemoveTrustedSender()
+
+    local userId =
+        tonumber(
+            HOLY_GUILD_STATE.SelectedTrustedUserId
+        )
+
+    if userId == nil then
+
+        HolyNotify(
+            "HOLY Guild",
+            "Select a trusted sender first.",
+            4
+        )
+
+        return
+    end
+
+    local username =
+        HOLY_GUILD_STATE.TrustedSenders[
+            userId
+        ]
+        or (
+            "User "
+            .. tostring(userId)
+        )
+
+    HOLY_GUILD_STATE.TrustedSenders[
+        userId
+    ] =
+        nil
+
+    HOLY_GUILD_STATE.SelectedTrustedUserId =
+        nil
+
+    HolyGuildSaveSettings()
+    HolyGuildInvalidateInvitePanels()
+    HolyGuildRefreshInfoPanels()
+
+    HolyNotify(
+        "HOLY Guild",
+        "@"
+        .. tostring(username)
+        .. " removed from trusted senders.",
+        3
+    )
+end
+
+function HolyGuildInviteStillPending(inviteId)
+
+    inviteId =
+        tostring(
+            inviteId
+            or ""
+        )
+
+    for _, invite in ipairs(
+        HOLY_GUILD_STATE.PendingInvites
+        or {}
+    ) do
+
+        if tostring(invite.Id)
+            == inviteId then
+
+            return true
+        end
+    end
+
+    return false
+end
+
+function HolyGuildRespondInvite(
+    invite,
+    accept,
+    automatic
+)
+    if type(invite) ~= "table"
+    or HOLY_GUILD_RUNTIME.Busy.Action == true then
+
+        return false
+    end
+
+    local inviteId =
+        HolyCleanText(
+            invite.Id
+        )
+
+    if inviteId == "" then
+        return false
+    end
+
+    if accept == true
+    and HolyGuildGetGuildId() ~= "" then
+
+        if automatic ~= true then
+
+            HolyNotify(
+                "HOLY Guild",
+                "Leave your current guild before accepting another invitation.",
+                5
+            )
+        end
+
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.Busy.Action =
+        true
+
+    HOLY_GUILD_RUNTIME.InviteAutomationRunning =
+        automatic == true
+
+    HOLY_GUILD_RUNTIME.InviteAttempts[
+        inviteId
+    ] =
+        os.clock()
+
+    HolyGuildRefreshInviteActions()
+
+    local info =
+        HolyGuildBuildInviteInfo(
+            invite
+        )
+
+    HolyGuildSetStatus(
+        accept == true
+        and (
+            "Accepting "
+            .. tostring(info.Name)
+            .. "..."
+        )
+        or (
+            "Declining "
+            .. tostring(info.Name)
+            .. "..."
+        )
+    )
+
+    task.spawn(function()
+
+        local ok,
+            first,
+            second =
+            HolyGuildCall(
+                "RespondInvite",
+                inviteId,
+                accept == true
+            )
+
+        local accepted =
+            ok == true
+            and HolyGuildResultAccepted(
+                first,
+                second
+            )
+
+        local confirmed =
+            false
+
+        if accepted == true then
+
+            for _ = 1, 10 do
+
+                if HolyGuildInviteStillPending(
+                    inviteId
+                ) ~= true then
+
+                    confirmed =
+                        true
+
+                    break
+                end
+
+                HolyGuildRefreshInvites(
+                    true
+                )
+
+                task.wait(
+                    0.35
+                )
+            end
+        end
+
+        HOLY_GUILD_RUNTIME.Busy.Action =
+            false
+
+        HOLY_GUILD_RUNTIME.InviteAutomationRunning =
+            false
+
+        local actionText =
+            accept == true
+            and "accepted"
+            or "declined"
+
+        local message =
+            confirmed
+            and (
+                "Guild invitation from "
+                .. tostring(info.Name)
+                .. " was "
+                .. actionText
+                .. "."
+            )
+            or (
+                accepted
+                and (
+                    "The "
+                    .. actionText
+                    .. " request was sent, but the mailbox has not confirmed it yet."
+                )
+                or HolyGuildResultMessage(
+                    first,
+                    second,
+                    "Guild invitation response was rejected"
+                )
+            )
+
+        HolyGuildSetStatus(
+            message
+        )
+
+        if automatic ~= true
+        or HOLY_GUILD_STATE.NotifyAutoAccepted
+            == true then
+
+            HolyNotify(
+                "HOLY Guild",
+                automatic == true
+                and (
+                    "Automatic rule: "
+                    .. message
+                )
+                or message,
+                confirmed
+                and 3
+                or 5
+            )
+        end
+
+        if confirmed == true
+        and accept == true then
+
+            HolyGuildRefreshSnapshot(
+                true
+            )
+
+            HolyGuildRefreshLeaderboard(
+                true
+            )
+        end
+
+        HolyGuildInvalidateInvitePanels()
+        HolyGuildRefreshInfoPanels()
+        HolyGuildRunInviteAutomation()
+    end)
+
+    return true
+end
+
+function HolyGuildRespondSelectedInvite(accept)
+
+    local invite =
+        HolyGuildGetSelectedInvite()
+
+    if type(invite) ~= "table" then
+
+        HolyNotify(
+            "HOLY Guild",
+            "Select a pending guild invitation first.",
+            4
+        )
+
+        return
+    end
+
+    HolyGuildRespondInvite(
+        invite,
+        accept == true,
+        false
+    )
+end
+
+function HolyGuildRunInviteAutomation()
+
+    if HOLY_GUILD_RUNTIME.Running ~= true
+    or HOLY_GUILD_RUNTIME.Busy.Action == true
+    or HOLY_GUILD_RUNTIME.InviteAutomationRunning
+        == true then
+
+        return
+    end
+
+    if HOLY_GUILD_STATE.AutoAcceptInvites ~= true
+    and HOLY_GUILD_STATE.AutoDeclineUntrusted
+        ~= true then
+
+        return
+    end
+
+    local hasGuild =
+        HolyGuildGetGuildId() ~= ""
+
+    for _, invite in ipairs(
+        HOLY_GUILD_STATE.PendingInvites
+        or {}
+    ) do
+
+        local inviterUserId =
+            tonumber(
+                invite.InviterUserId
+            )
+
+        local trusted =
+            inviterUserId ~= nil
+            and HOLY_GUILD_STATE.TrustedSenders[
+                inviterUserId
+            ] ~= nil
+
+        local shouldAccept =
+            trusted
+            and HOLY_GUILD_STATE.AutoAcceptInvites
+                == true
+            and hasGuild ~= true
+
+        local shouldDecline =
+            trusted ~= true
+            and HOLY_GUILD_STATE.AutoDeclineUntrusted
+                == true
+
+        local lastAttempt =
+            tonumber(
+                HOLY_GUILD_RUNTIME.InviteAttempts[
+                    invite.Id
+                ]
+            )
+            or 0
+
+        if (
+            shouldAccept
+            or shouldDecline
+        )
+        and os.clock() - lastAttempt >= 20 then
+
+            HolyGuildRespondInvite(
+                invite,
+                shouldAccept,
+                true
+            )
+
+            return
+        end
+    end
+end
+
+function HolyGuildRefreshSelectedGuildPanel()
+
+    local panel =
+        HOLY_GUILD_UI.SelectedGuildPanel
+
+    local row =
+        HolyGuildGetSelectedLeaderboardGuild()
+
+    local info =
+        HolyGuildBuildGuildSummary(
+            row
+        )
+
+    if type(info) == "table"
+    and info.IsOwn ~= true
+    and info.Id ~= ""
+    and info.Loaded ~= true
+    and HOLY_GUILD_RUNTIME.GuildDetailsLoading[
+        info.Id
+    ] ~= true then
+
+        task.spawn(function()
+
+            HolyGuildRefreshGuildDetails(
+                info.Id,
+                true
+            )
+        end)
+    end
+
+    local signature =
+        type(info) == "table"
+        and table.concat(
+            {
+                tostring(info.Id),
+                tostring(info.Rank),
+                tostring(info.Name),
+                tostring(info.Tag),
+                tostring(info.Score),
+                tostring(info.Members),
+                tostring(info.MaxMembers),
+                tostring(info.IconId),
+                tostring(info.IsOwn),
+                tostring(info.Loaded),
+            },
+            "\31"
+        )
+        or "none"
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    if type(info) ~= "table" then
+
+        local card =
+            HolyGuildPanelCard(
+                panel,
+                panel.Surface,
+                UDim2.fromOffset(0, 0),
+                UDim2.new(1, 0, 0, 184),
+                false
+            )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "Select a guild from the leaderboard.",
+            UDim2.fromOffset(12, 12),
+            UDim2.new(1, -24, 0, 60),
+            {
+                TextSize = 10,
+                Transparency = 0.40,
+                Wrapped = true,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            184
+        )
+
+        return
+    end
+
+    local ownRow =
+        HolyGuildGetOwnLeaderboardRow()
+
+    local scoreDifference =
+        type(ownRow) == "table"
+        and (
+            tonumber(info.Score)
+            or 0
+        )
+            - (
+                tonumber(ownRow.Score)
+                or 0
+            )
+        or nil
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, 184),
+            true
+        )
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        info.IconId,
+        UDim2.fromOffset(12, 12),
+        UDim2.fromOffset(54, 54)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        info.Name,
+        UDim2.fromOffset(76, 10),
+        UDim2.new(1, -88, 0, 22),
+        {
+            TextSize = 13,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        info.Tag ~= ""
+        and (
+            "["
+            .. info.Tag
+            .. "]"
+        )
+        or "No guild tag",
+        UDim2.fromOffset(76, 31),
+        UDim2.new(1, -88, 0, 17),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        info.IsOwn
+        and "YOUR GUILD"
+        or (
+            info.Loaded
+            and "GLOBAL"
+            or "LOADING"
+        ),
+        UDim2.fromOffset(76, 49),
+        info.IsOwn
+        and 76
+        or 62,
+        "Accent"
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        78
+    )
+
+    local differenceText =
+        info.IsOwn
+        and "This is your guild"
+        or (
+            scoreDifference == nil
+            and "Unavailable"
+            or (
+                scoreDifference > 0
+                and (
+                    HolyGuildFormatNumber(
+                        scoreDifference
+                    )
+                    .. " ahead of your guild"
+                )
+                or (
+                    scoreDifference < 0
+                    and (
+                        HolyGuildFormatNumber(
+                            math.abs(
+                                scoreDifference
+                            )
+                        )
+                        .. " behind your guild"
+                    )
+                    or "Tied with your guild"
+                )
+            )
+        )
+
+    local details = {
+        {
+            "Global rank",
+            tonumber(info.Rank)
+            and (
+                "#"
+                .. tostring(info.Rank)
+            )
+            or "Not ranked",
+        },
+        {
+            "Weekly score",
+            HolyGuildFormatNumber(
+                info.Score
+            ),
+        },
+        {
+            "Members",
+            info.Members ~= nil
+            and (
+                tostring(info.Members)
+                .. (
+                    info.MaxMembers ~= nil
+                    and (
+                        " / "
+                        .. tostring(
+                            info.MaxMembers
+                        )
+                    )
+                    or ""
+                )
+            )
+            or (
+                info.Loaded
+                and "Unavailable"
+                or "Loading..."
+            ),
+        },
+        {
+            "Compared with you",
+            differenceText,
+        },
+    }
+
+    for index, detail in ipairs(details) do
+
+        local y =
+            83
+            + (index - 1) * 24
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[1],
+            UDim2.fromOffset(12, y),
+            UDim2.new(0.48, -12, 0, 21),
+            {
+                TextSize = 9,
+                Transparency = 0.45,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[2],
+            UDim2.new(0.48, 0, 0, y),
+            UDim2.new(0.52, -12, 0, 21),
+            {
+                TextSize = 9,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        184
+    )
+end
+
+function HolyGuildRefreshInfoPanels()
+
+    HolyGuildRefreshOverviewPanel()
+    HolyGuildRefreshInvitePreview()
+    HolyGuildRefreshIconPreview()
+    HolyGuildRefreshMemberList()
+    HolyGuildRefreshSelectedMemberPanel()
+    HolyGuildRefreshIncomingInvitesPanel()
+    HolyGuildRefreshSelectedInvitePanel()
+    HolyGuildRefreshTrustedSendersPanel()
+    HolyGuildRefreshContestPanel()
+    HolyGuildRefreshContestProgressPanel()
+    HolyGuildRefreshLeaderboardPanel()
+    HolyGuildRefreshSelectedGuildPanel()
+    HolyGuildRefreshInviteActions()
+end
+
+function HolyGuildNormalizePage(value)
+
+    local text =
+        HolyCleanText(
+            value
+        )
+        :lower()
+
+    if text:find(
+        "member",
+        1,
+        true
+    ) then
+
+        return "Members"
+    end
+
+    if text:find(
+        "invite",
+        1,
+        true
+    ) then
+
+        return "Invites"
+    end
+
+    if text:find(
+        "contest",
+        1,
+        true
+    ) then
+
+        return "Contest"
+    end
+
+    if text:find(
+        "leader",
+        1,
+        true
+    ) then
+
+        return "Leaderboard"
+    end
+
+    return "Overview"
+end
+
+function HolyGuildSetPage(value)
+
+    local previousPage =
+        HOLY_GUILD_STATE.Page
+
+    local page =
+        HolyGuildNormalizePage(
+            value
+        )
+
+    HOLY_GUILD_STATE.Page =
+        page
+
+    if type(
+        HOLY_GUILD_RUNTIME.LastPageRefresh
+    ) ~= "table" then
+
+        HOLY_GUILD_RUNTIME.LastPageRefresh =
+            {}
+    end
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.OverviewBox,
+        page == "Overview"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.ActionsBox,
+        page == "Overview"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.MembersBox,
+        page == "Members"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.SelectedMemberBox,
+        page == "Members"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.InvitesBox,
+        page == "Invites"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.SelectedInviteBox,
+        page == "Invites"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.ContestBox,
+        page == "Contest"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.ProgressBox,
+        page == "Contest"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.LeaderboardBox,
+        page == "Leaderboard"
+    )
+
+    HolySetGroupboxVisible(
+        HOLY_GUILD_UI.SelectedGuildBox,
+        page == "Leaderboard"
+    )
+
+    if HOLY_GUILD_UI.Tab
+    and type(
+        HOLY_GUILD_UI.Tab.RefreshSides
+    ) == "function" then
+
+        task.defer(function()
+
+            HOLY_GUILD_UI.Tab:RefreshSides()
+        end)
+    end
+
+    HolyGuildRefreshUI()
+
+    local lastRefresh =
+        HOLY_GUILD_RUNTIME.LastPageRefresh[
+            page
+        ]
+        or 0
+
+    if HOLY_GUILD_RUNTIME.Running == true
+    and previousPage ~= page
+    and os.clock() - lastRefresh >= 8 then
+
+        HOLY_GUILD_RUNTIME.LastPageRefresh[
+            page
+        ] =
+            os.clock()
+
+        task.spawn(function()
+
+            if page == "Overview"
+            or page == "Members" then
+
+                HolyGuildRefreshSnapshot(
+                    true
+                )
+
+                HolyGuildRefreshPresence(
+                    true
+                )
+
+            elseif page == "Invites" then
+
+                HolyGuildRefreshInvites(
+                    false
+                )
+
+            elseif page == "Contest" then
+
+                HolyGuildRefreshCompetition(
+                    true
+                )
+
+                HolyGuildRefreshSnapshot(
+                    true
+                )
+
+                HolyGuildRefreshPresence(
+                    true
+                )
+
+            elseif page == "Leaderboard" then
+
+                HolyGuildRefreshLeaderboard(
+                    true
+                )
+            end
+        end)
+    end
+end
+
+function HolyGuildStart()
+
+    HOLY_GUILD_RUNTIME.Token =
+        HOLY_GUILD_RUNTIME.Token
+        + 1
+
+    local token =
+        HOLY_GUILD_RUNTIME.Token
+
+    HOLY_GUILD_RUNTIME.Running =
+        true
+
+    for _, connection in pairs(
+        HOLY_GUILD_RUNTIME.Connections
+        or {}
+    ) do
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+
+    HOLY_GUILD_RUNTIME.Connections =
+        {}
+
+    local networking =
+        HolyGuildGetNetworking()
+
+    local tickPacket =
+        type(networking) == "table"
+        and type(networking.Guild) == "table"
+        and networking.Guild.TickUpdate
+        or nil
+
+    local tickSignal =
+        nil
+
+    pcall(function()
+
+        tickSignal =
+            tickPacket.OnClientEvent
+    end)
+
+    if tickSignal ~= nil then
+
+        local connected,
+            connection =
+            pcall(function()
+
+                return tickSignal:Connect(
+                    HolyGuildHandleTickUpdate
+                )
+            end)
+
+        if connected == true
+        and connection then
+
+            HOLY_GUILD_RUNTIME.Connections[
+                #HOLY_GUILD_RUNTIME.Connections
+                + 1
+            ] =
+                connection
+        end
+    end
+
+    local mailboxUpdated =
+        type(networking) == "table"
+        and type(networking.Mailbox) == "table"
+        and networking.Mailbox.Updated
+        or nil
+
+    local mailboxSignal =
+        nil
+
+    pcall(function()
+
+        mailboxSignal =
+            mailboxUpdated.OnClientEvent
+    end)
+
+    if mailboxSignal ~= nil then
+
+        local connected,
+            connection =
+            pcall(function()
+
+                return mailboxSignal:Connect(function(...)
+
+                    HolyGuildApplyMailboxUpdate(
+                        ...
+                    )
+                end)
+            end)
+
+        if connected == true
+        and connection then
+
+            HOLY_GUILD_RUNTIME.Connections[
+                #HOLY_GUILD_RUNTIME.Connections
+                + 1
+            ] =
+                connection
+        end
+    end
+
+    HOLY_GUILD_RUNTIME.Connections[
+        #HOLY_GUILD_RUNTIME.Connections
+        + 1
+    ] =
+        Players.PlayerAdded:Connect(function()
+
+            HolyGuildRefreshPlayerDropdown()
+        end)
+
+    HOLY_GUILD_RUNTIME.Connections[
+        #HOLY_GUILD_RUNTIME.Connections
+        + 1
+    ] =
+        Players.PlayerRemoving:Connect(function(player)
+
+            if player.UserId
+                == HOLY_GUILD_STATE.InviteUserId then
+
+                HOLY_GUILD_STATE.InviteUserId =
+                    nil
+            end
+
+            HolyGuildRefreshPlayerDropdown()
+        end)
+
+    task.spawn(function()
+
+        HolyGuildRefreshAll(
+            false
+        )
+
+        HolyGuildRefreshInvites(
+            true
+        )
+    end)
+
+    task.spawn(function()
+
+        while HOLY_GUILD_RUNTIME.Running == true
+        and HOLY_GUILD_RUNTIME.Token == token do
+
+            if HOLY_GUILD_STATE.Page == "Contest" then
+
+                HolyGuildRefreshContestPanel()
+
+            elseif HOLY_GUILD_STATE.Page == "Invites"
+            and os.clock()
+                - (
+                    HOLY_GUILD_RUNTIME.LastInviteRefreshAt
+                    or 0
+                )
+                >= 8 then
+
+                task.spawn(function()
+
+                    HolyGuildRefreshInvites(
+                        true
+                    )
+                end)
+            end
+
+            HolyGuildRunInviteAutomation()
+
+            task.wait(
+                1
+            )
+        end
+    end)
+end
+
+--==================================================
 -- [4] WINDOW
 --==================================================
 
@@ -136948,6 +140358,22 @@ GuildSelectedMemberBox =
         "user-round"
     )
 
+GuildInvitesBox =
+    HolyAddLeftGroupbox(
+        Tabs.Guild,
+        "Guild.Invites",
+        "Incoming Guild Invites",
+        "mail"
+    )
+
+GuildSelectedInviteBox =
+    HolyAddRightGroupbox(
+        Tabs.Guild,
+        "Guild.SelectedInvite",
+        "Selected Invite",
+        "user-check"
+    )
+
 GuildContestBox =
     HolyAddLeftGroupbox(
         Tabs.Guild,
@@ -136991,6 +140417,12 @@ HOLY_GUILD_UI.MembersBox =
 
 HOLY_GUILD_UI.SelectedMemberBox =
     GuildSelectedMemberBox
+
+HOLY_GUILD_UI.InvitesBox =
+    GuildInvitesBox
+
+HOLY_GUILD_UI.SelectedInviteBox =
+    GuildSelectedInviteBox
 
 HOLY_GUILD_UI.ContestBox =
     GuildContestBox
@@ -146873,6 +150305,7 @@ GuildModeControl =
         Values = {
             "Overview",
             "Members",
+            "Invites",
             "Contest",
             "Leaderboard",
         },
@@ -147115,6 +150548,298 @@ HOLY_GUILD_UI.IconButton =
                 HolyGuildApplyIcon()
             end,
     })
+
+HOLY_GUILD_UI.IncomingInvitesPanel =
+    HolyGuildAddInfoPanel(
+        GuildInvitesBox,
+        "HolyGuildIncomingInvitesPanel",
+        232
+    )
+
+HOLY_GUILD_UI.InviteResponseActions =
+    GuildInvitesBox:AddActionRow(
+        "HolyGuildInviteResponseActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Refresh",
+
+                    Text =
+                        "Refresh Invites",
+
+                    Tooltip =
+                        "Reloads pending guild invitations from the mailbox.",
+
+                    Callback =
+                        function()
+
+                            task.spawn(function()
+
+                                HolyGuildRefreshInvites(
+                                    false
+                                )
+                            end)
+                        end,
+                },
+            },
+        }
+    )
+
+HOLY_GUILD_UI.SelectedInvitePanel =
+    HolyGuildAddInfoPanel(
+        GuildSelectedInviteBox,
+        "HolyGuildSelectedInvitePanel",
+        190
+    )
+
+HOLY_GUILD_UI.InviteResponseActions =
+    GuildSelectedInviteBox:AddActionRow(
+        "HolyGuildSelectedInviteActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Accept",
+
+                    Text =
+                        "Accept",
+
+                    Tooltip =
+                        "Accepts the selected invitation and waits for Mailbox.Updated to confirm it disappeared.",
+
+                    Callback =
+                        function()
+
+                            HolyGuildRespondSelectedInvite(
+                                true
+                            )
+                        end,
+                },
+
+                {
+                    Id =
+                        "Decline",
+
+                    Text =
+                        "Decline",
+
+                    Tooltip =
+                        "Declines the selected invitation and waits for Mailbox.Updated to confirm it disappeared.",
+
+                    Callback =
+                        function()
+
+                            HolyGuildRespondSelectedInvite(
+                                false
+                            )
+                        end,
+                },
+
+                {
+                    Id =
+                        "Refresh",
+
+                    Text =
+                        "Refresh",
+
+                    Tooltip =
+                        "Reloads all pending guild invitations.",
+
+                    Callback =
+                        function()
+
+                            task.spawn(function()
+
+                                HolyGuildRefreshInvites(
+                                    false
+                                )
+                            end)
+                        end,
+                },
+            },
+        }
+    )
+
+GuildSelectedInviteBox:AddDivider({
+    Text =
+        "Automatic Invite Rules",
+
+    MarginTop =
+        8,
+
+    MarginBottom =
+        6,
+})
+
+HOLY_GUILD_UI.AutoAcceptToggle =
+    GuildSelectedInviteBox:AddToggle(
+        "HolyGuildAutoAcceptInvites",
+        {
+            Text =
+                "Auto Accept Trusted Invites",
+
+            Default =
+                HOLY_GUILD_STATE.AutoAcceptInvites
+                == true,
+
+            Tooltip =
+                "Automatically accepts invitations only when the inviter's confirmed UserId is in your trusted list.",
+        }
+    )
+
+HOLY_GUILD_UI.AutoAcceptToggle:OnChanged(function(value)
+
+    HOLY_GUILD_STATE.AutoAcceptInvites =
+        value == true
+
+    HolyGuildSaveSettings()
+    HolyGuildRunInviteAutomation()
+end)
+
+HOLY_GUILD_UI.AutoDeclineToggle =
+    GuildSelectedInviteBox:AddToggle(
+        "HolyGuildAutoDeclineUntrusted",
+        {
+            Text =
+                "Auto Decline Untrusted",
+
+            Default =
+                HOLY_GUILD_STATE.AutoDeclineUntrusted
+                == true,
+
+            Tooltip =
+                "Automatically declines invitations from senders not included in your trusted list. Disabled by default.",
+        }
+    )
+
+HOLY_GUILD_UI.AutoDeclineToggle:OnChanged(function(value)
+
+    HOLY_GUILD_STATE.AutoDeclineUntrusted =
+        value == true
+
+    HolyGuildSaveSettings()
+    HolyGuildRunInviteAutomation()
+end)
+
+HOLY_GUILD_UI.AutoAcceptNotifyToggle =
+    GuildSelectedInviteBox:AddToggle(
+        "HolyGuildNotifyAutoAccepted",
+        {
+            Text =
+                "Notify Automatic Responses",
+
+            Default =
+                HOLY_GUILD_STATE.NotifyAutoAccepted
+                ~= false,
+
+            Tooltip =
+                "Shows a HOLY notification whenever an automatic invitation rule responds.",
+        }
+    )
+
+HOLY_GUILD_UI.AutoAcceptNotifyToggle:OnChanged(function(value)
+
+    HOLY_GUILD_STATE.NotifyAutoAccepted =
+        value == true
+
+    HolyGuildSaveSettings()
+end)
+
+HOLY_GUILD_UI.TrustedSenderInput =
+    GuildSelectedInviteBox:AddInput(
+        "HolyGuildTrustedSenderInput",
+        {
+            Text =
+                "Add Trusted Sender",
+
+            Default =
+                "",
+
+            Placeholder =
+                "Roblox username",
+
+            Numeric =
+                false,
+
+            Finished =
+                false,
+
+            ClearTextOnFocus =
+                false,
+
+            Tooltip =
+                "Enter an exact Roblox username. HOLY resolves and stores the account's UserId.",
+        }
+    )
+
+HOLY_GUILD_UI.TrustedSenderInput:OnChanged(function(value)
+
+    if HOLY_GUILD_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    HOLY_GUILD_STATE.TrustedSenderDraft =
+        tostring(
+            value
+            or ""
+        )
+end)
+
+GuildSelectedInviteBox:AddButton({
+    Text =
+        "Add Trusted Sender",
+
+    Tooltip =
+        "Resolves the entered Roblox username and adds its UserId to the trusted list.",
+
+    Func =
+        function()
+
+            HolyGuildAddTrustedSender()
+        end,
+})
+
+HOLY_GUILD_UI.TrustedSendersPanel =
+    HolyGuildAddInfoPanel(
+        GuildSelectedInviteBox,
+        "HolyGuildTrustedSendersPanel",
+        128
+    )
+
+HOLY_GUILD_UI.TrustedSenderActions =
+    GuildSelectedInviteBox:AddActionRow(
+        "HolyGuildTrustedSenderActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Remove",
+
+                    Text =
+                        "Remove Selected",
+
+                    Tooltip =
+                        "Removes the selected account from your trusted sender list.",
+
+                    Callback =
+                        function()
+
+                            HolyGuildRemoveTrustedSender()
+                        end,
+                },
+            },
+        }
+    )
 
 HOLY_GUILD_UI.MemberSearchInput =
     GuildMembersBox:AddInput(
