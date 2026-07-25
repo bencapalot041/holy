@@ -130347,14 +130347,12 @@ function HolyGuildMemberDisplay(member)
 
     local you =
         member.UserId == LocalPlayer.UserId
-        and " · You"
+        and " • You"
         or ""
 
     return marker
         .. " "
         .. tostring(member.Username)
-        .. " — "
-        .. tostring(member.Role)
         .. you
 end
 
@@ -130384,6 +130382,984 @@ function HolyGuildGetSelectedMember()
         or nil
 
     return selected
+end
+
+function HolyGuildAddInfoPanel(groupbox, id, minimumHeight)
+    local surface =
+        Instance.new("Frame")
+
+    surface.Name =
+        tostring(id) .. "Surface"
+
+    surface.BackgroundTransparency =
+        1
+
+    surface.BorderSizePixel =
+        0
+
+    surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            tonumber(minimumHeight) or 28
+        )
+
+    local panel = {
+        Surface = surface,
+        MinimumHeight = tonumber(minimumHeight) or 28,
+        Height = tonumber(minimumHeight) or 28,
+        Rows = {},
+        RegistryObjects = {},
+        Signature = "",
+    }
+
+    panel.Passthrough =
+        groupbox:AddUIPassthrough(
+            id,
+            {
+                Instance = surface,
+                Height = panel.MinimumHeight,
+                Visible = true,
+            }
+        )
+
+    local sizeConnection =
+        surface:GetPropertyChangedSignal(
+            "AbsoluteSize"
+        ):Connect(function()
+            local width =
+                math.floor(surface.AbsoluteSize.X)
+
+            if width > 0
+            and math.abs(
+                width
+                - (
+                    panel.LastAbsoluteWidth
+                    or 0
+                )
+            ) >= 2 then
+                panel.LastAbsoluteWidth =
+                    width
+
+                task.defer(function()
+                    if surface.Parent
+                    and type(HolyGuildSetInfoRows)
+                        == "function" then
+                        HolyGuildSetInfoRows(
+                            panel,
+                            panel.Rows,
+                            true
+                        )
+                    end
+                end)
+            end
+        end)
+
+    if type(Library.GiveSignal) == "function" then
+        Library:GiveSignal(
+            sizeConnection
+        )
+    end
+
+    return panel
+end
+
+function HolyGuildSetInfoRows(panel, rows, force)
+    if type(panel) ~= "table"
+    or typeof(panel.Surface) ~= "Instance"
+    or type(panel.Passthrough) ~= "table" then
+        return false
+    end
+
+    rows =
+        type(rows) == "table"
+        and rows
+        or {}
+
+    local surface =
+        panel.Surface
+
+    local scale = 1
+    local ancestor =
+        surface
+
+    while typeof(ancestor) == "Instance" do
+        local scaleObject =
+            ancestor:FindFirstChildOfClass(
+                "UIScale"
+            )
+
+        if scaleObject then
+            scale =
+                scale
+                * math.max(
+                    0.01,
+                    scaleObject.Scale
+                )
+        end
+
+        ancestor =
+            ancestor.Parent
+    end
+
+    local width =
+        surface.AbsoluteSize.X > 0
+        and (
+            surface.AbsoluteSize.X
+            / scale
+        )
+        or 230
+
+    width =
+        math.clamp(
+            math.floor(width + 0.5),
+            140,
+            520
+        )
+
+    local signatureParts = {
+        tostring(width),
+    }
+
+    for index, row in ipairs(rows) do
+        signatureParts[#signatureParts + 1] =
+            table.concat(
+                {
+                    tostring(index),
+                    tostring(row.Kind or "Row"),
+                    tostring(row.Key or ""),
+                    tostring(row.Value or ""),
+                    tostring(row.Tone or ""),
+                },
+                "\31"
+            )
+    end
+
+    local signature =
+        table.concat(
+            signatureParts,
+            "\30"
+        )
+
+    panel.Rows =
+        rows
+
+    if force ~= true
+    and panel.Signature == signature then
+        return true
+    end
+
+    panel.Signature =
+        signature
+
+    for _, object in ipairs(
+        panel.RegistryObjects
+        or {}
+    ) do
+        pcall(function()
+            Library:RemoveFromRegistry(
+                object
+            )
+        end)
+    end
+
+    panel.RegistryObjects =
+        {}
+
+    for _, child in ipairs(
+        surface:GetChildren()
+    ) do
+        child:Destroy()
+    end
+
+    if #rows <= 0 then
+        rows = {
+            {
+                Kind = "Body",
+                Key = "Information",
+                Value = "No data is available.",
+            },
+        }
+    end
+
+    local currentY = 0
+
+    for index, row in ipairs(rows) do
+        local kind =
+            tostring(row.Kind or "Row")
+
+        local keyText =
+            tostring(row.Key or "")
+
+        local valueText =
+            tostring(row.Value or "")
+
+        local rowHeight = 26
+        local titleHeight = 18
+
+        if kind == "Header" then
+            pcall(function()
+                local _,
+                    measured =
+                    Library:GetTextBounds(
+                        keyText,
+                        Library.Scheme.Font,
+                        13,
+                        math.max(
+                            100,
+                            width - 20
+                        )
+                    )
+
+                titleHeight =
+                    math.max(
+                        18,
+                        math.ceil(
+                            tonumber(measured)
+                            or 18
+                        )
+                    )
+            end)
+
+            rowHeight =
+                titleHeight
+                + (
+                    valueText ~= ""
+                    and 24
+                    or 10
+                )
+
+        elseif kind == "Body" then
+            local bodyHeight = 14
+
+            pcall(function()
+                local _,
+                    measured =
+                    Library:GetTextBounds(
+                        valueText,
+                        Library.Scheme.Font,
+                        11,
+                        math.max(
+                            100,
+                            width - 18
+                        )
+                    )
+
+                bodyHeight =
+                    tonumber(measured)
+                    or bodyHeight
+            end)
+
+            rowHeight =
+                math.max(
+                    46,
+                    math.ceil(bodyHeight)
+                    + 27
+                )
+        end
+
+        local card =
+            Instance.new("Frame")
+
+        card.Name =
+            "GuildPanelItem"
+            .. tostring(index)
+
+        card.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        card.BackgroundTransparency =
+            index % 2 == 0
+            and 0.36
+            or 0.27
+
+        card.BorderSizePixel =
+            0
+
+        card.Position =
+            UDim2.fromOffset(
+                0,
+                currentY
+            )
+
+        card.Size =
+            UDim2.new(
+                1,
+                0,
+                0,
+                rowHeight
+            )
+
+        card.Parent =
+            surface
+
+        local corner =
+            Instance.new("UICorner")
+
+        corner.CornerRadius =
+            UDim.new(0, 4)
+
+        corner.Parent =
+            card
+
+        local stroke =
+            Instance.new("UIStroke")
+
+        stroke.ApplyStrokeMode =
+            Enum.ApplyStrokeMode.Border
+
+        stroke.Color =
+            Library.Scheme.OutlineColor
+
+        stroke.Transparency =
+            0.42
+
+        stroke.Thickness =
+            1
+
+        stroke.Parent =
+            card
+
+        Library:AddToRegistry(
+            card,
+            {
+                BackgroundColor3 =
+                    "MainColor",
+            }
+        )
+
+        Library:AddToRegistry(
+            stroke,
+            {
+                Color =
+                    "OutlineColor",
+            }
+        )
+
+        table.insert(
+            panel.RegistryObjects,
+            card
+        )
+
+        table.insert(
+            panel.RegistryObjects,
+            stroke
+        )
+
+        if kind == "Header" then
+            local accent =
+                Instance.new("Frame")
+
+            accent.BackgroundColor3 =
+                Library.Scheme.AccentColor
+
+            accent.BorderSizePixel =
+                0
+
+            accent.Position =
+                UDim2.fromOffset(0, 5)
+
+            accent.Size =
+                UDim2.new(
+                    0,
+                    3,
+                    1,
+                    -10
+                )
+
+            accent.Parent =
+                card
+
+            local accentCorner =
+                Instance.new("UICorner")
+
+            accentCorner.CornerRadius =
+                UDim.new(1, 0)
+
+            accentCorner.Parent =
+                accent
+
+            local title =
+                Instance.new("TextLabel")
+
+            title.BackgroundTransparency =
+                1
+
+            title.Position =
+                UDim2.fromOffset(10, 3)
+
+            title.Size =
+                UDim2.new(
+                    1,
+                    -18,
+                    0,
+                    titleHeight
+                )
+
+            title.FontFace =
+                Library.Scheme.Font
+
+            title.Text =
+                keyText
+
+            title.TextColor3 =
+                Library.Scheme.FontColor
+
+            title.TextSize =
+                13
+
+            title.TextWrapped =
+                true
+
+            title.TextXAlignment =
+                Enum.TextXAlignment.Left
+
+            title.TextYAlignment =
+                Enum.TextYAlignment.Center
+
+            title.Parent =
+                card
+
+            Library:AddToRegistry(
+                accent,
+                {
+                    BackgroundColor3 =
+                        "AccentColor",
+                }
+            )
+
+            Library:AddToRegistry(
+                title,
+                {
+                    FontFace = "Font",
+                    TextColor3 = "FontColor",
+                }
+            )
+
+            table.insert(
+                panel.RegistryObjects,
+                accent
+            )
+
+            table.insert(
+                panel.RegistryObjects,
+                title
+            )
+
+            if valueText ~= "" then
+                local subtitle =
+                    Instance.new("TextLabel")
+
+                subtitle.BackgroundTransparency =
+                    1
+
+                subtitle.Position =
+                    UDim2.fromOffset(
+                        10,
+                        titleHeight + 6
+                    )
+
+                subtitle.Size =
+                    UDim2.new(
+                        1,
+                        -18,
+                        0,
+                        15
+                    )
+
+                subtitle.FontFace =
+                    Library.Scheme.Font
+
+                subtitle.Text =
+                    valueText
+
+                subtitle.TextColor3 =
+                    Library.Scheme.FontColor
+
+                subtitle.TextSize =
+                    10
+
+                subtitle.TextTransparency =
+                    0.36
+
+                subtitle.TextTruncate =
+                    Enum.TextTruncate.AtEnd
+
+                subtitle.TextXAlignment =
+                    Enum.TextXAlignment.Left
+
+                subtitle.Parent =
+                    card
+
+                Library:AddToRegistry(
+                    subtitle,
+                    {
+                        FontFace = "Font",
+                        TextColor3 = "FontColor",
+                    }
+                )
+
+                table.insert(
+                    panel.RegistryObjects,
+                    subtitle
+                )
+            end
+
+        elseif kind == "Body" then
+            local heading =
+                Instance.new("TextLabel")
+
+            heading.BackgroundTransparency =
+                1
+
+            heading.Position =
+                UDim2.fromOffset(8, 4)
+
+            heading.Size =
+                UDim2.new(
+                    1,
+                    -16,
+                    0,
+                    14
+                )
+
+            heading.FontFace =
+                Library.Scheme.Font
+
+            heading.Text =
+                keyText
+
+            heading.TextColor3 =
+                Library.Scheme.FontColor
+
+            heading.TextSize =
+                10
+
+            heading.TextTransparency =
+                0.42
+
+            heading.TextXAlignment =
+                Enum.TextXAlignment.Left
+
+            heading.Parent =
+                card
+
+            local body =
+                Instance.new("TextLabel")
+
+            body.BackgroundTransparency =
+                1
+
+            body.Position =
+                UDim2.fromOffset(8, 19)
+
+            body.Size =
+                UDim2.new(
+                    1,
+                    -16,
+                    0,
+                    rowHeight - 24
+                )
+
+            body.FontFace =
+                Library.Scheme.Font
+
+            body.Text =
+                valueText
+
+            body.TextColor3 =
+                Library.Scheme.FontColor
+
+            body.TextSize =
+                11
+
+            body.TextWrapped =
+                true
+
+            body.TextXAlignment =
+                Enum.TextXAlignment.Left
+
+            body.TextYAlignment =
+                Enum.TextYAlignment.Top
+
+            body.Parent =
+                card
+
+            Library:AddToRegistry(
+                heading,
+                {
+                    FontFace = "Font",
+                    TextColor3 = "FontColor",
+                }
+            )
+
+            Library:AddToRegistry(
+                body,
+                {
+                    FontFace = "Font",
+                    TextColor3 = "FontColor",
+                }
+            )
+
+            table.insert(
+                panel.RegistryObjects,
+                heading
+            )
+
+            table.insert(
+                panel.RegistryObjects,
+                body
+            )
+
+        else
+            local keyWidth =
+                math.clamp(
+                    tonumber(row.KeyWidth)
+                    or 0.52,
+                    0.32,
+                    0.72
+                )
+
+            local keyLabel =
+                Instance.new("TextLabel")
+
+            keyLabel.BackgroundTransparency =
+                1
+
+            keyLabel.Position =
+                UDim2.fromOffset(8, 0)
+
+            keyLabel.Size =
+                UDim2.new(
+                    keyWidth,
+                    -8,
+                    1,
+                    0
+                )
+
+            keyLabel.FontFace =
+                Library.Scheme.Font
+
+            keyLabel.Text =
+                keyText
+
+            keyLabel.TextColor3 =
+                Library.Scheme.FontColor
+
+            keyLabel.TextSize =
+                10
+
+            keyLabel.TextTransparency =
+                0.42
+
+            keyLabel.TextTruncate =
+                Enum.TextTruncate.AtEnd
+
+            keyLabel.TextXAlignment =
+                Enum.TextXAlignment.Left
+
+            keyLabel.Parent =
+                card
+
+            local valueLabel =
+                Instance.new("TextLabel")
+
+            valueLabel.BackgroundTransparency =
+                1
+
+            valueLabel.Position =
+                UDim2.new(
+                    keyWidth,
+                    0,
+                    0,
+                    0
+                )
+
+            valueLabel.Size =
+                UDim2.new(
+                    1 - keyWidth,
+                    -8,
+                    1,
+                    0
+                )
+
+            valueLabel.FontFace =
+                Library.Scheme.Font
+
+            valueLabel.Text =
+                valueText
+
+            valueLabel.TextColor3 =
+                Library.Scheme.FontColor
+
+            valueLabel.TextSize =
+                11
+
+            valueLabel.TextTruncate =
+                Enum.TextTruncate.AtEnd
+
+            valueLabel.TextXAlignment =
+                Enum.TextXAlignment.Right
+
+            valueLabel.Parent =
+                card
+
+            local toneKey =
+                row.Tone == "Success"
+                and "SuccessColor"
+                or (
+                    row.Tone == "Warning"
+                    and "WarningColor"
+                    or (
+                        row.Tone == "Accent"
+                        and "AccentColor"
+                        or "FontColor"
+                    )
+                )
+
+            if row.Tone == "Muted" then
+                valueLabel.TextTransparency =
+                    0.40
+            end
+
+            Library:AddToRegistry(
+                keyLabel,
+                {
+                    FontFace = "Font",
+                    TextColor3 = "FontColor",
+                }
+            )
+
+            Library:AddToRegistry(
+                valueLabel,
+                {
+                    FontFace = "Font",
+                    TextColor3 = toneKey,
+                }
+            )
+
+            table.insert(
+                panel.RegistryObjects,
+                keyLabel
+            )
+
+            table.insert(
+                panel.RegistryObjects,
+                valueLabel
+            )
+        end
+
+        currentY =
+            currentY
+            + rowHeight
+            + 4
+    end
+
+    local finalHeight =
+        math.max(
+            panel.MinimumHeight,
+            currentY - 4
+        )
+
+    surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            finalHeight
+        )
+
+    if math.abs(
+        finalHeight
+        - (
+            panel.Height
+            or 0
+        )
+    ) >= 1 then
+        panel.Height =
+            finalHeight
+
+        panel.Passthrough:SetHeight(
+            finalHeight
+        )
+
+        if HOLY_GUILD_UI.Tab
+        and type(HOLY_GUILD_UI.Tab.RefreshSides)
+            == "function" then
+            task.defer(function()
+                HOLY_GUILD_UI.Tab:RefreshSides()
+            end)
+        end
+    end
+
+    return true
+end
+
+function HolyGuildTextRows(
+    text,
+    headerLine
+)
+    local rows = {}
+    local lineNumber = 0
+
+    for rawLine in (
+        tostring(text or "")
+        .. "\n"
+    ):gmatch("(.-)\n") do
+        local line =
+            HolyCleanText(rawLine)
+
+        if line ~= "" then
+            lineNumber =
+                lineNumber + 1
+
+            local key,
+                value =
+                line:match(
+                    "^([^:]+):%s*(.*)$"
+                )
+
+            if lineNumber
+                == tonumber(headerLine) then
+                rows[#rows + 1] = {
+                    Kind = "Header",
+                    Key = line,
+                    Value = "",
+                }
+
+            elseif key then
+                key =
+                    HolyCleanText(key)
+
+                value =
+                    HolyCleanText(value)
+
+                rows[#rows + 1] = {
+                    Kind =
+                        (
+                            key == "Objective"
+                            or key == "Description"
+                        )
+                        and "Body"
+                        or "Row",
+
+                    Key = key,
+                    Value = value,
+
+                    Tone =
+                        key == "Status"
+                        and value:lower() == "active"
+                        and "Success"
+                        or (
+                            key == "Status"
+                            and value:lower() == "pending"
+                            and "Warning"
+                            or nil
+                        ),
+                }
+
+            else
+                rows[#rows + 1] = {
+                    Kind = "Body",
+
+                    Key =
+                        (
+                            line:lower():find(
+                                "starts in",
+                                1,
+                                true
+                            )
+                            or line:lower():find(
+                                "ends in",
+                                1,
+                                true
+                            )
+                        )
+                        and "Timing"
+                        or "Details",
+
+                    Value = line,
+                }
+            end
+        end
+    end
+
+    return rows
+end
+
+function HolyGuildRefreshInfoPanels()
+    local overviewRows =
+        HolyGuildTextRows(
+            HolyGuildBuildOverviewText(),
+            1
+        )
+
+    overviewRows[#overviewRows + 1] = {
+        Kind = "Body",
+        Key = "Description",
+        Value = HolyGuildBuildDescriptionText(),
+    }
+
+    for _, row in ipairs(
+        HolyGuildTextRows(
+            HolyGuildBuildOverviewStats()
+        )
+    ) do
+        overviewRows[#overviewRows + 1] =
+            row
+    end
+
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.OverviewPanel,
+        overviewRows
+    )
+
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.StatusPanel,
+        {
+            {
+                Kind = "Body",
+                Key = "Status",
+                Value =
+                    tostring(
+                        HOLY_GUILD_STATE.Status
+                        or "Ready"
+                    ),
+            },
+        }
+    )
+
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.SelectedMemberPanel,
+        HolyGuildTextRows(
+            HolyGuildBuildSelectedMemberText(),
+            1
+        )
+    )
+
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.ContestPanel,
+        HolyGuildTextRows(
+            HolyGuildBuildContestText(),
+            2
+        )
+    )
+
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.ContestProgressPanel,
+        HolyGuildTextRows(
+            HolyGuildBuildContestProgressText()
+        )
+    )
+
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.SelectedGuildPanel,
+        HolyGuildTextRows(
+            HolyGuildBuildSelectedGuildText(),
+            1
+        )
+    )
 end
 
 function HolyGuildBuildOverviewText()
@@ -131094,8 +132070,6 @@ function HolyGuildLeaderboardDisplay(row)
             )
             or ""
         )
-        .. " — "
-        .. HolyGuildFormatNumber(row.Score)
 end
 
 function HolyGuildGetSelectedLeaderboardGuild()
@@ -131301,6 +132275,7 @@ function HolyGuildRefreshMemberDropdown()
 
     local values = {}
     local displayMap = {}
+    local valueImages = {}
     local selectedDisplay = nil
 
     for _, member in ipairs(
@@ -131317,6 +132292,11 @@ function HolyGuildRefreshMemberDropdown()
 
         displayMap[display] =
             member.UserId
+
+        valueImages[display] =
+            "rbxthumb://type=AvatarHeadShot&id="
+            .. tostring(member.UserId)
+            .. "&w=150&h=150"
 
         if member.UserId
             == HOLY_GUILD_STATE.SelectedMemberUserId then
@@ -131351,6 +132331,13 @@ function HolyGuildRefreshMemberDropdown()
         dropdown:SetValues(
             values
         )
+
+        if type(dropdown.SetValueImages) == "function" then
+
+            dropdown:SetValueImages(
+                valueImages
+            )
+        end
 
         dropdown:SetValue(
             selectedDisplay
@@ -131469,9 +132456,12 @@ function HolyGuildRefreshLeaderboardUI()
         )
     end
 
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.SelectedGuildLabel,
-        HolyGuildBuildSelectedGuildText()
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.SelectedGuildPanel,
+        HolyGuildTextRows(
+            HolyGuildBuildSelectedGuildText(),
+            1
+        )
     )
 end
 
@@ -131603,44 +132593,7 @@ end
 
 function HolyGuildRefreshUI()
 
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.IdentityLabel,
-        HolyGuildBuildOverviewText()
-    )
-
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.DescriptionLabel,
-        HolyGuildBuildDescriptionText()
-    )
-
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.OverviewStatsLabel,
-        HolyGuildBuildOverviewStats()
-    )
-
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.StatusLabel,
-        "Status: "
-        .. tostring(
-            HOLY_GUILD_STATE.Status
-            or "Ready"
-        )
-    )
-
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.SelectedMemberLabel,
-        HolyGuildBuildSelectedMemberText()
-    )
-
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.ContestLabel,
-        HolyGuildBuildContestText()
-    )
-
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.ContestProgressLabel,
-        HolyGuildBuildContestProgressText()
-    )
+    HolyGuildRefreshInfoPanels()
 
     HolyGuildRefreshPlayerDropdown()
     HolyGuildRefreshMemberDropdown()
@@ -132688,9 +133641,12 @@ function HolyGuildStart()
 
             if HOLY_GUILD_STATE.Page == "Contest" then
 
-                HolySniperSetLabel(
-                    HOLY_GUILD_UI.ContestLabel,
-                    HolyGuildBuildContestText()
+                HolyGuildSetInfoRows(
+                    HOLY_GUILD_UI.ContestPanel,
+                    HolyGuildTextRows(
+                        HolyGuildBuildContestText(),
+                        2
+                    )
                 )
             end
 
@@ -142931,33 +143887,11 @@ GuildModeControl =
             end,
     })
 
-HOLY_GUILD_UI.IdentityLabel =
-    HolySniperAddLabel(
+HOLY_GUILD_UI.OverviewPanel =
+    HolyGuildAddInfoPanel(
         GuildOverviewBox,
-        "Loading guild identity..."
-    )
-
-HOLY_GUILD_UI.DescriptionLabel =
-    HolySniperAddLabel(
-        GuildOverviewBox,
-        "Loading description..."
-    )
-
-GuildOverviewBox:AddDivider({
-    Text =
-        "Guild Statistics",
-
-    MarginTop =
-        6,
-
-    MarginBottom =
-        6,
-})
-
-HOLY_GUILD_UI.OverviewStatsLabel =
-    HolySniperAddLabel(
-        GuildOverviewBox,
-        "Members: --\nOnline: --\nGuild Coins: --"
+        "HolyGuildOverviewPanel",
+        72
     )
 
 GuildOverviewBox:AddButton({
@@ -143113,10 +144047,11 @@ HOLY_GUILD_UI.IconButton =
             end,
     })
 
-HOLY_GUILD_UI.StatusLabel =
-    HolySniperAddLabel(
+HOLY_GUILD_UI.StatusPanel =
+    HolyGuildAddInfoPanel(
         GuildActionsBox,
-        "Status: Loading guild data..."
+        "HolyGuildStatusPanel",
+        46
     )
 
 HOLY_GUILD_UI.MemberDropdown =
@@ -143249,10 +144184,11 @@ GuildMembersBox:AddButton({
         end,
 })
 
-HOLY_GUILD_UI.SelectedMemberLabel =
-    HolySniperAddLabel(
+HOLY_GUILD_UI.SelectedMemberPanel =
+    HolyGuildAddInfoPanel(
         GuildSelectedMemberBox,
-        "Select a guild member."
+        "HolyGuildSelectedMemberPanel",
+        46
     )
 
 HOLY_GUILD_UI.MemberActions =
@@ -143309,10 +144245,11 @@ HOLY_GUILD_UI.MemberActions =
         }
     )
 
-HOLY_GUILD_UI.ContestLabel =
-    HolySniperAddLabel(
+HOLY_GUILD_UI.ContestPanel =
+    HolyGuildAddInfoPanel(
         GuildContestBox,
-        "Competition data is not loaded."
+        "HolyGuildContestPanel",
+        46
     )
 
 GuildContestBox:AddButton({
@@ -143339,10 +144276,11 @@ GuildContestBox:AddButton({
         end,
 })
 
-HOLY_GUILD_UI.ContestProgressLabel =
-    HolySniperAddLabel(
+HOLY_GUILD_UI.ContestProgressPanel =
+    HolyGuildAddInfoPanel(
         GuildProgressBox,
-        "Guild Score: --\nYour Contribution: --\nPlacement: --"
+        "HolyGuildContestProgressPanel",
+        78
     )
 
 GuildProgressBox:AddDivider({
@@ -143477,16 +144415,20 @@ HOLY_GUILD_UI.LeaderboardDropdown:OnChanged(function(value)
             guildId
     end
 
-    HolySniperSetLabel(
-        HOLY_GUILD_UI.SelectedGuildLabel,
-        HolyGuildBuildSelectedGuildText()
+    HolyGuildSetInfoRows(
+        HOLY_GUILD_UI.SelectedGuildPanel,
+        HolyGuildTextRows(
+            HolyGuildBuildSelectedGuildText(),
+            1
+        )
     )
 end)
 
-HOLY_GUILD_UI.SelectedGuildLabel =
-    HolySniperAddLabel(
+HOLY_GUILD_UI.SelectedGuildPanel =
+    HolyGuildAddInfoPanel(
         GuildSelectedGuildBox,
-        "Select a guild from the leaderboard."
+        "HolyGuildSelectedGuildPanel",
+        46
     )
 
 HolyGuildSetPage(
