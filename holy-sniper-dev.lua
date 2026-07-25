@@ -130385,11 +130385,13 @@ function HolyGuildGetSelectedMember()
 end
 
 function HolyGuildAddInfoPanel(groupbox, id, minimumHeight)
+
     local surface =
         Instance.new("Frame")
 
     surface.Name =
-        tostring(id) .. "Surface"
+        tostring(id)
+        .. "Surface"
 
     surface.BackgroundTransparency =
         1
@@ -130402,14 +130404,20 @@ function HolyGuildAddInfoPanel(groupbox, id, minimumHeight)
             1,
             0,
             0,
-            tonumber(minimumHeight) or 28
+            tonumber(minimumHeight)
+            or 28
         )
 
     local panel = {
         Surface = surface,
-        MinimumHeight = tonumber(minimumHeight) or 28,
-        Height = tonumber(minimumHeight) or 28,
-        Rows = {},
+        MinimumHeight =
+            tonumber(minimumHeight)
+            or 28,
+
+        Height =
+            tonumber(minimumHeight)
+            or 28,
+
         RegistryObjects = {},
         Signature = "",
     }
@@ -130418,9 +130426,14 @@ function HolyGuildAddInfoPanel(groupbox, id, minimumHeight)
         groupbox:AddUIPassthrough(
             id,
             {
-                Instance = surface,
-                Height = panel.MinimumHeight,
-                Visible = true,
+                Instance =
+                    surface,
+
+                Height =
+                    panel.MinimumHeight,
+
+                Visible =
+                    true,
             }
         )
 
@@ -130428,8 +130441,11 @@ function HolyGuildAddInfoPanel(groupbox, id, minimumHeight)
         surface:GetPropertyChangedSignal(
             "AbsoluteSize"
         ):Connect(function()
+
             local width =
-                math.floor(surface.AbsoluteSize.X)
+                math.floor(
+                    surface.AbsoluteSize.X
+                )
 
             if width > 0
             and math.abs(
@@ -130439,24 +130455,36 @@ function HolyGuildAddInfoPanel(groupbox, id, minimumHeight)
                     or 0
                 )
             ) >= 2 then
+
                 panel.LastAbsoluteWidth =
                     width
 
-                task.defer(function()
-                    if surface.Parent
-                    and type(HolyGuildSetInfoRows)
-                        == "function" then
-                        HolyGuildSetInfoRows(
-                            panel,
-                            panel.Rows,
-                            true
-                        )
-                    end
-                end)
+                panel.Signature =
+                    ""
+
+                if HOLY_GUILD_RUNTIME.PanelResizeQueued ~= true then
+
+                    HOLY_GUILD_RUNTIME.PanelResizeQueued =
+                        true
+
+                    task.defer(function()
+
+                        HOLY_GUILD_RUNTIME.PanelResizeQueued =
+                            false
+
+                        if surface.Parent
+                        and type(HolyGuildRefreshInfoPanels)
+                            == "function" then
+
+                            HolyGuildRefreshInfoPanels()
+                        end
+                    end)
+                end
             end
         end)
 
     if type(Library.GiveSignal) == "function" then
+
         Library:GiveSignal(
             sizeConnection
         )
@@ -130465,32 +130493,27 @@ function HolyGuildAddInfoPanel(groupbox, id, minimumHeight)
     return panel
 end
 
-function HolyGuildSetInfoRows(panel, rows, force)
+function HolyGuildPanelWidth(panel)
+
     if type(panel) ~= "table"
-    or typeof(panel.Surface) ~= "Instance"
-    or type(panel.Passthrough) ~= "table" then
-        return false
+    or typeof(panel.Surface) ~= "Instance" then
+
+        return 230
     end
-
-    rows =
-        type(rows) == "table"
-        and rows
-        or {}
-
-    local surface =
-        panel.Surface
 
     local scale = 1
     local ancestor =
-        surface
+        panel.Surface
 
     while typeof(ancestor) == "Instance" do
+
         local scaleObject =
             ancestor:FindFirstChildOfClass(
                 "UIScale"
             )
 
         if scaleObject then
+
             scale =
                 scale
                 * math.max(
@@ -130504,60 +130527,63 @@ function HolyGuildSetInfoRows(panel, rows, force)
     end
 
     local width =
-        surface.AbsoluteSize.X > 0
+        panel.Surface.AbsoluteSize.X > 0
         and (
-            surface.AbsoluteSize.X
+            panel.Surface.AbsoluteSize.X
             / scale
         )
         or 230
 
-    width =
-        math.clamp(
-            math.floor(width + 0.5),
-            140,
-            520
-        )
+    return math.clamp(
+        math.floor(width + 0.5),
+        140,
+        520
+    )
+end
 
-    local signatureParts = {
-        tostring(width),
-    }
+function HolyGuildTrackPanelObject(
+    panel,
+    object,
+    properties
+)
+    if type(panel) ~= "table"
+    or typeof(object) ~= "Instance" then
 
-    for index, row in ipairs(rows) do
-        signatureParts[#signatureParts + 1] =
-            table.concat(
-                {
-                    tostring(index),
-                    tostring(row.Kind or "Row"),
-                    tostring(row.Key or ""),
-                    tostring(row.Value or ""),
-                    tostring(row.Tone or ""),
-                },
-                "\31"
-            )
+        return object
     end
 
-    local signature =
-        table.concat(
-            signatureParts,
-            "\30"
+    if type(properties) == "table" then
+
+        Library:AddToRegistry(
+            object,
+            properties
         )
 
-    panel.Rows =
-        rows
-
-    if force ~= true
-    and panel.Signature == signature then
-        return true
+        panel.RegistryObjects[
+            #panel.RegistryObjects
+            + 1
+        ] =
+            object
     end
 
-    panel.Signature =
-        signature
+    return object
+end
+
+function HolyGuildClearInfoPanel(panel)
+
+    if type(panel) ~= "table"
+    or typeof(panel.Surface) ~= "Instance" then
+
+        return false
+    end
 
     for _, object in ipairs(
         panel.RegistryObjects
         or {}
     ) do
+
         pcall(function()
+
             Library:RemoveFromRegistry(
                 object
             )
@@ -130568,131 +130594,1006 @@ function HolyGuildSetInfoRows(panel, rows, force)
         {}
 
     for _, child in ipairs(
-        surface:GetChildren()
+        panel.Surface:GetChildren()
     ) do
+
         child:Destroy()
     end
 
-    if #rows <= 0 then
-        rows = {
-            {
-                Kind = "Body",
-                Key = "Information",
-                Value = "No data is available.",
-            },
-        }
+    return true
+end
+
+function HolyGuildBeginInfoPanel(
+    panel,
+    signature
+)
+    if type(panel) ~= "table"
+    or typeof(panel.Surface) ~= "Instance"
+    or type(panel.Passthrough) ~= "table" then
+
+        return false,
+            230
     end
 
-    local currentY = 0
+    local width =
+        HolyGuildPanelWidth(
+            panel
+        )
 
-    for index, row in ipairs(rows) do
-        local kind =
-            tostring(row.Kind or "Row")
+    signature =
+        tostring(width)
+        .. "\30"
+        .. tostring(signature or "")
 
-        local keyText =
-            tostring(row.Key or "")
+    if panel.Signature == signature then
 
-        local valueText =
-            tostring(row.Value or "")
+        return false,
+            width
+    end
 
-        local rowHeight = 26
-        local titleHeight = 18
+    panel.Signature =
+        signature
 
-        if kind == "Header" then
-            pcall(function()
-                local _,
-                    measured =
-                    Library:GetTextBounds(
-                        keyText,
-                        Library.Scheme.Font,
-                        13,
-                        math.max(
-                            100,
-                            width - 20
-                        )
-                    )
+    HolyGuildClearInfoPanel(
+        panel
+    )
 
-                titleHeight =
-                    math.max(
-                        18,
-                        math.ceil(
-                            tonumber(measured)
-                            or 18
-                        )
-                    )
+    return true,
+        width
+end
+
+function HolyGuildSetInfoPanelHeight(
+    panel,
+    height
+)
+    if type(panel) ~= "table"
+    or typeof(panel.Surface) ~= "Instance"
+    or type(panel.Passthrough) ~= "table" then
+
+        return false
+    end
+
+    height =
+        math.max(
+            tonumber(panel.MinimumHeight)
+            or 28,
+            math.floor(
+                tonumber(height)
+                or 28
+            )
+        )
+
+    panel.Surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            height
+        )
+
+    if math.abs(
+        height
+        - (
+            panel.Height
+            or 0
+        )
+    ) >= 1 then
+
+        panel.Height =
+            height
+
+        panel.Passthrough:SetHeight(
+            height
+        )
+
+        if HOLY_GUILD_UI.Tab
+        and type(HOLY_GUILD_UI.Tab.RefreshSides)
+            == "function" then
+
+            task.defer(function()
+
+                HOLY_GUILD_UI.Tab:RefreshSides()
             end)
+        end
+    end
 
-            rowHeight =
-                titleHeight
-                + (
-                    valueText ~= ""
-                    and 24
-                    or 10
-                )
+    return true
+end
 
-        elseif kind == "Body" then
-            local bodyHeight = 14
+function HolyGuildPanelText(
+    panel,
+    parent,
+    text,
+    position,
+    size,
+    options
+)
+    options =
+        type(options) == "table"
+        and options
+        or {}
 
-            pcall(function()
-                local _,
-                    measured =
-                    Library:GetTextBounds(
-                        valueText,
-                        Library.Scheme.Font,
-                        11,
-                        math.max(
-                            100,
-                            width - 18
-                        )
-                    )
+    local label =
+        Instance.new("TextLabel")
 
-                bodyHeight =
-                    tonumber(measured)
-                    or bodyHeight
-            end)
+    label.BackgroundTransparency =
+        1
 
-            rowHeight =
+    label.BorderSizePixel =
+        0
+
+    label.Position =
+        position
+        or UDim2.fromOffset(0, 0)
+
+    label.Size =
+        size
+        or UDim2.new(1, 0, 1, 0)
+
+    label.FontFace =
+        Library.Scheme.Font
+
+    label.Text =
+        tostring(text or "")
+
+    label.TextColor3 =
+        Library.Scheme[
+            options.Color
+            or "FontColor"
+        ]
+        or Library.Scheme.FontColor
+
+    label.TextSize =
+        tonumber(options.TextSize)
+        or 11
+
+    label.TextTransparency =
+        tonumber(options.Transparency)
+        or 0
+
+    label.TextWrapped =
+        options.Wrapped == true
+
+    label.TextTruncate =
+        options.Truncate == true
+        and Enum.TextTruncate.AtEnd
+        or Enum.TextTruncate.None
+
+    label.TextXAlignment =
+        options.XAlignment
+        or Enum.TextXAlignment.Left
+
+    label.TextYAlignment =
+        options.YAlignment
+        or Enum.TextYAlignment.Center
+
+    label.RichText =
+        options.RichText == true
+
+    label.ZIndex =
+        tonumber(options.ZIndex)
+        or 1
+
+    label.Parent =
+        parent
+
+    HolyGuildTrackPanelObject(
+        panel,
+        label,
+        {
+            FontFace =
+                "Font",
+
+            TextColor3 =
+                options.Color
+                or "FontColor",
+        }
+    )
+
+    return label
+end
+
+function HolyGuildPanelCard(
+    panel,
+    parent,
+    position,
+    size,
+    selected
+)
+    local card =
+        Instance.new("Frame")
+
+    card.BackgroundColor3 =
+        selected == true
+        and Library.Scheme.AccentColor
+        or Library.Scheme.MainColor
+
+    card.BackgroundTransparency =
+        selected == true
+        and 0.82
+        or 0.22
+
+    card.BorderSizePixel =
+        0
+
+    card.Position =
+        position
+        or UDim2.fromOffset(0, 0)
+
+    card.Size =
+        size
+        or UDim2.new(1, 0, 1, 0)
+
+    card.Parent =
+        parent
+
+    local corner =
+        Instance.new("UICorner")
+
+    corner.CornerRadius =
+        UDim.new(0, 5)
+
+    corner.Parent =
+        card
+
+    local stroke =
+        Instance.new("UIStroke")
+
+    stroke.ApplyStrokeMode =
+        Enum.ApplyStrokeMode.Border
+
+    stroke.Color =
+        selected == true
+        and Library.Scheme.AccentColor
+        or Library.Scheme.OutlineColor
+
+    stroke.Transparency =
+        selected == true
+        and 0.18
+        or 0.54
+
+    stroke.Thickness =
+        1
+
+    stroke.Parent =
+        card
+
+    HolyGuildTrackPanelObject(
+        panel,
+        card,
+        {
+            BackgroundColor3 =
+                selected == true
+                and "AccentColor"
+                or "MainColor",
+        }
+    )
+
+    HolyGuildTrackPanelObject(
+        panel,
+        stroke,
+        {
+            Color =
+                selected == true
+                and "AccentColor"
+                or "OutlineColor",
+        }
+    )
+
+    return card
+end
+
+function HolyGuildPanelDivider(
+    panel,
+    parent,
+    y
+)
+    local divider =
+        Instance.new("Frame")
+
+    divider.BackgroundColor3 =
+        Library.Scheme.OutlineColor
+
+    divider.BackgroundTransparency =
+        0.68
+
+    divider.BorderSizePixel =
+        0
+
+    divider.Position =
+        UDim2.new(
+            0,
+            10,
+            0,
+            tonumber(y)
+            or 0
+        )
+
+    divider.Size =
+        UDim2.new(
+            1,
+            -20,
+            0,
+            1
+        )
+
+    divider.Parent =
+        parent
+
+    HolyGuildTrackPanelObject(
+        panel,
+        divider,
+        {
+            BackgroundColor3 =
+                "OutlineColor",
+        }
+    )
+
+    return divider
+end
+
+function HolyGuildPanelImage(
+    panel,
+    parent,
+    image,
+    position,
+    size
+)
+    local imageLabel =
+        Instance.new("ImageLabel")
+
+    imageLabel.BackgroundColor3 =
+        Library.Scheme.MainColor
+
+    imageLabel.BackgroundTransparency =
+        0.14
+
+    imageLabel.BorderSizePixel =
+        0
+
+    imageLabel.Position =
+        position
+
+    imageLabel.Size =
+        size
+
+    imageLabel.Image =
+        tostring(image or "")
+
+    imageLabel.ScaleType =
+        Enum.ScaleType.Crop
+
+    imageLabel.Parent =
+        parent
+
+    local corner =
+        Instance.new("UICorner")
+
+    corner.CornerRadius =
+        UDim.new(0, 6)
+
+    corner.Parent =
+        imageLabel
+
+    local stroke =
+        Instance.new("UIStroke")
+
+    stroke.Color =
+        Library.Scheme.OutlineColor
+
+    stroke.Transparency =
+        0.45
+
+    stroke.Thickness =
+        1
+
+    stroke.Parent =
+        imageLabel
+
+    HolyGuildTrackPanelObject(
+        panel,
+        imageLabel,
+        {
+            BackgroundColor3 =
+                "MainColor",
+        }
+    )
+
+    HolyGuildTrackPanelObject(
+        panel,
+        stroke,
+        {
+            Color =
+                "OutlineColor",
+        }
+    )
+
+    return imageLabel
+end
+
+function HolyGuildPanelBadge(
+    panel,
+    parent,
+    text,
+    position,
+    width,
+    tone
+)
+    tone =
+        tone == "Success"
+        and "SuccessColor"
+        or (
+            tone == "Warning"
+            and "WarningColor"
+            or "AccentColor"
+        )
+
+    local badge =
+        Instance.new("Frame")
+
+    badge.BackgroundColor3 =
+        Library.Scheme[tone]
+        or Library.Scheme.AccentColor
+
+    badge.BackgroundTransparency =
+        0.78
+
+    badge.BorderSizePixel =
+        0
+
+    badge.Position =
+        position
+
+    badge.Size =
+        UDim2.fromOffset(
+            tonumber(width)
+            or 58,
+            20
+        )
+
+    badge.Parent =
+        parent
+
+    local corner =
+        Instance.new("UICorner")
+
+    corner.CornerRadius =
+        UDim.new(1, 0)
+
+    corner.Parent =
+        badge
+
+    local stroke =
+        Instance.new("UIStroke")
+
+    stroke.Color =
+        Library.Scheme[tone]
+        or Library.Scheme.AccentColor
+
+    stroke.Transparency =
+        0.25
+
+    stroke.Thickness =
+        1
+
+    stroke.Parent =
+        badge
+
+    HolyGuildPanelText(
+        panel,
+        badge,
+        text,
+        UDim2.fromOffset(5, 0),
+        UDim2.new(1, -10, 1, 0),
+        {
+            Color = tone,
+            TextSize = 9,
+            XAlignment =
+                Enum.TextXAlignment.Center,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildTrackPanelObject(
+        panel,
+        badge,
+        {
+            BackgroundColor3 =
+                tone,
+        }
+    )
+
+    HolyGuildTrackPanelObject(
+        panel,
+        stroke,
+        {
+            Color =
+                tone,
+        }
+    )
+
+    return badge
+end
+
+function HolyGuildMeasurePanelText(
+    text,
+    textSize,
+    width
+)
+    local height = 14
+
+    pcall(function()
+
+        local _,
+            measured =
+            Library:GetTextBounds(
+                tostring(text or ""),
+                Library.Scheme.Font,
+                tonumber(textSize)
+                or 11,
                 math.max(
-                    46,
-                    math.ceil(bodyHeight)
-                    + 27
+                    80,
+                    tonumber(width)
+                    or 120
                 )
+            )
+
+        height =
+            tonumber(measured)
+            or height
+    end)
+
+    return math.max(
+        14,
+        math.ceil(height)
+    )
+end
+
+function HolyGuildGetOverviewData()
+
+    local root =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    if type(root) ~= "table"
+    or HolyGuildGetGuildId() == "" then
+
+        return nil
+    end
+
+    local members =
+        HolyGuildBuildMembers()
+
+    local online = 0
+    local elders = 0
+    local weeklySum = 0
+    local lifetimeSum = 0
+
+    for _, member in ipairs(members) do
+
+        if member.Online == true then
+            online =
+                online + 1
         end
 
+        if member.Role == "Elder" then
+            elders =
+                elders + 1
+        end
+
+        weeklySum =
+            weeklySum
+            + member.Weekly
+
+        lifetimeSum =
+            lifetimeSum
+            + member.Lifetime
+    end
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    return {
+        Root = root,
+
+        Id =
+            HolyGuildGetGuildId(),
+
+        Name =
+            HolyCleanText(
+                HolyGuildField(
+                    root,
+                    {
+                        "Name",
+                        "GuildName",
+                    },
+                    "Unnamed Guild"
+                )
+            ),
+
+        Tag =
+            HolyCleanText(
+                HolyGuildField(
+                    root,
+                    {
+                        "Tag",
+                        "GuildTag",
+                    },
+                    ""
+                )
+            ),
+
+        Description =
+            HolyCleanText(
+                HolyGuildField(
+                    root,
+                    {
+                        "Description",
+                        "GuildDescription",
+                    },
+                    ""
+                )
+            ),
+
+        IconId =
+            tonumber(
+                HolyGuildField(
+                    root,
+                    {
+                        "IconId",
+                        "GuildIconId",
+                        "Icon",
+                    }
+                )
+            ),
+
+        Role =
+            localMember
+            and localMember.Role
+            or "Member",
+
+        Members =
+            #members,
+
+        Capacity =
+            tonumber(
+                HolyGuildField(
+                    root,
+                    {
+                        "MaxMembers",
+                        "MemberLimit",
+                        "Capacity",
+                        "MemberCapacity",
+                        "Slots",
+                        "SlotCount",
+                    }
+                )
+            ),
+
+        Online =
+            online,
+
+        Elders =
+            elders,
+
+        Coins =
+            HolyGuildField(
+                root,
+                {
+                    "GuildCoins",
+                    "Coins",
+                    "Balance",
+                },
+                0
+            ),
+
+        Weekly =
+            HolyGuildField(
+                root,
+                {
+                    "WeeklyContribution",
+                    "WeeklyContributions",
+                    "WeeklyScore",
+                },
+                weeklySum
+            ),
+
+        Lifetime =
+            HolyGuildField(
+                root,
+                {
+                    "LifetimeContribution",
+                    "LifetimeContributions",
+                    "TotalContribution",
+                },
+                lifetimeSum
+            ),
+    }
+end
+
+function HolyGuildRefreshOverviewPanel()
+
+    local panel =
+        HOLY_GUILD_UI.OverviewPanel
+
+    local data =
+        HolyGuildGetOverviewData()
+
+    local signature =
+        type(data) == "table"
+        and table.concat(
+            {
+                tostring(data.Id),
+                tostring(data.Name),
+                tostring(data.Tag),
+                tostring(data.Description),
+                tostring(data.IconId),
+                tostring(data.Role),
+                tostring(data.Members),
+                tostring(data.Capacity),
+                tostring(data.Online),
+                tostring(data.Elders),
+                tostring(data.Coins),
+                tostring(data.Weekly),
+                tostring(data.Lifetime),
+            },
+            "\31"
+        )
+        or "no-guild"
+
+    local changed,
+        width =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    if type(data) ~= "table" then
+
         local card =
+            HolyGuildPanelCard(
+                panel,
+                panel.Surface,
+                UDim2.fromOffset(0, 0),
+                UDim2.new(1, 0, 0, 92),
+                false
+            )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "No Active Guild",
+            UDim2.fromOffset(12, 12),
+            UDim2.new(1, -24, 0, 22),
+            {
+                TextSize = 14,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "Join or create a guild to load its dashboard.",
+            UDim2.fromOffset(12, 38),
+            UDim2.new(1, -24, 0, 38),
+            {
+                TextSize = 10,
+                Transparency = 0.38,
+                Wrapped = true,
+                YAlignment =
+                    Enum.TextYAlignment.Top,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            92
+        )
+
+        return
+    end
+
+    local description =
+        data.Description ~= ""
+        and data.Description
+        or "No guild description."
+
+    local descriptionHeight =
+        HolyGuildMeasurePanelText(
+            description,
+            10,
+            width - 24
+        )
+
+    local statsY =
+        86
+        + descriptionHeight
+
+    local totalHeight =
+        statsY
+        + 138
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            false
+        )
+
+    local image =
+        data.IconId
+        and (
+            "rbxassetid://"
+            .. tostring(data.IconId)
+        )
+        or ""
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        image,
+        UDim2.fromOffset(12, 12),
+        UDim2.fromOffset(52, 52)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        data.Name
+            .. (
+                data.Tag ~= ""
+                and (
+                    " ["
+                    .. data.Tag
+                    .. "]"
+                )
+                or ""
+            ),
+        UDim2.fromOffset(74, 11),
+        UDim2.new(1, -86, 0, 24),
+        {
+            TextSize = 14,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        data.Role,
+        UDim2.fromOffset(74, 40),
+        64,
+        "Accent"
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "DESCRIPTION",
+        UDim2.fromOffset(12, 72),
+        UDim2.new(1, -24, 0, 12),
+        {
+            TextSize = 9,
+            Transparency = 0.48,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        description,
+        UDim2.fromOffset(12, 86),
+        UDim2.new(
+            1,
+            -24,
+            0,
+            descriptionHeight
+        ),
+        {
+            TextSize = 10,
+            Wrapped = true,
+            YAlignment =
+                Enum.TextYAlignment.Top,
+        }
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        statsY - 8
+    )
+
+    local stats = {
+        {
+            "MEMBERS",
+            tostring(data.Members)
+                .. (
+                    data.Capacity
+                    and (
+                        " / "
+                        .. tostring(data.Capacity)
+                    )
+                    or ""
+                ),
+        },
+        {
+            "ONLINE",
+            tostring(data.Online),
+        },
+        {
+            "ELDERS",
+            tostring(data.Elders),
+        },
+        {
+            "GUILD COINS",
+            HolyGuildFormatNumber(
+                data.Coins
+            ),
+        },
+        {
+            "WEEKLY",
+            HolyGuildFormatNumber(
+                data.Weekly
+            ),
+        },
+        {
+            "LIFETIME",
+            HolyGuildFormatNumber(
+                data.Lifetime
+            ),
+        },
+    }
+
+    for index, stat in ipairs(stats) do
+
+        local column =
+            (index - 1) % 2
+
+        local row =
+            math.floor(
+                (index - 1) / 2
+            )
+
+        local tile =
             Instance.new("Frame")
 
-        card.Name =
-            "GuildPanelItem"
-            .. tostring(index)
-
-        card.BackgroundColor3 =
+        tile.BackgroundColor3 =
             Library.Scheme.MainColor
 
-        card.BackgroundTransparency =
-            index % 2 == 0
-            and 0.36
-            or 0.27
+        tile.BackgroundTransparency =
+            0.42
 
-        card.BorderSizePixel =
+        tile.BorderSizePixel =
             0
 
-        card.Position =
-            UDim2.fromOffset(
-                0,
-                currentY
-            )
-
-        card.Size =
+        tile.Position =
             UDim2.new(
-                1,
+                column * 0.5,
+                column == 0
+                and 10
+                or 3,
                 0,
-                0,
-                rowHeight
+                statsY
+                    + row * 42
             )
 
-        card.Parent =
-            surface
+        tile.Size =
+            UDim2.new(
+                0.5,
+                -13,
+                0,
+                36
+            )
+
+        tile.Parent =
+            card
 
         local corner =
             Instance.new("UICorner")
@@ -130701,53 +131602,542 @@ function HolyGuildSetInfoRows(panel, rows, force)
             UDim.new(0, 4)
 
         corner.Parent =
-            card
+            tile
 
-        local stroke =
-            Instance.new("UIStroke")
-
-        stroke.ApplyStrokeMode =
-            Enum.ApplyStrokeMode.Border
-
-        stroke.Color =
-            Library.Scheme.OutlineColor
-
-        stroke.Transparency =
-            0.42
-
-        stroke.Thickness =
-            1
-
-        stroke.Parent =
-            card
-
-        Library:AddToRegistry(
-            card,
+        HolyGuildTrackPanelObject(
+            panel,
+            tile,
             {
                 BackgroundColor3 =
                     "MainColor",
             }
         )
 
-        Library:AddToRegistry(
-            stroke,
+        HolyGuildPanelText(
+            panel,
+            tile,
+            stat[1],
+            UDim2.fromOffset(7, 3),
+            UDim2.new(1, -14, 0, 12),
             {
-                Color =
-                    "OutlineColor",
+                TextSize = 8,
+                Transparency = 0.50,
+                Truncate = true,
             }
         )
 
-        table.insert(
-            panel.RegistryObjects,
-            card
+        HolyGuildPanelText(
+            panel,
+            tile,
+            stat[2],
+            UDim2.fromOffset(7, 15),
+            UDim2.new(1, -14, 0, 17),
+            {
+                TextSize = 11,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildRefreshInvitePreview()
+
+    local panel =
+        HOLY_GUILD_UI.InvitePreviewPanel
+
+    local userId =
+        tonumber(
+            HOLY_GUILD_STATE.InviteUserId
         )
 
-        table.insert(
-            panel.RegistryObjects,
-            stroke
+    local player =
+        userId
+        and Players:GetPlayerByUserId(
+            userId
+        )
+        or nil
+
+    local signature =
+        tostring(userId)
+        .. "\31"
+        .. tostring(
+            player
+            and player.DisplayName
+            or ""
         )
 
-        if kind == "Header" then
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, 68),
+            false
+        )
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        userId
+            and (
+                "rbxthumb://type=AvatarHeadShot&id="
+                .. tostring(userId)
+                .. "&w=150&h=150"
+            )
+            or "",
+        UDim2.fromOffset(10, 9),
+        UDim2.fromOffset(50, 50)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        player
+            and player.DisplayName
+            or "Invite Member",
+        UDim2.fromOffset(70, 10),
+        UDim2.new(1, -80, 0, 22),
+        {
+            TextSize = 12,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        player
+            and (
+                "@"
+                .. player.Name
+            )
+            or "Choose an eligible player below.",
+        UDim2.fromOffset(70, 33),
+        UDim2.new(1, -80, 0, 20),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        68
+    )
+end
+
+function HolyGuildRefreshIconPreview()
+
+    local panel =
+        HOLY_GUILD_UI.IconPreviewPanel
+
+    local data =
+        HolyGuildGetOverviewData()
+
+    local currentIcon =
+        data
+        and data.IconId
+        or nil
+
+    local draftIcon =
+        tonumber(
+            tostring(
+                HOLY_GUILD_STATE.IconDraft
+                or ""
+            ):match("%d+")
+        )
+
+    local shownIcon =
+        HOLY_GUILD_STATE.IconDraftDirty == true
+        and draftIcon
+        or currentIcon
+
+    local canApply =
+        draftIcon ~= nil
+        and draftIcon ~= currentIcon
+        and HOLY_GUILD_RUNTIME.Busy.Action ~= true
+
+    local signature =
+        table.concat(
+            {
+                tostring(currentIcon),
+                tostring(draftIcon),
+                tostring(
+                    HOLY_GUILD_STATE.IconDraftDirty
+                ),
+                tostring(canApply),
+            },
+            "\31"
+        )
+
+    if type(HOLY_GUILD_UI.IconButton) == "table"
+    and type(HOLY_GUILD_UI.IconButton.SetDisabled)
+        == "function" then
+
+        HOLY_GUILD_UI.IconButton:SetDisabled(
+            canApply ~= true
+        )
+    end
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, 68),
+            false
+        )
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        shownIcon
+            and (
+                "rbxassetid://"
+                .. tostring(shownIcon)
+            )
+            or "",
+        UDim2.fromOffset(10, 9),
+        UDim2.fromOffset(50, 50)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        HOLY_GUILD_STATE.IconDraftDirty == true
+            and "New Icon Preview"
+            or "Current Guild Icon",
+        UDim2.fromOffset(70, 10),
+        UDim2.new(1, -80, 0, 22),
+        {
+            TextSize = 12,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        shownIcon
+            and (
+                "Asset ID: "
+                .. tostring(shownIcon)
+            )
+            or "No valid icon ID",
+        UDim2.fromOffset(70, 33),
+        UDim2.new(1, -80, 0, 20),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        68
+    )
+end
+
+function HolyGuildRefreshMemberList()
+
+    local panel =
+        HOLY_GUILD_UI.MemberListPanel
+
+    local query =
+        HolyCleanText(
+            HOLY_GUILD_STATE.MemberSearch
+            or ""
+        ):lower()
+
+    local allMembers =
+        HolyGuildBuildMembers()
+
+    local members = {}
+    local onlineCount = 0
+
+    for _, member in ipairs(allMembers) do
+
+        if member.Online == true then
+            onlineCount =
+                onlineCount + 1
+        end
+
+        local searchable =
+            (
+                tostring(member.Username)
+                .. " "
+                .. tostring(member.DisplayName)
+                .. " "
+                .. tostring(member.Role)
+            ):lower()
+
+        if query == ""
+        or searchable:find(
+            query,
+            1,
+            true
+        ) then
+
+            members[
+                #members
+                + 1
+            ] =
+                member
+        end
+    end
+
+    local signatureParts = {
+        query,
+        tostring(
+            HOLY_GUILD_STATE.MemberSort
+        ),
+        tostring(
+            HOLY_GUILD_STATE.SelectedMemberUserId
+        ),
+        tostring(#allMembers),
+        tostring(onlineCount),
+    }
+
+    for _, member in ipairs(members) do
+
+        signatureParts[
+            #signatureParts
+            + 1
+        ] =
+            table.concat(
+                {
+                    tostring(member.UserId),
+                    tostring(member.Username),
+                    tostring(member.Role),
+                    tostring(member.Online),
+                    tostring(member.Weekly),
+                },
+                "\31"
+            )
+    end
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            table.concat(
+                signatureParts,
+                "\30"
+            )
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local visibleRows =
+        math.max(
+            1,
+            math.min(
+                #members,
+                7
+            )
+        )
+
+    local listHeight =
+        visibleRows * 50
+
+    local totalHeight =
+        34
+        + listHeight
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            false
+        )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        tostring(#allMembers)
+            .. " members  •  "
+            .. tostring(onlineCount)
+            .. " online",
+        UDim2.fromOffset(10, 5),
+        UDim2.new(1, -20, 0, 23),
+        {
+            TextSize = 10,
+            Transparency = 0.28,
+        }
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        32
+    )
+
+    local scroll =
+        Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.Position =
+        UDim2.fromOffset(4, 34)
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            -8,
+            0,
+            listHeight
+        )
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            math.max(
+                listHeight,
+                #members * 50
+            )
+        )
+
+    scroll.ScrollBarThickness =
+        #members > visibleRows
+        and 3
+        or 0
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.Parent =
+        card
+
+    HolyGuildTrackPanelObject(
+        panel,
+        scroll,
+        {
+            ScrollBarImageColor3 =
+                "AccentColor",
+        }
+    )
+
+    if #members <= 0 then
+
+        HolyGuildPanelText(
+            panel,
+            scroll,
+            query ~= ""
+                and "No members match this search."
+                or "No guild members were returned.",
+            UDim2.fromOffset(8, 8),
+            UDim2.new(1, -16, 0, 30),
+            {
+                TextSize = 10,
+                Transparency = 0.42,
+                Wrapped = true,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+    end
+
+    for index, member in ipairs(members) do
+
+        local selected =
+            member.UserId
+            == HOLY_GUILD_STATE.SelectedMemberUserId
+
+        local row =
+            Instance.new("TextButton")
+
+        row.AutoButtonColor =
+            false
+
+        row.BackgroundColor3 =
+            selected
+            and Library.Scheme.AccentColor
+            or Library.Scheme.MainColor
+
+        row.BackgroundTransparency =
+            selected
+            and 0.82
+            or 1
+
+        row.BorderSizePixel =
+            0
+
+        row.Position =
+            UDim2.fromOffset(
+                0,
+                (index - 1) * 50
+            )
+
+        row.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                48
+            )
+
+        row.Text =
+            ""
+
+        row.Parent =
+            scroll
+
+        local corner =
+            Instance.new("UICorner")
+
+        corner.CornerRadius =
+            UDim.new(0, 4)
+
+        corner.Parent =
+            row
+
+        HolyGuildTrackPanelObject(
+            panel,
+            row,
+            {
+                BackgroundColor3 =
+                    selected
+                    and "AccentColor"
+                    or "MainColor",
+            }
+        )
+
+        if selected then
+
             local accent =
                 Instance.new("Frame")
 
@@ -130758,608 +132148,2342 @@ function HolyGuildSetInfoRows(panel, rows, force)
                 0
 
             accent.Position =
-                UDim2.fromOffset(0, 5)
+                UDim2.fromOffset(0, 6)
 
             accent.Size =
-                UDim2.new(
-                    0,
-                    3,
-                    1,
-                    -10
-                )
+                UDim2.fromOffset(3, 36)
 
             accent.Parent =
-                card
+                row
 
-            local accentCorner =
-                Instance.new("UICorner")
-
-            accentCorner.CornerRadius =
-                UDim.new(1, 0)
-
-            accentCorner.Parent =
-                accent
-
-            local title =
-                Instance.new("TextLabel")
-
-            title.BackgroundTransparency =
-                1
-
-            title.Position =
-                UDim2.fromOffset(10, 3)
-
-            title.Size =
-                UDim2.new(
-                    1,
-                    -18,
-                    0,
-                    titleHeight
-                )
-
-            title.FontFace =
-                Library.Scheme.Font
-
-            title.Text =
-                keyText
-
-            title.TextColor3 =
-                Library.Scheme.FontColor
-
-            title.TextSize =
-                13
-
-            title.TextWrapped =
-                true
-
-            title.TextXAlignment =
-                Enum.TextXAlignment.Left
-
-            title.TextYAlignment =
-                Enum.TextYAlignment.Center
-
-            title.Parent =
-                card
-
-            Library:AddToRegistry(
+            HolyGuildTrackPanelObject(
+                panel,
                 accent,
                 {
                     BackgroundColor3 =
                         "AccentColor",
                 }
             )
-
-            Library:AddToRegistry(
-                title,
-                {
-                    FontFace = "Font",
-                    TextColor3 = "FontColor",
-                }
-            )
-
-            table.insert(
-                panel.RegistryObjects,
-                accent
-            )
-
-            table.insert(
-                panel.RegistryObjects,
-                title
-            )
-
-            if valueText ~= "" then
-                local subtitle =
-                    Instance.new("TextLabel")
-
-                subtitle.BackgroundTransparency =
-                    1
-
-                subtitle.Position =
-                    UDim2.fromOffset(
-                        10,
-                        titleHeight + 6
-                    )
-
-                subtitle.Size =
-                    UDim2.new(
-                        1,
-                        -18,
-                        0,
-                        15
-                    )
-
-                subtitle.FontFace =
-                    Library.Scheme.Font
-
-                subtitle.Text =
-                    valueText
-
-                subtitle.TextColor3 =
-                    Library.Scheme.FontColor
-
-                subtitle.TextSize =
-                    10
-
-                subtitle.TextTransparency =
-                    0.36
-
-                subtitle.TextTruncate =
-                    Enum.TextTruncate.AtEnd
-
-                subtitle.TextXAlignment =
-                    Enum.TextXAlignment.Left
-
-                subtitle.Parent =
-                    card
-
-                Library:AddToRegistry(
-                    subtitle,
-                    {
-                        FontFace = "Font",
-                        TextColor3 = "FontColor",
-                    }
-                )
-
-                table.insert(
-                    panel.RegistryObjects,
-                    subtitle
-                )
-            end
-
-        elseif kind == "Body" then
-            local heading =
-                Instance.new("TextLabel")
-
-            heading.BackgroundTransparency =
-                1
-
-            heading.Position =
-                UDim2.fromOffset(8, 4)
-
-            heading.Size =
-                UDim2.new(
-                    1,
-                    -16,
-                    0,
-                    14
-                )
-
-            heading.FontFace =
-                Library.Scheme.Font
-
-            heading.Text =
-                keyText
-
-            heading.TextColor3 =
-                Library.Scheme.FontColor
-
-            heading.TextSize =
-                10
-
-            heading.TextTransparency =
-                0.42
-
-            heading.TextXAlignment =
-                Enum.TextXAlignment.Left
-
-            heading.Parent =
-                card
-
-            local body =
-                Instance.new("TextLabel")
-
-            body.BackgroundTransparency =
-                1
-
-            body.Position =
-                UDim2.fromOffset(8, 19)
-
-            body.Size =
-                UDim2.new(
-                    1,
-                    -16,
-                    0,
-                    rowHeight - 24
-                )
-
-            body.FontFace =
-                Library.Scheme.Font
-
-            body.Text =
-                valueText
-
-            body.TextColor3 =
-                Library.Scheme.FontColor
-
-            body.TextSize =
-                11
-
-            body.TextWrapped =
-                true
-
-            body.TextXAlignment =
-                Enum.TextXAlignment.Left
-
-            body.TextYAlignment =
-                Enum.TextYAlignment.Top
-
-            body.Parent =
-                card
-
-            Library:AddToRegistry(
-                heading,
-                {
-                    FontFace = "Font",
-                    TextColor3 = "FontColor",
-                }
-            )
-
-            Library:AddToRegistry(
-                body,
-                {
-                    FontFace = "Font",
-                    TextColor3 = "FontColor",
-                }
-            )
-
-            table.insert(
-                panel.RegistryObjects,
-                heading
-            )
-
-            table.insert(
-                panel.RegistryObjects,
-                body
-            )
-
-        else
-            local keyWidth =
-                math.clamp(
-                    tonumber(row.KeyWidth)
-                    or 0.52,
-                    0.32,
-                    0.72
-                )
-
-            local keyLabel =
-                Instance.new("TextLabel")
-
-            keyLabel.BackgroundTransparency =
-                1
-
-            keyLabel.Position =
-                UDim2.fromOffset(8, 0)
-
-            keyLabel.Size =
-                UDim2.new(
-                    keyWidth,
-                    -8,
-                    1,
-                    0
-                )
-
-            keyLabel.FontFace =
-                Library.Scheme.Font
-
-            keyLabel.Text =
-                keyText
-
-            keyLabel.TextColor3 =
-                Library.Scheme.FontColor
-
-            keyLabel.TextSize =
-                10
-
-            keyLabel.TextTransparency =
-                0.42
-
-            keyLabel.TextTruncate =
-                Enum.TextTruncate.AtEnd
-
-            keyLabel.TextXAlignment =
-                Enum.TextXAlignment.Left
-
-            keyLabel.Parent =
-                card
-
-            local valueLabel =
-                Instance.new("TextLabel")
-
-            valueLabel.BackgroundTransparency =
-                1
-
-            valueLabel.Position =
-                UDim2.new(
-                    keyWidth,
-                    0,
-                    0,
-                    0
-                )
-
-            valueLabel.Size =
-                UDim2.new(
-                    1 - keyWidth,
-                    -8,
-                    1,
-                    0
-                )
-
-            valueLabel.FontFace =
-                Library.Scheme.Font
-
-            valueLabel.Text =
-                valueText
-
-            valueLabel.TextColor3 =
-                Library.Scheme.FontColor
-
-            valueLabel.TextSize =
-                11
-
-            valueLabel.TextTruncate =
-                Enum.TextTruncate.AtEnd
-
-            valueLabel.TextXAlignment =
-                Enum.TextXAlignment.Right
-
-            valueLabel.Parent =
-                card
-
-            local toneKey =
-                row.Tone == "Success"
-                and "SuccessColor"
-                or (
-                    row.Tone == "Warning"
-                    and "WarningColor"
-                    or (
-                        row.Tone == "Accent"
-                        and "AccentColor"
-                        or "FontColor"
-                    )
-                )
-
-            if row.Tone == "Muted" then
-                valueLabel.TextTransparency =
-                    0.40
-            end
-
-            Library:AddToRegistry(
-                keyLabel,
-                {
-                    FontFace = "Font",
-                    TextColor3 = "FontColor",
-                }
-            )
-
-            Library:AddToRegistry(
-                valueLabel,
-                {
-                    FontFace = "Font",
-                    TextColor3 = toneKey,
-                }
-            )
-
-            table.insert(
-                panel.RegistryObjects,
-                keyLabel
-            )
-
-            table.insert(
-                panel.RegistryObjects,
-                valueLabel
-            )
         end
 
-        currentY =
-            currentY
-            + rowHeight
-            + 4
+        HolyGuildPanelImage(
+            panel,
+            row,
+            "rbxthumb://type=AvatarHeadShot&id="
+                .. tostring(member.UserId)
+                .. "&w=150&h=150",
+            UDim2.fromOffset(8, 7),
+            UDim2.fromOffset(34, 34)
+        )
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            tostring(member.Username)
+                .. (
+                    member.UserId
+                    == LocalPlayer.UserId
+                    and "  •  You"
+                    or ""
+                ),
+            UDim2.fromOffset(50, 5),
+            UDim2.new(1, -136, 0, 20),
+            {
+                TextSize = 10,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            (
+                member.Online
+                and "Online"
+                or "Offline"
+            )
+                .. "  •  "
+                .. member.Role,
+            UDim2.fromOffset(50, 24),
+            UDim2.new(1, -136, 0, 17),
+            {
+                Color =
+                    member.Online
+                    and "SuccessColor"
+                    or "FontColor",
+
+                TextSize = 8,
+                Transparency =
+                    member.Online
+                    and 0
+                    or 0.48,
+
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            HolyGuildFormatNumber(
+                member.Weekly
+            ),
+            UDim2.new(
+                1,
+                -84,
+                0,
+                8
+            ),
+            UDim2.fromOffset(74, 17),
+            {
+                TextSize = 10,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            "weekly",
+            UDim2.new(
+                1,
+                -84,
+                0,
+                25
+            ),
+            UDim2.fromOffset(74, 14),
+            {
+                TextSize = 8,
+                Transparency = 0.50,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+            }
+        )
+
+        row.MouseButton1Click:Connect(function()
+
+            HOLY_GUILD_STATE.SelectedMemberUserId =
+                member.UserId
+
+            panel.Signature =
+                ""
+
+            if HOLY_GUILD_UI.SelectedMemberPanel then
+
+                HOLY_GUILD_UI.SelectedMemberPanel.Signature =
+                    ""
+            end
+
+            HolyGuildRefreshMemberList()
+            HolyGuildRefreshSelectedMemberPanel()
+            HolyGuildRefreshRoleAction()
+        end)
     end
 
-    local finalHeight =
-        math.max(
-            panel.MinimumHeight,
-            currentY - 4
-        )
-
-    surface.Size =
-        UDim2.new(
-            1,
-            0,
-            0,
-            finalHeight
-        )
-
-    if math.abs(
-        finalHeight
-        - (
-            panel.Height
-            or 0
-        )
-    ) >= 1 then
-        panel.Height =
-            finalHeight
-
-        panel.Passthrough:SetHeight(
-            finalHeight
-        )
-
-        if HOLY_GUILD_UI.Tab
-        and type(HOLY_GUILD_UI.Tab.RefreshSides)
-            == "function" then
-            task.defer(function()
-                HOLY_GUILD_UI.Tab:RefreshSides()
-            end)
-        end
-    end
-
-    return true
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
 end
 
-function HolyGuildTextRows(
-    text,
-    headerLine
-)
-    local rows = {}
-    local lineNumber = 0
+function HolyGuildRefreshSelectedMemberPanel()
 
-    for rawLine in (
-        tostring(text or "")
-        .. "\n"
-    ):gmatch("(.-)\n") do
-        local line =
-            HolyCleanText(rawLine)
+    local panel =
+        HOLY_GUILD_UI.SelectedMemberPanel
 
-        if line ~= "" then
-            lineNumber =
-                lineNumber + 1
+    local member =
+        HolyGuildGetSelectedMember()
 
-            local key,
-                value =
-                line:match(
-                    "^([^:]+):%s*(.*)$"
-                )
+    local signature =
+        type(member) == "table"
+        and table.concat(
+            {
+                tostring(member.UserId),
+                tostring(member.Username),
+                tostring(member.DisplayName),
+                tostring(member.Role),
+                tostring(member.Online),
+                tostring(member.Weekly),
+                tostring(member.Lifetime),
+                tostring(member.JoinedAt),
+            },
+            "\31"
+        )
+        or "none"
 
-            if lineNumber
-                == tonumber(headerLine) then
-                rows[#rows + 1] = {
-                    Kind = "Header",
-                    Key = line,
-                    Value = "",
-                }
-
-            elseif key then
-                key =
-                    HolyCleanText(key)
-
-                value =
-                    HolyCleanText(value)
-
-                rows[#rows + 1] = {
-                    Kind =
-                        (
-                            key == "Objective"
-                            or key == "Description"
-                        )
-                        and "Body"
-                        or "Row",
-
-                    Key = key,
-                    Value = value,
-
-                    Tone =
-                        key == "Status"
-                        and value:lower() == "active"
-                        and "Success"
-                        or (
-                            key == "Status"
-                            and value:lower() == "pending"
-                            and "Warning"
-                            or nil
-                        ),
-                }
-
-            else
-                rows[#rows + 1] = {
-                    Kind = "Body",
-
-                    Key =
-                        (
-                            line:lower():find(
-                                "starts in",
-                                1,
-                                true
-                            )
-                            or line:lower():find(
-                                "ends in",
-                                1,
-                                true
-                            )
-                        )
-                        and "Timing"
-                        or "Details",
-
-                    Value = line,
-                }
-            end
-        end
-    end
-
-    return rows
-end
-
-function HolyGuildRefreshInfoPanels()
-    local overviewRows =
-        HolyGuildTextRows(
-            HolyGuildBuildOverviewText(),
-            1
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
         )
 
-    overviewRows[#overviewRows + 1] = {
-        Kind = "Body",
-        Key = "Description",
-        Value = HolyGuildBuildDescriptionText(),
-    }
-
-    for _, row in ipairs(
-        HolyGuildTextRows(
-            HolyGuildBuildOverviewStats()
-        )
-    ) do
-        overviewRows[#overviewRows + 1] =
-            row
+    if changed ~= true then
+        return
     end
 
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.OverviewPanel,
-        overviewRows
+    if type(member) ~= "table" then
+
+        local card =
+            HolyGuildPanelCard(
+                panel,
+                panel.Surface,
+                UDim2.fromOffset(0, 0),
+                UDim2.new(1, 0, 0, 82),
+                false
+            )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "Select a guild member.",
+            UDim2.fromOffset(10, 10),
+            UDim2.new(1, -20, 0, 56),
+            {
+                TextSize = 11,
+                Transparency = 0.35,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            82
+        )
+
+        return
+    end
+
+    local members =
+        HolyGuildBuildMembers()
+
+    local weeklyTotal = 0
+
+    for _, row in ipairs(members) do
+
+        weeklyTotal =
+            weeklyTotal
+            + row.Weekly
+    end
+
+    local share =
+        weeklyTotal > 0
+        and (
+            member.Weekly
+            / weeklyTotal
+        )
+        or 0
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, 190),
+            true
+        )
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        "rbxthumb://type=AvatarHeadShot&id="
+            .. tostring(member.UserId)
+            .. "&w=150&h=150",
+        UDim2.fromOffset(12, 12),
+        UDim2.fromOffset(54, 54)
     )
 
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.StatusPanel,
+    HolyGuildPanelText(
+        panel,
+        card,
+        member.DisplayName ~= ""
+            and member.DisplayName
+            or member.Username,
+        UDim2.fromOffset(76, 10),
+        UDim2.new(1, -88, 0, 22),
         {
-            {
-                Kind = "Body",
-                Key = "Status",
-                Value =
-                    tostring(
-                        HOLY_GUILD_STATE.Status
-                        or "Ready"
-                    ),
-            },
+            TextSize = 13,
+            Truncate = true,
         }
     )
 
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.SelectedMemberPanel,
-        HolyGuildTextRows(
-            HolyGuildBuildSelectedMemberText(),
+    HolyGuildPanelText(
+        panel,
+        card,
+        "@"
+            .. tostring(member.Username),
+        UDim2.fromOffset(76, 30),
+        UDim2.new(1, -88, 0, 17),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        member.Role,
+        UDim2.fromOffset(76, 49),
+        60,
+        "Accent"
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        member.Online
+            and "Online"
+            or "Offline",
+        UDim2.fromOffset(142, 49),
+        62,
+        member.Online
+            and "Success"
+            or "Accent"
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        78
+    )
+
+    local details = {
+        {
+            "Joined",
+            HolyGuildFormatDate(
+                member.JoinedAt
+            ),
+        },
+        {
+            "Weekly contribution",
+            HolyGuildFormatNumber(
+                member.Weekly
+            ),
+        },
+        {
+            "Lifetime contribution",
+            HolyGuildFormatNumber(
+                member.Lifetime
+            ),
+        },
+        {
+            "Guild weekly share",
+            string.format(
+                "%.1f%%",
+                share * 100
+            ),
+        },
+    }
+
+    for index, detail in ipairs(details) do
+
+        local y =
+            83
+            + (index - 1) * 25
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[1],
+            UDim2.fromOffset(12, y),
+            UDim2.new(0.58, -12, 0, 22),
+            {
+                TextSize = 9,
+                Transparency = 0.45,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[2],
+            UDim2.new(0.58, 0, 0, y),
+            UDim2.new(0.42, -12, 0, 22),
+            {
+                TextSize = 10,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        190
+    )
+end
+
+function HolyGuildGetContestView()
+
+    local root =
+        HolyGuildContestRoot()
+
+    if type(root) ~= "table" then
+        return nil
+    end
+
+    local rawPhase =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "Phase",
+                    "Status",
+                    "State",
+                },
+                "Unknown"
+            )
+        )
+
+    local phaseLower =
+        rawPhase:lower()
+
+    local state =
+        (
+            phaseLower == "active"
+            or phaseLower == "live"
+        )
+        and "Active"
+        or (
+            (
+                phaseLower == "pending"
+                or phaseLower == "upcoming"
+                or phaseLower == "scheduled"
+            )
+            and "Upcoming"
+            or (
+                (
+                    phaseLower == "completed"
+                    or phaseLower == "complete"
+                    or phaseLower == "ended"
+                    or phaseLower == "finished"
+                )
+                and "Completed"
+                or rawPhase
+            )
+        )
+
+    local active =
+        HolyGuildField(
+            root,
+            {
+                "CurrentCompetition",
+                "Current",
+                "ActiveCompetition",
+                "Competition",
+            }
+        )
+
+    local previous =
+        HolyGuildField(
+            root,
+            {
+                "PreviousCompetition",
+                "Previous",
+                "LastCompetition",
+            }
+        )
+
+    local shown =
+        state == "Active"
+        and type(active) == "table"
+        and active
+        or (
+            state == "Completed"
+            and type(previous) == "table"
+            and previous
+            or (
+                type(active) == "table"
+                and active
+                or (
+                    type(previous) == "table"
+                    and previous
+                    or root
+                )
+            )
+        )
+
+    local startsAt =
+        HolyGuildEpoch(
+            HolyGuildField(
+                root,
+                {
+                    "NextCompetitionStart",
+                    "NextStartAt",
+                    "StartsAt",
+                    "StartTime",
+                }
+            )
+            or HolyGuildField(
+                shown,
+                {
+                    "StartsAt",
+                    "StartTime",
+                }
+            )
+        )
+
+    local endsAt =
+        HolyGuildEpoch(
+            HolyGuildField(
+                shown,
+                {
+                    "EndsAt",
+                    "EndTime",
+                }
+            )
+        )
+
+    local timing =
+        "Timing unavailable"
+
+    if state == "Upcoming"
+    and startsAt then
+
+        timing =
+            "Starts in "
+            .. HolyGuildFormatDuration(
+                startsAt
+                - os.time()
+            )
+
+    elseif state == "Active"
+    and endsAt then
+
+        timing =
+            "Ends in "
+            .. HolyGuildFormatDuration(
+                endsAt
+                - os.time()
+            )
+
+    elseif state == "Completed" then
+
+        timing =
+            "Competition ended"
+    end
+
+    return {
+        Root = root,
+        Shown = shown,
+        State = state,
+        RawPhase = rawPhase,
+        StartsAt = startsAt,
+        EndsAt = endsAt,
+        Timing = timing,
+
+        Name =
+            HolyCleanText(
+                HolyGuildField(
+                    shown,
+                    {
+                        "Name",
+                        "Title",
+                        "DisplayName",
+                    },
+                    state == "Upcoming"
+                    and "Next Guild Competition"
+                    or "Guild Competition"
+                )
+            ),
+
+        Objective =
+            HolyCleanText(
+                HolyGuildField(
+                    shown,
+                    {
+                        "Objective",
+                        "Description",
+                        "ObjectiveDescription",
+                        "ObjectiveTag",
+                        "Tag",
+                    },
+                    "Objective unavailable"
+                )
+            ),
+
+        Mode =
+            HolyCleanText(
+                HolyGuildField(
+                    shown,
+                    {
+                        "Mode",
+                        "WinMode",
+                        "ScoringMode",
+                    },
+                    ""
+                )
+            ),
+
+        ScoreFormat =
+            HolyCleanText(
+                HolyGuildField(
+                    shown,
+                    {
+                        "ScoreFormat",
+                        "Format",
+                        "Unit",
+                    },
+                    "Number"
+                )
+            ),
+
+        Score =
+            tonumber(
+                HolyGuildField(
+                    root,
+                    {
+                        "GuildScore",
+                        "Score",
+                        "CurrentScore",
+                    },
+                    0
+                )
+            )
+            or 0,
+
+        Placement =
+            tonumber(
+                HolyGuildField(
+                    root,
+                    {
+                        "GuildPlacement",
+                        "Placement",
+                        "Rank",
+                    }
+                )
+            ),
+
+        Bracket =
+            HolyGuildField(
+                root,
+                {
+                    "Bracket",
+                    "League",
+                    "Tier",
+                }
+            ),
+    }
+end
+
+function HolyGuildRefreshContestPanel()
+
+    local panel =
+        HOLY_GUILD_UI.ContestPanel
+
+    local view =
+        HolyGuildGetContestView()
+
+    local signature =
+        type(view) == "table"
+        and table.concat(
+            {
+                tostring(view.State),
+                tostring(view.Name),
+                tostring(view.Objective),
+                tostring(view.Mode),
+                tostring(view.ScoreFormat),
+                tostring(view.Timing),
+            },
+            "\31"
+        )
+        or "unavailable"
+
+    local changed,
+        width =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    if type(view) ~= "table" then
+
+        local card =
+            HolyGuildPanelCard(
+                panel,
+                panel.Surface,
+                UDim2.fromOffset(0, 0),
+                UDim2.new(1, 0, 0, 92),
+                false
+            )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "Competition Unavailable",
+            UDim2.fromOffset(12, 12),
+            UDim2.new(1, -24, 0, 22),
+            {
+                TextSize = 13,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "Refresh to load the current guild competition.",
+            UDim2.fromOffset(12, 39),
+            UDim2.new(1, -24, 0, 36),
+            {
+                TextSize = 10,
+                Transparency = 0.42,
+                Wrapped = true,
+                YAlignment =
+                    Enum.TextYAlignment.Top,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            92
+        )
+
+        return
+    end
+
+    local objectiveHeight =
+        HolyGuildMeasurePanelText(
+            view.Objective,
+            10,
+            width - 24
+        )
+
+    local detailsY =
+        112
+        + objectiveHeight
+
+    local totalHeight =
+        detailsY
+        + (
+            view.Mode ~= ""
+            and 58
+            or 32
+        )
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            view.State == "Active"
+        )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        view.State == "Active"
+            and "LIVE"
+            or (
+                view.State == "Upcoming"
+                and "UPCOMING"
+                or "COMPLETED"
+            ),
+        UDim2.fromOffset(12, 11),
+        view.State == "Upcoming"
+            and 78
+            or 72,
+        view.State == "Active"
+            and "Success"
+            or (
+                view.State == "Upcoming"
+                and "Accent"
+                or "Warning"
+            )
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        view.Timing,
+        UDim2.fromOffset(12, 36),
+        UDim2.new(1, -24, 0, 29),
+        {
+            TextSize = 17,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        view.Name,
+        UDim2.fromOffset(12, 66),
+        UDim2.new(1, -24, 0, 20),
+        {
+            TextSize = 11,
+            Transparency = 0.18,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "OBJECTIVE",
+        UDim2.fromOffset(12, 91),
+        UDim2.new(1, -24, 0, 12),
+        {
+            TextSize = 8,
+            Transparency = 0.50,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        view.Objective,
+        UDim2.fromOffset(12, 106),
+        UDim2.new(
+            1,
+            -24,
+            0,
+            objectiveHeight
+        ),
+        {
+            TextSize = 10,
+            Wrapped = true,
+            YAlignment =
+                Enum.TextYAlignment.Top,
+        }
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        detailsY - 7
+    )
+
+    local detailRows = {
+        {
+            "Score format",
+            view.ScoreFormat,
+        },
+    }
+
+    if view.Mode ~= "" then
+
+        table.insert(
+            detailRows,
+            1,
+            {
+                "Mode",
+                view.Mode,
+            }
+        )
+    end
+
+    for index, detail in ipairs(
+        detailRows
+    ) do
+
+        local y =
+            detailsY
+            + (index - 1) * 26
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[1],
+            UDim2.fromOffset(12, y),
+            UDim2.new(0.55, -12, 0, 22),
+            {
+                TextSize = 9,
+                Transparency = 0.45,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[2],
+            UDim2.new(0.55, 0, 0, y),
+            UDim2.new(0.45, -12, 0, 22),
+            {
+                TextSize = 10,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildRefreshContestProgressPanel()
+
+    local panel =
+        HOLY_GUILD_UI.ContestProgressPanel
+
+    local view =
+        HolyGuildGetContestView()
+
+    local members =
+        HolyGuildBuildMembers()
+
+    table.sort(
+        members,
+        function(left, right)
+
+            if left.Weekly ~= right.Weekly then
+                return left.Weekly > right.Weekly
+            end
+
+            return tostring(
+                left.Username
+            ):lower()
+                < tostring(
+                    right.Username
+                ):lower()
+        end
+    )
+
+    local signatureParts = {
+        tostring(
+            view
+            and view.State
+            or "none"
+        ),
+        tostring(
+            view
+            and view.Score
+            or 0
+        ),
+        tostring(
+            view
+            and view.Placement
+            or ""
+        ),
+        tostring(
+            view
+            and view.Bracket
+            or ""
+        ),
+    }
+
+    for _, member in ipairs(members) do
+
+        signatureParts[
+            #signatureParts
+            + 1
+        ] =
+            tostring(member.UserId)
+            .. ":"
+            .. tostring(member.Weekly)
+    end
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            table.concat(
+                signatureParts,
+                "\31"
+            )
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    if type(view) ~= "table"
+    or view.State == "Upcoming" then
+
+        local card =
+            HolyGuildPanelCard(
+                panel,
+                panel.Surface,
+                UDim2.fromOffset(0, 0),
+                UDim2.new(1, 0, 0, 126),
+                false
+            )
+
+        HolyGuildPanelBadge(
+            panel,
+            card,
+            view
+                and "WAITING"
+                or "NO DATA",
+            UDim2.new(
+                0.5,
+                -36,
+                0,
+                18
+            ),
+            72,
+            "Accent"
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            view
+                and "Competition has not started"
+                or "Progress is unavailable",
+            UDim2.fromOffset(12, 48),
+            UDim2.new(1, -24, 0, 24),
+            {
+                TextSize = 12,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            view
+                and "Scores and member contributions will appear here when it goes live."
+                or "Refresh the competition to load progress.",
+            UDim2.fromOffset(16, 76),
+            UDim2.new(1, -32, 0, 36),
+            {
+                TextSize = 9,
+                Transparency = 0.44,
+                Wrapped = true,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+                YAlignment =
+                    Enum.TextYAlignment.Top,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            126
+        )
+
+        return
+    end
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    local contribution =
+        localMember
+        and localMember.Weekly
+        or 0
+
+    local share =
+        view.Score > 0
+        and math.clamp(
+            contribution
+            / view.Score,
+            0,
             1
         )
+        or 0
+
+    local visibleRows =
+        math.min(
+            #members,
+            7
+        )
+
+    local listHeight =
+        math.max(
+            48,
+            visibleRows * 34
+        )
+
+    local totalHeight =
+        164
+        + listHeight
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            view.State == "Active"
+        )
+
+    local stats = {
+        {
+            view.State == "Completed"
+                and "FINAL SCORE"
+                or "GUILD SCORE",
+            HolyGuildFormatNumber(
+                view.Score
+            ),
+        },
+        {
+            view.State == "Completed"
+                and "FINAL PLACE"
+                or "PLACEMENT",
+            view.Placement
+                and (
+                    "#"
+                    .. tostring(
+                        view.Placement
+                    )
+                )
+                or "Not ranked",
+        },
+        {
+            "YOUR SCORE",
+            HolyGuildFormatNumber(
+                contribution
+            ),
+        },
+        {
+            "BRACKET",
+            view.Bracket ~= nil
+                and tostring(view.Bracket)
+                or "—",
+        },
+    }
+
+    for index, stat in ipairs(stats) do
+
+        local column =
+            (index - 1) % 2
+
+        local row =
+            math.floor(
+                (index - 1) / 2
+            )
+
+        local tile =
+            Instance.new("Frame")
+
+        tile.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        tile.BackgroundTransparency =
+            0.40
+
+        tile.BorderSizePixel =
+            0
+
+        tile.Position =
+            UDim2.new(
+                column * 0.5,
+                column == 0
+                and 10
+                or 3,
+                0,
+                10 + row * 42
+            )
+
+        tile.Size =
+            UDim2.new(
+                0.5,
+                -13,
+                0,
+                36
+            )
+
+        tile.Parent =
+            card
+
+        local corner =
+            Instance.new("UICorner")
+
+        corner.CornerRadius =
+            UDim.new(0, 4)
+
+        corner.Parent =
+            tile
+
+        HolyGuildTrackPanelObject(
+            panel,
+            tile,
+            {
+                BackgroundColor3 =
+                    "MainColor",
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            tile,
+            stat[1],
+            UDim2.fromOffset(7, 3),
+            UDim2.new(1, -14, 0, 12),
+            {
+                TextSize = 8,
+                Transparency = 0.50,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            tile,
+            stat[2],
+            UDim2.fromOffset(7, 15),
+            UDim2.new(1, -14, 0, 17),
+            {
+                TextSize = 11,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "Your contribution share  •  "
+            .. string.format(
+                "%.1f%%",
+                share * 100
+            ),
+        UDim2.fromOffset(10, 98),
+        UDim2.new(1, -20, 0, 18),
+        {
+            TextSize = 9,
+            Transparency = 0.35,
+        }
     )
 
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.ContestPanel,
-        HolyGuildTextRows(
-            HolyGuildBuildContestText(),
-            2
+    local progressTrack =
+        Instance.new("Frame")
+
+    progressTrack.BackgroundColor3 =
+        Library.Scheme.OutlineColor
+
+    progressTrack.BackgroundTransparency =
+        0.65
+
+    progressTrack.BorderSizePixel =
+        0
+
+    progressTrack.Position =
+        UDim2.fromOffset(10, 120)
+
+    progressTrack.Size =
+        UDim2.new(1, -20, 0, 7)
+
+    progressTrack.Parent =
+        card
+
+    local progressCorner =
+        Instance.new("UICorner")
+
+    progressCorner.CornerRadius =
+        UDim.new(1, 0)
+
+    progressCorner.Parent =
+        progressTrack
+
+    local progressFill =
+        Instance.new("Frame")
+
+    progressFill.BackgroundColor3 =
+        Library.Scheme.AccentColor
+
+    progressFill.BorderSizePixel =
+        0
+
+    progressFill.Size =
+        UDim2.new(
+            share,
+            0,
+            1,
+            0
         )
+
+    progressFill.Parent =
+        progressTrack
+
+    local fillCorner =
+        Instance.new("UICorner")
+
+    fillCorner.CornerRadius =
+        UDim.new(1, 0)
+
+    fillCorner.Parent =
+        progressFill
+
+    HolyGuildTrackPanelObject(
+        panel,
+        progressTrack,
+        {
+            BackgroundColor3 =
+                "OutlineColor",
+        }
     )
 
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.ContestProgressPanel,
-        HolyGuildTextRows(
-            HolyGuildBuildContestProgressText()
-        )
+    HolyGuildTrackPanelObject(
+        panel,
+        progressFill,
+        {
+            BackgroundColor3 =
+                "AccentColor",
+        }
     )
 
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.SelectedGuildPanel,
-        HolyGuildTextRows(
-            HolyGuildBuildSelectedGuildText(),
-            1
-        )
+    HolyGuildPanelText(
+        panel,
+        card,
+        view.State == "Completed"
+            and "FINAL CONTRIBUTORS"
+            or "TOP CONTRIBUTORS",
+        UDim2.fromOffset(10, 140),
+        UDim2.new(1, -20, 0, 16),
+        {
+            TextSize = 8,
+            Transparency = 0.50,
+        }
     )
+
+    local scroll =
+        Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.Position =
+        UDim2.fromOffset(6, 160)
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            -12,
+            0,
+            listHeight
+        )
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            math.max(
+                listHeight,
+                #members * 34
+            )
+        )
+
+    scroll.ScrollBarThickness =
+        #members > visibleRows
+        and 3
+        or 0
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.Parent =
+        card
+
+    HolyGuildTrackPanelObject(
+        panel,
+        scroll,
+        {
+            ScrollBarImageColor3 =
+                "AccentColor",
+        }
+    )
+
+    if #members <= 0 then
+
+        HolyGuildPanelText(
+            panel,
+            scroll,
+            "No contribution data.",
+            UDim2.fromOffset(8, 4),
+            UDim2.new(1, -16, 0, 30),
+            {
+                TextSize = 9,
+                Transparency = 0.45,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+    end
+
+    for index, member in ipairs(members) do
+
+        local mine =
+            member.UserId
+            == LocalPlayer.UserId
+
+        local row =
+            Instance.new("Frame")
+
+        row.BackgroundColor3 =
+            mine
+            and Library.Scheme.AccentColor
+            or Library.Scheme.MainColor
+
+        row.BackgroundTransparency =
+            mine
+            and 0.84
+            or 1
+
+        row.BorderSizePixel =
+            0
+
+        row.Position =
+            UDim2.fromOffset(
+                0,
+                (index - 1) * 34
+            )
+
+        row.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                32
+            )
+
+        row.Parent =
+            scroll
+
+        local corner =
+            Instance.new("UICorner")
+
+        corner.CornerRadius =
+            UDim.new(0, 4)
+
+        corner.Parent =
+            row
+
+        HolyGuildTrackPanelObject(
+            panel,
+            row,
+            {
+                BackgroundColor3 =
+                    mine
+                    and "AccentColor"
+                    or "MainColor",
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            "#"
+                .. tostring(index)
+                .. "  "
+                .. member.Username
+                .. (
+                    mine
+                    and "  •  You"
+                    or ""
+                ),
+            UDim2.fromOffset(7, 0),
+            UDim2.new(0.70, -7, 1, 0),
+            {
+                TextSize = 9,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            HolyGuildFormatNumber(
+                member.Weekly
+            ),
+            UDim2.new(0.70, 0, 0, 0),
+            UDim2.new(0.30, -7, 1, 0),
+            {
+                TextSize = 9,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildLeaderboardRowId(row)
+
+    if type(row) ~= "table" then
+        return ""
+    end
+
+    return row.Id ~= ""
+        and tostring(row.Id)
+        or (
+            tostring(row.Rank)
+            .. ":"
+            .. tostring(row.Name)
+        )
+end
+
+function HolyGuildGetOwnLeaderboardRow()
+
+    local data =
+        HolyGuildGetOverviewData()
+
+    if type(data) ~= "table" then
+        return nil
+    end
+
+    local rank =
+        tonumber(
+            HolyGuildField(
+                data.Root,
+                {
+                    "GlobalRank",
+                    "LeaderboardRank",
+                    "Rank",
+                    "Placement",
+                }
+            )
+        )
+
+    return {
+        Rank =
+            rank
+            or "—",
+
+        Id =
+            data.Id,
+
+        Name =
+            data.Name,
+
+        Tag =
+            data.Tag,
+
+        Score =
+            data.Weekly,
+
+        Members =
+            data.Members,
+
+        MaxMembers =
+            data.Capacity,
+
+        IconId =
+            data.IconId,
+
+        IsOwn =
+            true,
+    }
+end
+
+function HolyGuildRefreshLeaderboardPanel()
+
+    local panel =
+        HOLY_GUILD_UI.LeaderboardPanel
+
+    local rows =
+        HolyGuildLeaderboardArray()
+
+    if HOLY_GUILD_STATE.SelectedGuildId == nil then
+
+        HolyGuildGetSelectedLeaderboardGuild()
+    end
+
+    local ownRow =
+        HolyGuildGetOwnLeaderboardRow()
+
+    local ownId =
+        HolyGuildLeaderboardRowId(
+            ownRow
+        )
+
+    local ownVisible =
+        false
+
+    local signatureParts = {
+        tostring(
+            HOLY_GUILD_STATE.SelectedGuildId
+        ),
+        tostring(ownId),
+    }
+
+    for index, row in ipairs(rows) do
+
+        local rowId =
+            HolyGuildLeaderboardRowId(
+                row
+            )
+
+        if index <= 10
+        and rowId == ownId then
+            ownVisible =
+                true
+        end
+
+        signatureParts[
+            #signatureParts
+            + 1
+        ] =
+            table.concat(
+                {
+                    rowId,
+                    tostring(row.Rank),
+                    tostring(row.Name),
+                    tostring(row.Tag),
+                    tostring(row.Score),
+                },
+                "\31"
+            )
+    end
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            table.concat(
+                signatureParts,
+                "\30"
+            )
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local shownRows = {}
+
+    for index, row in ipairs(rows) do
+
+        if index <= 10 then
+
+            shownRows[
+                #shownRows
+                + 1
+            ] =
+                row
+        end
+    end
+
+    local addPinned =
+        type(ownRow) == "table"
+        and ownVisible ~= true
+
+    local visibleRows =
+        math.max(
+            1,
+            math.min(
+                #shownRows,
+                7
+            )
+        )
+
+    local listHeight =
+        visibleRows * 46
+
+    local pinnedHeight =
+        addPinned
+        and 64
+        or 0
+
+    local totalHeight =
+        34
+        + listHeight
+        + pinnedHeight
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, totalHeight),
+            false
+        )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "WEEKLY GLOBAL RANKING",
+        UDim2.fromOffset(10, 5),
+        UDim2.new(1, -20, 0, 23),
+        {
+            TextSize = 9,
+            Transparency = 0.40,
+        }
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        32
+    )
+
+    local scroll =
+        Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.Position =
+        UDim2.fromOffset(4, 34)
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            -8,
+            0,
+            listHeight
+        )
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            math.max(
+                listHeight,
+                #shownRows * 46
+            )
+        )
+
+    scroll.ScrollBarThickness =
+        #shownRows > visibleRows
+        and 3
+        or 0
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.Parent =
+        card
+
+    HolyGuildTrackPanelObject(
+        panel,
+        scroll,
+        {
+            ScrollBarImageColor3 =
+                "AccentColor",
+        }
+    )
+
+    if #shownRows <= 0 then
+
+        HolyGuildPanelText(
+            panel,
+            scroll,
+            "No leaderboard data.",
+            UDim2.fromOffset(8, 7),
+            UDim2.new(1, -16, 0, 28),
+            {
+                TextSize = 10,
+                Transparency = 0.42,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+    end
+
+    for index, rowData in ipairs(
+        shownRows
+    ) do
+
+        HolyGuildCreateLeaderboardButton(
+            panel,
+            scroll,
+            rowData,
+            (index - 1) * 46,
+            false
+        )
+    end
+
+    if addPinned then
+
+        HolyGuildPanelDivider(
+            panel,
+            card,
+            40 + listHeight
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "YOUR GUILD",
+            UDim2.fromOffset(
+                10,
+                44 + listHeight
+            ),
+            UDim2.new(1, -20, 0, 12),
+            {
+                TextSize = 8,
+                Transparency = 0.50,
+            }
+        )
+
+        HolyGuildCreateLeaderboardButton(
+            panel,
+            card,
+            ownRow,
+            56 + listHeight,
+            true
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildCreateLeaderboardButton(
+    panel,
+    parent,
+    rowData,
+    y,
+    compact
+)
+    local rowId =
+        HolyGuildLeaderboardRowId(
+            rowData
+        )
+
+    local selected =
+        rowId ~= ""
+        and rowId
+        == tostring(
+            HOLY_GUILD_STATE.SelectedGuildId
+            or ""
+        )
+
+    local height =
+        compact == true
+        and 42
+        or 44
+
+    local button =
+        Instance.new("TextButton")
+
+    button.AutoButtonColor =
+        false
+
+    button.BackgroundColor3 =
+        selected
+        and Library.Scheme.AccentColor
+        or Library.Scheme.MainColor
+
+    button.BackgroundTransparency =
+        selected
+        and 0.82
+        or 1
+
+    button.BorderSizePixel =
+        0
+
+    button.Position =
+        UDim2.new(
+            0,
+            compact
+            and 5
+            or 0,
+            0,
+            tonumber(y)
+            or 0
+        )
+
+    button.Size =
+        UDim2.new(
+            1,
+            compact
+            and -10
+            or -4,
+            0,
+            height
+        )
+
+    button.Text =
+        ""
+
+    button.Parent =
+        parent
+
+    local corner =
+        Instance.new("UICorner")
+
+    corner.CornerRadius =
+        UDim.new(0, 4)
+
+    corner.Parent =
+        button
+
+    HolyGuildTrackPanelObject(
+        panel,
+        button,
+        {
+            BackgroundColor3 =
+                selected
+                and "AccentColor"
+                or "MainColor",
+        }
+    )
+
+    if selected then
+
+        local accent =
+            Instance.new("Frame")
+
+        accent.BackgroundColor3 =
+            Library.Scheme.AccentColor
+
+        accent.BorderSizePixel =
+            0
+
+        accent.Position =
+            UDim2.fromOffset(0, 6)
+
+        accent.Size =
+            UDim2.fromOffset(
+                3,
+                height - 12
+            )
+
+        accent.Parent =
+            button
+
+        HolyGuildTrackPanelObject(
+            panel,
+            accent,
+            {
+                BackgroundColor3 =
+                    "AccentColor",
+            }
+        )
+    end
+
+    local rankText =
+        tonumber(rowData.Rank)
+        and (
+            rowData.Rank == 1
+            and "🥇"
+            or (
+                rowData.Rank == 2
+                and "🥈"
+                or (
+                    rowData.Rank == 3
+                    and "🥉"
+                    or (
+                        "#"
+                        .. tostring(
+                            rowData.Rank
+                        )
+                    )
+                )
+            )
+        )
+        or "—"
+
+    HolyGuildPanelText(
+        panel,
+        button,
+        rankText,
+        UDim2.fromOffset(7, 0),
+        UDim2.fromOffset(32, height),
+        {
+            TextSize = 10,
+            XAlignment =
+                Enum.TextXAlignment.Center,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        button,
+        tostring(rowData.Name)
+            .. (
+                tostring(
+                    rowData.Tag
+                    or ""
+                ) ~= ""
+                and (
+                    " ["
+                    .. tostring(rowData.Tag)
+                    .. "]"
+                )
+                or ""
+            ),
+        UDim2.fromOffset(45, 4),
+        UDim2.new(1, -125, 0, 19),
+        {
+            TextSize = 10,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        button,
+        rowData.IsOwn == true
+            and "Your guild"
+            or "Global guild",
+        UDim2.fromOffset(45, 22),
+        UDim2.new(1, -125, 0, 15),
+        {
+            TextSize = 8,
+            Transparency = 0.50,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        button,
+        HolyGuildFormatNumber(
+            rowData.Score
+        ),
+        UDim2.new(1, -78, 0, 7),
+        UDim2.fromOffset(68, 18),
+        {
+            TextSize = 10,
+            XAlignment =
+                Enum.TextXAlignment.Right,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        button,
+        "weekly",
+        UDim2.new(1, -78, 0, 24),
+        UDim2.fromOffset(68, 13),
+        {
+            TextSize = 8,
+            Transparency = 0.50,
+            XAlignment =
+                Enum.TextXAlignment.Right,
+        }
+    )
+
+    button.MouseButton1Click:Connect(function()
+
+        HOLY_GUILD_STATE.SelectedGuildId =
+            rowId
+
+        if HOLY_GUILD_UI.LeaderboardPanel then
+
+            HOLY_GUILD_UI.LeaderboardPanel.Signature =
+                ""
+        end
+
+        if HOLY_GUILD_UI.SelectedGuildPanel then
+
+            HOLY_GUILD_UI.SelectedGuildPanel.Signature =
+                ""
+        end
+
+        HolyGuildRefreshLeaderboardPanel()
+        HolyGuildRefreshSelectedGuildPanel()
+    end)
+
+    return button
+end
+
+function HolyGuildRefreshSelectedGuildPanel()
+
+    local panel =
+        HOLY_GUILD_UI.SelectedGuildPanel
+
+    local row =
+        HolyGuildGetSelectedLeaderboardGuild()
+
+    local signature =
+        type(row) == "table"
+        and table.concat(
+            {
+                HolyGuildLeaderboardRowId(
+                    row
+                ),
+                tostring(row.Rank),
+                tostring(row.Name),
+                tostring(row.Tag),
+                tostring(row.Score),
+                tostring(row.Members),
+                tostring(row.MaxMembers),
+                tostring(row.IconId),
+            },
+            "\31"
+        )
+        or "none"
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    if type(row) ~= "table" then
+
+        local card =
+            HolyGuildPanelCard(
+                panel,
+                panel.Surface,
+                UDim2.fromOffset(0, 0),
+                UDim2.new(1, 0, 0, 92),
+                false
+            )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "Select a guild from the leaderboard.",
+            UDim2.fromOffset(12, 12),
+            UDim2.new(1, -24, 0, 60),
+            {
+                TextSize = 10,
+                Transparency = 0.40,
+                Wrapped = true,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            92
+        )
+
+        return
+    end
+
+    local ownRow =
+        HolyGuildGetOwnLeaderboardRow()
+
+    local ownId =
+        HolyGuildLeaderboardRowId(
+            ownRow
+        )
+
+    local selectedId =
+        HolyGuildLeaderboardRowId(
+            row
+        )
+
+    local isOwn =
+        ownId ~= ""
+        and selectedId == ownId
+
+    local scoreDifference =
+        type(ownRow) == "table"
+        and (
+            tonumber(row.Score)
+            or 0
+        )
+            - (
+                tonumber(ownRow.Score)
+                or 0
+            )
+        or nil
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, 184),
+            true
+        )
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        tonumber(row.IconId)
+            and (
+                "rbxassetid://"
+                .. tostring(row.IconId)
+            )
+            or "",
+        UDim2.fromOffset(12, 12),
+        UDim2.fromOffset(54, 54)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        tostring(row.Name),
+        UDim2.fromOffset(76, 10),
+        UDim2.new(1, -88, 0, 22),
+        {
+            TextSize = 13,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        tostring(
+            row.Tag
+            or ""
+        ) ~= ""
+            and (
+                "["
+                .. tostring(row.Tag)
+                .. "]"
+            )
+            or "No guild tag",
+        UDim2.fromOffset(76, 31),
+        UDim2.new(1, -88, 0, 17),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        isOwn
+            and "YOUR GUILD"
+            or "GLOBAL",
+        UDim2.fromOffset(76, 49),
+        isOwn
+            and 76
+            or 58,
+        "Accent"
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        78
+    )
+
+    local differenceText =
+        isOwn
+        and "This is your guild"
+        or (
+            scoreDifference == nil
+            and "Unavailable"
+            or (
+                scoreDifference > 0
+                and (
+                    HolyGuildFormatNumber(
+                        scoreDifference
+                    )
+                    .. " ahead of your guild"
+                )
+                or (
+                    scoreDifference < 0
+                    and (
+                        HolyGuildFormatNumber(
+                            math.abs(
+                                scoreDifference
+                            )
+                        )
+                        .. " behind your guild"
+                    )
+                    or "Tied with your guild"
+                )
+            )
+        )
+
+    local details = {
+        {
+            "Global rank",
+            tonumber(row.Rank)
+                and (
+                    "#"
+                    .. tostring(row.Rank)
+                )
+                or "Not ranked",
+        },
+        {
+            "Weekly score",
+            HolyGuildFormatNumber(
+                row.Score
+            ),
+        },
+        {
+            "Members",
+            row.Members ~= nil
+                and (
+                    tostring(row.Members)
+                    .. (
+                        row.MaxMembers ~= nil
+                        and (
+                            " / "
+                            .. tostring(
+                                row.MaxMembers
+                            )
+                        )
+                        or ""
+                    )
+                )
+                or "Unavailable",
+        },
+        {
+            "Compared with you",
+            differenceText,
+        },
+    }
+
+    for index, detail in ipairs(details) do
+
+        local y =
+            83
+            + (index - 1) * 24
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[1],
+            UDim2.fromOffset(12, y),
+            UDim2.new(0.48, -12, 0, 21),
+            {
+                TextSize = 9,
+                Transparency = 0.45,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[2],
+            UDim2.new(0.48, 0, 0, y),
+            UDim2.new(0.52, -12, 0, 21),
+            {
+                TextSize = 9,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        184
+    )
+end
+
+function HolyGuildRefreshInfoPanels()
+
+    HolyGuildRefreshOverviewPanel()
+    HolyGuildRefreshInvitePreview()
+    HolyGuildRefreshIconPreview()
+    HolyGuildRefreshMemberList()
+    HolyGuildRefreshSelectedMemberPanel()
+    HolyGuildRefreshContestPanel()
+    HolyGuildRefreshContestProgressPanel()
+    HolyGuildRefreshLeaderboardPanel()
+    HolyGuildRefreshSelectedGuildPanel()
 end
 
 function HolyGuildBuildOverviewText()
@@ -132085,32 +135209,34 @@ function HolyGuildGetSelectedLeaderboardGuild()
 
     for _, row in ipairs(rows) do
 
-        local rowId =
-            row.Id ~= ""
-            and row.Id
-            or (
-                tostring(row.Rank)
-                .. ":"
-                .. row.Name
-            )
+        if HolyGuildLeaderboardRowId(
+            row
+        ) == selectedId then
 
-        if rowId == selectedId then
             return row
         end
     end
 
+    local ownRow =
+        HolyGuildGetOwnLeaderboardRow()
+
+    if type(ownRow) == "table"
+    and HolyGuildLeaderboardRowId(
+        ownRow
+    ) == selectedId then
+
+        return ownRow
+    end
+
     local first =
         rows[1]
+        or ownRow
 
     if first then
 
         HOLY_GUILD_STATE.SelectedGuildId =
-            first.Id ~= ""
-            and first.Id
-            or (
-                tostring(first.Rank)
-                .. ":"
-                .. first.Name
+            HolyGuildLeaderboardRowId(
+                first
             )
     end
 
@@ -132167,14 +135293,26 @@ function HolyGuildRefreshPlayerDropdown()
         return
     end
 
+    local memberIds = {}
+
+    for _, member in ipairs(
+        HolyGuildBuildMembers()
+    ) do
+
+        memberIds[member.UserId] =
+            true
+    end
+
     local values = {}
     local displayMap = {}
+    local valueImages = {}
 
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
 
-        if player ~= LocalPlayer then
+        if player ~= LocalPlayer
+        and memberIds[player.UserId] ~= true then
 
             local display =
                 player.DisplayName ~= player.Name
@@ -132189,11 +135327,19 @@ function HolyGuildRefreshPlayerDropdown()
                     .. player.Name
                 )
 
-            values[#values + 1] =
+            values[
+                #values
+                + 1
+            ] =
                 display
 
             displayMap[display] =
                 player.UserId
+
+            valueImages[display] =
+                "rbxthumb://type=AvatarHeadShot&id="
+                .. tostring(player.UserId)
+                .. "&w=150&h=150"
         end
     end
 
@@ -132202,7 +135348,7 @@ function HolyGuildRefreshPlayerDropdown()
     if #values <= 0 then
 
         values[1] =
-            "No other players in this server"
+            "No eligible players in this server"
     end
 
     HOLY_GUILD_RUNTIME.PlayerDisplayMap =
@@ -132211,9 +135357,12 @@ function HolyGuildRefreshPlayerDropdown()
     local selectedDisplay =
         nil
 
-    for display, userId in pairs(displayMap) do
+    for display, userId in pairs(
+        displayMap
+    ) do
 
-        if userId == HOLY_GUILD_STATE.InviteUserId then
+        if userId
+            == HOLY_GUILD_STATE.InviteUserId then
 
             selectedDisplay =
                 display
@@ -132222,106 +135371,16 @@ function HolyGuildRefreshPlayerDropdown()
         end
     end
 
-    if selectedDisplay == nil
-    and displayMap[values[1]] then
-
-        selectedDisplay =
-            values[1]
+    if selectedDisplay == nil then
 
         HOLY_GUILD_STATE.InviteUserId =
-            displayMap[selectedDisplay]
-    end
-
-    HOLY_GUILD_RUNTIME.UpdatingUI =
-        true
-
-    pcall(function()
-
-        dropdown:SetValues(
-            values
-        )
-
-        dropdown:SetValue(
-            selectedDisplay
-            or values[1],
-            true
-        )
-    end)
-
-    HOLY_GUILD_RUNTIME.UpdatingUI =
-        false
-
-    local inviteButton =
-        HOLY_GUILD_UI.InviteButton
-
-    if type(inviteButton) == "table"
-    and type(inviteButton.SetDisabled) == "function" then
-
-        inviteButton:SetDisabled(
-            HOLY_GUILD_STATE.InviteUserId == nil
-            or HOLY_GUILD_RUNTIME.Busy.Action == true
-        )
-    end
-end
-
-function HolyGuildRefreshMemberDropdown()
-
-    local dropdown =
-        HOLY_GUILD_UI.MemberDropdown
-
-    if type(dropdown) ~= "table" then
-        return
-    end
-
-    local values = {}
-    local displayMap = {}
-    local valueImages = {}
-    local selectedDisplay = nil
-
-    for _, member in ipairs(
-        HolyGuildBuildMembers()
-    ) do
-
-        local display =
-            HolyGuildMemberDisplay(
-                member
-            )
-
-        values[#values + 1] =
-            display
-
-        displayMap[display] =
-            member.UserId
-
-        valueImages[display] =
-            "rbxthumb://type=AvatarHeadShot&id="
-            .. tostring(member.UserId)
-            .. "&w=150&h=150"
-
-        if member.UserId
-            == HOLY_GUILD_STATE.SelectedMemberUserId then
-
-            selectedDisplay =
-                display
-        end
-    end
-
-    if #values <= 0 then
-        values[1] = "No guild members"
-    end
-
-    if selectedDisplay == nil
-    and displayMap[values[1]] then
+            displayMap[values[1]]
 
         selectedDisplay =
-            values[1]
-
-        HOLY_GUILD_STATE.SelectedMemberUserId =
-            displayMap[selectedDisplay]
+            displayMap[values[1]]
+            and values[1]
+            or nil
     end
-
-    HOLY_GUILD_RUNTIME.MemberDisplayMap =
-        displayMap
 
     HOLY_GUILD_RUNTIME.UpdatingUI =
         true
@@ -132332,7 +135391,8 @@ function HolyGuildRefreshMemberDropdown()
             values
         )
 
-        if type(dropdown.SetValueImages) == "function" then
+        if type(dropdown.SetValueImages)
+            == "function" then
 
             dropdown:SetValueImages(
                 valueImages
@@ -132348,180 +135408,43 @@ function HolyGuildRefreshMemberDropdown()
 
     HOLY_GUILD_RUNTIME.UpdatingUI =
         false
+
+    local inviteButton =
+        HOLY_GUILD_UI.InviteButton
+
+    if type(inviteButton) == "table"
+    and type(inviteButton.SetDisabled)
+        == "function" then
+
+        inviteButton:SetDisabled(
+            HOLY_GUILD_STATE.InviteUserId == nil
+            or HOLY_GUILD_RUNTIME.Busy.Action == true
+        )
+    end
+
+    if HOLY_GUILD_UI.InvitePreviewPanel then
+
+        HOLY_GUILD_UI.InvitePreviewPanel.Signature =
+            ""
+    end
+
+    HolyGuildRefreshInvitePreview()
+end
+
+function HolyGuildRefreshMemberDropdown()
+
+    HolyGuildRefreshMemberList()
 end
 
 function HolyGuildRefreshLeaderboardUI()
 
-    local dropdown =
-        HOLY_GUILD_UI.LeaderboardDropdown
-
-    local values = {}
-    local displayMap = {}
-    local selectedDisplay = nil
-    local statusRows = {}
-
-    for _, row in ipairs(
-        HolyGuildLeaderboardArray()
-    ) do
-
-        local display =
-            HolyGuildLeaderboardDisplay(
-                row
-            )
-
-        local rowId =
-            row.Id ~= ""
-            and row.Id
-            or (
-                tostring(row.Rank)
-                .. ":"
-                .. row.Name
-            )
-
-        values[#values + 1] =
-            display
-
-        displayMap[display] =
-            rowId
-
-        if rowId
-            == HOLY_GUILD_STATE.SelectedGuildId then
-
-            selectedDisplay =
-                display
-        end
-
-        if #statusRows < 10 then
-
-            statusRows[#statusRows + 1] = {
-                Key =
-                    "#"
-                    .. tostring(row.Rank)
-                    .. " "
-                    .. row.Name,
-
-                Value =
-                    HolyGuildFormatNumber(
-                        row.Score
-                    ),
-            }
-        end
-    end
-
-    if #values <= 0 then
-        values[1] = "Leaderboard unavailable"
-    end
-
-    if #statusRows <= 0 then
-
-        statusRows[1] = {
-            Key = "No leaderboard data",
-            Value = "",
-        }
-    end
-
-    HOLY_GUILD_RUNTIME.GuildDisplayMap =
-        displayMap
-
-    if type(dropdown) == "table" then
-
-        HOLY_GUILD_RUNTIME.UpdatingUI =
-            true
-
-        pcall(function()
-
-            dropdown:SetValues(
-                values
-            )
-
-            dropdown:SetValue(
-                selectedDisplay
-                or values[1],
-                true
-            )
-        end)
-
-        HOLY_GUILD_RUNTIME.UpdatingUI =
-            false
-    end
-
-    local list =
-        HOLY_GUILD_UI.LeaderboardList
-
-    if type(list) == "table"
-    and type(list.SetRows) == "function" then
-
-        list:SetRows(
-            statusRows
-        )
-    end
-
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.SelectedGuildPanel,
-        HolyGuildTextRows(
-            HolyGuildBuildSelectedGuildText(),
-            1
-        )
-    )
+    HolyGuildRefreshLeaderboardPanel()
+    HolyGuildRefreshSelectedGuildPanel()
 end
 
 function HolyGuildRefreshContributionList()
 
-    local list =
-        HOLY_GUILD_UI.ContributionList
-
-    if type(list) ~= "table"
-    or type(list.SetRows) ~= "function" then
-        return
-    end
-
-    local members =
-        HolyGuildBuildMembers()
-
-    table.sort(
-        members,
-        function(left, right)
-
-            if left.Weekly ~= right.Weekly then
-                return left.Weekly > right.Weekly
-            end
-
-            return tostring(left.Username):lower()
-                < tostring(right.Username):lower()
-        end
-    )
-
-    local rows = {}
-
-    for _, member in ipairs(members) do
-
-        rows[#rows + 1] = {
-            Key =
-                (
-                    member.Online
-                    and "🟢 "
-                    or "⚫ "
-                )
-                .. member.Username,
-
-            Value =
-                HolyGuildFormatNumber(
-                    member.Weekly
-                ),
-        }
-    end
-
-    if #rows <= 0 then
-
-        rows[1] = {
-            Key = "No contribution data",
-            Value = "",
-        }
-    end
-
-    list:SetRows(
-        rows
-    )
+    HolyGuildRefreshContestProgressPanel()
 end
 
 function HolyGuildRefreshRoleAction()
@@ -132540,12 +135463,31 @@ function HolyGuildRefreshRoleAction()
         HolyGuildGetLocalMember()
 
     local text =
-        "Role Action"
+        "Select a Member"
 
     local allowed =
         false
 
     if selected
+    and selected.Role == "Owner" then
+
+        text =
+            "Owner Cannot Be Changed"
+
+    elseif selected
+    and selected.UserId
+        == LocalPlayer.UserId then
+
+        text =
+            "Your Role Cannot Be Changed"
+
+    elseif localMember == nil
+    or localMember.Role ~= "Owner" then
+
+        text =
+            "Owner Permission Required"
+
+    elseif selected
     and selected.Role == "Member" then
 
         text =
@@ -132566,10 +135508,8 @@ function HolyGuildRefreshRoleAction()
 
     allowed =
         allowed == true
-        and localMember ~= nil
-        and localMember.Role == "Owner"
-        and selected.UserId ~= LocalPlayer.UserId
-        and HOLY_GUILD_RUNTIME.Busy.Action ~= true
+        and HOLY_GUILD_RUNTIME.Busy.Action
+            ~= true
 
     pcall(function()
 
@@ -132585,21 +135525,15 @@ function HolyGuildRefreshRoleAction()
 
         actions:SetDisabled(
             "Refresh",
-            HOLY_GUILD_RUNTIME.Busy.Snapshot == true
-            or HOLY_GUILD_RUNTIME.Busy.Action == true
+            HOLY_GUILD_RUNTIME.Busy.Snapshot
+                == true
+            or HOLY_GUILD_RUNTIME.Busy.Action
+                == true
         )
     end)
 end
 
 function HolyGuildRefreshUI()
-
-    HolyGuildRefreshInfoPanels()
-
-    HolyGuildRefreshPlayerDropdown()
-    HolyGuildRefreshMemberDropdown()
-    HolyGuildRefreshLeaderboardUI()
-    HolyGuildRefreshContributionList()
-    HolyGuildRefreshRoleAction()
 
     local root =
         HolyGuildSnapshotRoot(
@@ -132619,7 +135553,8 @@ function HolyGuildRefreshUI()
     if iconId ~= nil
     and HOLY_GUILD_STATE.IconDraftDirty ~= true
     and type(HOLY_GUILD_UI.IconInput) == "table"
-    and type(HOLY_GUILD_UI.IconInput.SetValue) == "function" then
+    and type(HOLY_GUILD_UI.IconInput.SetValue)
+        == "function" then
 
         HOLY_GUILD_STATE.IconDraft =
             tostring(iconId)
@@ -132638,6 +135573,10 @@ function HolyGuildRefreshUI()
         HOLY_GUILD_RUNTIME.UpdatingUI =
             false
     end
+
+    HolyGuildRefreshPlayerDropdown()
+    HolyGuildRefreshInfoPanels()
+    HolyGuildRefreshRoleAction()
 end
 
 function HolyGuildSetStatus(status)
@@ -132648,7 +135587,28 @@ function HolyGuildSetStatus(status)
             or "Ready"
         )
 
-    HolyGuildRefreshUI()
+    HolyGuildRefreshRoleAction()
+
+    if HOLY_GUILD_UI.IconPreviewPanel then
+
+        HOLY_GUILD_UI.IconPreviewPanel.Signature =
+            ""
+
+        HolyGuildRefreshIconPreview()
+    end
+
+    local inviteButton =
+        HOLY_GUILD_UI.InviteButton
+
+    if type(inviteButton) == "table"
+    and type(inviteButton.SetDisabled)
+        == "function" then
+
+        inviteButton:SetDisabled(
+            HOLY_GUILD_STATE.InviteUserId == nil
+            or HOLY_GUILD_RUNTIME.Busy.Action == true
+        )
+    end
 end
 
 function HolyGuildNormalizePage(value)
@@ -132676,6 +135636,9 @@ end
 
 function HolyGuildSetPage(value)
 
+    local previousPage =
+        HOLY_GUILD_STATE.Page
+
     local page =
         HolyGuildNormalizePage(
             value
@@ -132683,6 +135646,14 @@ function HolyGuildSetPage(value)
 
     HOLY_GUILD_STATE.Page =
         page
+
+    if type(
+        HOLY_GUILD_RUNTIME.LastPageRefresh
+    ) ~= "table" then
+
+        HOLY_GUILD_RUNTIME.LastPageRefresh =
+            {}
+    end
 
     HolySetGroupboxVisible(
         HOLY_GUILD_UI.OverviewBox,
@@ -132725,7 +135696,8 @@ function HolyGuildSetPage(value)
     )
 
     if HOLY_GUILD_UI.Tab
-    and type(HOLY_GUILD_UI.Tab.RefreshSides) == "function" then
+    and type(HOLY_GUILD_UI.Tab.RefreshSides)
+        == "function" then
 
         task.defer(function()
 
@@ -132734,6 +135706,53 @@ function HolyGuildSetPage(value)
     end
 
     HolyGuildRefreshUI()
+
+    local lastRefresh =
+        HOLY_GUILD_RUNTIME.LastPageRefresh[page]
+        or 0
+
+    if HOLY_GUILD_RUNTIME.Running == true
+    and previousPage ~= page
+    and os.clock() - lastRefresh >= 12 then
+
+        HOLY_GUILD_RUNTIME.LastPageRefresh[page] =
+            os.clock()
+
+        task.spawn(function()
+
+            if page == "Overview"
+            or page == "Members" then
+
+                HolyGuildRefreshSnapshot(
+                    true
+                )
+
+                HolyGuildRefreshPresence(
+                    true
+                )
+
+            elseif page == "Contest" then
+
+                HolyGuildRefreshCompetition(
+                    true
+                )
+
+                HolyGuildRefreshSnapshot(
+                    true
+                )
+
+                HolyGuildRefreshPresence(
+                    true
+                )
+
+            elseif page == "Leaderboard" then
+
+                HolyGuildRefreshLeaderboard(
+                    true
+                )
+            end
+        end)
+    end
 end
 
 function HolyGuildRefreshSnapshot(quiet)
@@ -133641,13 +136660,7 @@ function HolyGuildStart()
 
             if HOLY_GUILD_STATE.Page == "Contest" then
 
-                HolyGuildSetInfoRows(
-                    HOLY_GUILD_UI.ContestPanel,
-                    HolyGuildTextRows(
-                        HolyGuildBuildContestText(),
-                        2
-                    )
-                )
+                HolyGuildRefreshContestPanel()
             end
 
             task.wait(
@@ -143891,37 +146904,69 @@ HOLY_GUILD_UI.OverviewPanel =
     HolyGuildAddInfoPanel(
         GuildOverviewBox,
         "HolyGuildOverviewPanel",
-        72
+        230
     )
 
-GuildOverviewBox:AddButton({
+HOLY_GUILD_UI.OverviewActions =
+    GuildOverviewBox:AddActionRow(
+        "HolyGuildOverviewActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Refresh",
+
+                    Text =
+                        "Refresh",
+
+                    Tooltip =
+                        "Reloads the live guild snapshot, presence, competition and leaderboard.",
+
+                    Callback =
+                        function()
+
+                            task.spawn(function()
+
+                                HolyGuildRefreshAll(
+                                    true
+                                )
+                            end)
+                        end,
+                },
+            },
+        }
+    )
+
+GuildActionsBox:AddDivider({
     Text =
-        "Refresh Guild",
+        "Invite Member",
 
-    Tooltip =
-        "Reloads the live guild snapshot and online-member state.",
+    MarginTop =
+        0,
 
-    Func =
-        function()
-
-            task.spawn(function()
-
-                HolyGuildRefreshAll(
-                    true
-                )
-            end)
-        end,
+    MarginBottom =
+        6,
 })
+
+HOLY_GUILD_UI.InvitePreviewPanel =
+    HolyGuildAddInfoPanel(
+        GuildActionsBox,
+        "HolyGuildInvitePreview",
+        68
+    )
 
 HOLY_GUILD_UI.InviteDropdown =
     GuildActionsBox:AddDropdown(
         "HolyGuildInvitePlayer",
         {
             Text =
-                "Player in Current Server",
+                "Eligible Player",
 
             Values = {
-                "No other players in this server",
+                "No eligible players in this server",
             },
 
             Default =
@@ -143939,8 +146984,14 @@ HOLY_GUILD_UI.InviteDropdown =
             MaxVisibleDropdownItems =
                 8,
 
+            SpecialType =
+                "Player",
+
+            EnablePlayerImages =
+                true,
+
             Tooltip =
-                "Selects a player currently in this server to invite to your guild.",
+                "Only players who are not already in your guild are shown.",
         }
     )
 
@@ -143960,16 +147011,22 @@ HOLY_GUILD_UI.InviteDropdown:OnChanged(function(value)
             display
         ]
 
-    HolyGuildRefreshUI()
+    if HOLY_GUILD_UI.InvitePreviewPanel then
+
+        HOLY_GUILD_UI.InvitePreviewPanel.Signature =
+            ""
+    end
+
+    HolyGuildRefreshInvitePreview()
 end)
 
 HOLY_GUILD_UI.InviteButton =
     GuildActionsBox:AddButton({
         Text =
-            "Invite Player",
+            "Invite Selected Player",
 
         Tooltip =
-            "Sends the confirmed Guild.Invite request to the selected player.",
+            "Sends the confirmed Guild.Invite request to the selected eligible player.",
 
         Func =
             function()
@@ -143989,12 +147046,19 @@ GuildActionsBox:AddDivider({
         6,
 })
 
+HOLY_GUILD_UI.IconPreviewPanel =
+    HolyGuildAddInfoPanel(
+        GuildActionsBox,
+        "HolyGuildIconPreview",
+        68
+    )
+
 HOLY_GUILD_UI.IconInput =
     GuildActionsBox:AddInput(
         "HolyGuildIconId",
         {
             Text =
-                "Icon ID",
+                "New Icon ID",
 
             Default =
                 HOLY_GUILD_STATE.IconDraft,
@@ -144006,13 +147070,13 @@ HOLY_GUILD_UI.IconInput =
                 true,
 
             Finished =
-                true,
+                false,
 
             ClearTextOnFocus =
                 false,
 
             Tooltip =
-                "Enter a guild icon ID. HOLY keeps all other guild fields unchanged.",
+                "Shows a live preview. Apply stays disabled until the ID is valid and different.",
         }
     )
 
@@ -144030,15 +147094,20 @@ HOLY_GUILD_UI.IconInput:OnChanged(function(value)
 
     HOLY_GUILD_STATE.IconDraftDirty =
         true
+
+    HOLY_GUILD_UI.IconPreviewPanel.Signature =
+        ""
+
+    HolyGuildRefreshIconPreview()
 end)
 
 HOLY_GUILD_UI.IconButton =
     GuildActionsBox:AddButton({
         Text =
-            "Apply Guild Icon",
+            "Apply New Icon",
 
         Tooltip =
-            "Applies the selected icon and waits for GetMyGuild to confirm the change.",
+            "Applies the entered image ID and waits for GetMyGuild to confirm it.",
 
         Func =
             function()
@@ -144047,67 +147116,52 @@ HOLY_GUILD_UI.IconButton =
             end,
     })
 
-HOLY_GUILD_UI.StatusPanel =
-    HolyGuildAddInfoPanel(
-        GuildActionsBox,
-        "HolyGuildStatusPanel",
-        46
-    )
-
-HOLY_GUILD_UI.MemberDropdown =
-    GuildMembersBox:AddDropdown(
-        "HolyGuildSelectedMember",
+HOLY_GUILD_UI.MemberSearchInput =
+    GuildMembersBox:AddInput(
+        "HolyGuildMemberSearch",
         {
             Text =
-                "Guild Members",
-
-            Values = {
-                "No guild members",
-            },
+                "Search Members",
 
             Default =
-                1,
+                HOLY_GUILD_STATE.MemberSearch,
 
-            Multi =
+            Placeholder =
+                "Username, display name or role",
+
+            Numeric =
                 false,
 
-            Searchable =
-                true,
-
-            AllowNull =
+            Finished =
                 false,
 
-            MaxVisibleDropdownItems =
-                12,
+            ClearTextOnFocus =
+                false,
 
             Tooltip =
-                "Online members use a green dot. The list includes every member's current role.",
+                "Filters the live member list while you type.",
         }
     )
 
-HOLY_GUILD_UI.MemberDropdown:OnChanged(function(value)
+HOLY_GUILD_UI.MemberSearchInput:OnChanged(function(value)
 
     if HOLY_GUILD_RUNTIME.UpdatingUI == true then
         return
     end
 
-    local display =
-        HolyGuildSingleValue(
+    HOLY_GUILD_STATE.MemberSearch =
+        tostring(
             value
+            or ""
         )
 
-    local userId =
-        HOLY_GUILD_RUNTIME.MemberDisplayMap[
-            display
-        ]
+    if HOLY_GUILD_UI.MemberListPanel then
 
-    if userId then
+        HOLY_GUILD_UI.MemberListPanel.Signature =
+            ""
 
-        HOLY_GUILD_STATE.SelectedMemberUserId =
-            userId
+        HolyGuildRefreshMemberList()
     end
-
-    HolyGuildRefreshUI()
 end)
 
 HOLY_GUILD_UI.MemberSortDropdown =
@@ -144139,7 +147193,7 @@ HOLY_GUILD_UI.MemberSortDropdown =
                 3,
 
             Tooltip =
-                "Changes how the member list is ordered.",
+                "Changes how the clickable member rows are ordered.",
         }
     )
 
@@ -144154,41 +147208,68 @@ HOLY_GUILD_UI.MemberSortDropdown:OnChanged(function(value)
             value
         )
 
-    HolyGuildRefreshMemberDropdown()
+    if HOLY_GUILD_UI.MemberListPanel then
+
+        HOLY_GUILD_UI.MemberListPanel.Signature =
+            ""
+
+        HolyGuildRefreshMemberList()
+    end
 end)
 
-GuildMembersBox:AddButton({
-    Text =
-        "Refresh Members",
+HOLY_GUILD_UI.MemberListPanel =
+    HolyGuildAddInfoPanel(
+        GuildMembersBox,
+        "HolyGuildMemberListPanel",
+        234
+    )
 
-    Tooltip =
-        "Reloads roles, contributions, names and online status from the server.",
+HOLY_GUILD_UI.MemberListActions =
+    GuildMembersBox:AddActionRow(
+        "HolyGuildMemberListActions",
+        {
+            Height =
+                21,
 
-    Func =
-        function()
+            Buttons = {
+                {
+                    Id =
+                        "Refresh",
 
-            task.spawn(function()
+                    Text =
+                        "Refresh Members",
 
-                HolyGuildRefreshSnapshot(
-                    false
-                )
+                    Tooltip =
+                        "Reloads member roles, contributions and online status.",
 
-                HolyGuildRefreshPresence(
-                    false
-                )
+                    Callback =
+                        function()
 
-                HolyGuildSetStatus(
-                    "Member list is up to date"
-                )
-            end)
-        end,
-})
+                            task.spawn(function()
+
+                                HolyGuildRefreshSnapshot(
+                                    false
+                                )
+
+                                HolyGuildRefreshPresence(
+                                    false
+                                )
+
+                                HolyGuildSetStatus(
+                                    "Member list is up to date"
+                                )
+                            end)
+                        end,
+                },
+            },
+        }
+    )
 
 HOLY_GUILD_UI.SelectedMemberPanel =
     HolyGuildAddInfoPanel(
         GuildSelectedMemberBox,
         "HolyGuildSelectedMemberPanel",
-        46
+        190
     )
 
 HOLY_GUILD_UI.MemberActions =
@@ -144204,7 +147285,7 @@ HOLY_GUILD_UI.MemberActions =
                         "RoleAction",
 
                     Text =
-                        "Role Action",
+                        "Select a Member",
 
                     Tooltip =
                         "Promotes a Member or demotes an Elder, then verifies the returned role.",
@@ -144249,186 +147330,104 @@ HOLY_GUILD_UI.ContestPanel =
     HolyGuildAddInfoPanel(
         GuildContestBox,
         "HolyGuildContestPanel",
-        46
+        180
     )
 
-GuildContestBox:AddButton({
-    Text =
-        "Refresh Competition",
+HOLY_GUILD_UI.ContestActions =
+    GuildContestBox:AddActionRow(
+        "HolyGuildContestActions",
+        {
+            Height =
+                21,
 
-    Tooltip =
-        "Reloads the current, pending or previous guild competition.",
+            Buttons = {
+                {
+                    Id =
+                        "Refresh",
 
-    Func =
-        function()
+                    Text =
+                        "Refresh Competition",
 
-            task.spawn(function()
+                    Tooltip =
+                        "Reloads the current, upcoming or completed guild competition.",
 
-                if HolyGuildRefreshCompetition(
-                    false
-                ) then
+                    Callback =
+                        function()
 
-                    HolyGuildSetStatus(
-                        "Competition data is up to date"
-                    )
-                end
-            end)
-        end,
-})
+                            task.spawn(function()
+
+                                if HolyGuildRefreshCompetition(
+                                    false
+                                ) then
+
+                                    HolyGuildSetStatus(
+                                        "Competition data is up to date"
+                                    )
+                                end
+                            end)
+                        end,
+                },
+            },
+        }
+    )
 
 HOLY_GUILD_UI.ContestProgressPanel =
     HolyGuildAddInfoPanel(
         GuildProgressBox,
         "HolyGuildContestProgressPanel",
-        78
+        126
     )
 
-GuildProgressBox:AddDivider({
-    Text =
-        "Member Contributions",
+HOLY_GUILD_UI.LeaderboardPanel =
+    HolyGuildAddInfoPanel(
+        GuildLeaderboardBox,
+        "HolyGuildLeaderboardPanel",
+        264
+    )
 
-    MarginTop =
-        6,
-
-    MarginBottom =
-        6,
-})
-
-HOLY_GUILD_UI.ContributionList =
-    GuildProgressBox:AddStatusList(
-        "HolyGuildContributionList",
+HOLY_GUILD_UI.LeaderboardActions =
+    GuildLeaderboardBox:AddActionRow(
+        "HolyGuildLeaderboardActions",
         {
-            RowHeight =
-                24,
+            Height =
+                21,
 
-            KeyWidth =
-                0.70,
-
-            Rows = {
+            Buttons = {
                 {
-                    Key =
-                        "No contribution data",
+                    Id =
+                        "Refresh",
 
-                    Value =
-                        "",
+                    Text =
+                        "Refresh Leaderboard",
+
+                    Tooltip =
+                        "Reloads the confirmed global weekly guild leaderboard.",
+
+                    Callback =
+                        function()
+
+                            task.spawn(function()
+
+                                if HolyGuildRefreshLeaderboard(
+                                    false
+                                ) then
+
+                                    HolyGuildSetStatus(
+                                        "Global weekly leaderboard is up to date"
+                                    )
+                                end
+                            end)
+                        end,
                 },
             },
         }
     )
-
-HOLY_GUILD_UI.LeaderboardList =
-    GuildLeaderboardBox:AddStatusList(
-        "HolyGuildWeeklyLeaderboard",
-        {
-            RowHeight =
-                24,
-
-            KeyWidth =
-                0.72,
-
-            Rows = {
-                {
-                    Key =
-                        "Loading leaderboard...",
-
-                    Value =
-                        "",
-                },
-            },
-        }
-    )
-
-GuildLeaderboardBox:AddButton({
-    Text =
-        "Refresh Leaderboard",
-
-    Tooltip =
-        "Reloads the confirmed global weekly guild leaderboard.",
-
-    Func =
-        function()
-
-            task.spawn(function()
-
-                if HolyGuildRefreshLeaderboard(
-                    false
-                ) then
-
-                    HolyGuildSetStatus(
-                        "Global weekly leaderboard is up to date"
-                    )
-                end
-            end)
-        end,
-})
-
-HOLY_GUILD_UI.LeaderboardDropdown =
-    GuildSelectedGuildBox:AddDropdown(
-        "HolyGuildSelectedLeaderboardGuild",
-        {
-            Text =
-                "Select Global Guild",
-
-            Values = {
-                "Leaderboard unavailable",
-            },
-
-            Default =
-                1,
-
-            Multi =
-                false,
-
-            Searchable =
-                true,
-
-            AllowNull =
-                false,
-
-            MaxVisibleDropdownItems =
-                12,
-
-            Tooltip =
-                "Selects one of the top guilds from the global weekly leaderboard.",
-        }
-    )
-
-HOLY_GUILD_UI.LeaderboardDropdown:OnChanged(function(value)
-
-    if HOLY_GUILD_RUNTIME.UpdatingUI == true then
-        return
-    end
-
-    local display =
-        HolyGuildSingleValue(
-            value
-        )
-
-    local guildId =
-        HOLY_GUILD_RUNTIME.GuildDisplayMap[
-            display
-        ]
-
-    if guildId then
-
-        HOLY_GUILD_STATE.SelectedGuildId =
-            guildId
-    end
-
-    HolyGuildSetInfoRows(
-        HOLY_GUILD_UI.SelectedGuildPanel,
-        HolyGuildTextRows(
-            HolyGuildBuildSelectedGuildText(),
-            1
-        )
-    )
-end)
 
 HOLY_GUILD_UI.SelectedGuildPanel =
     HolyGuildAddInfoPanel(
         GuildSelectedGuildBox,
         "HolyGuildSelectedGuildPanel",
-        46
+        184
     )
 
 HolyGuildSetPage(
