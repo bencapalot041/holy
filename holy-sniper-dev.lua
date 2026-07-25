@@ -3310,6 +3310,7 @@ end
 HOLY_FARM_STATE = {
     AutoCollectFruits = false,
     AutoEclipseCollection = false,
+    RejoinAfterEclipseHarvest = false,
 
     MutatedWeightOverride = false,
     MutatedWeightOverrideKg = "0",
@@ -3431,6 +3432,18 @@ HOLY_ECLIPSE_COLLECTION_RUNTIME = {
     WaitingForStart = false,
     WaitingForEnd = false,
 
+    Confirming = false,
+    PendingEntry = nil,
+    ConfirmationStartedAt = 0,
+    ConfirmationTimeout = 2.5,
+
+    RetryCount = 0,
+    RetryDelay = 0.75,
+
+    RejoinPending = false,
+    RejoinAt = 0,
+    Teleporting = false,
+
     NextCollectAt = 0,
     LastFireAt = 0,
 
@@ -3452,6 +3465,7 @@ HOLY_FARM_UI = {
 
     AutoCollectToggle = nil,
     EclipseCollectionToggle = nil,
+    RejoinAfterEclipseHarvestToggle = nil,
 
     MutatedWeightOverrideToggle = nil,
     MutatedWeightOverrideInput = nil,
@@ -13122,6 +13136,9 @@ function HolyFarmEnsureState()
     HOLY_FARM_STATE.AutoEclipseCollection =
         HOLY_FARM_STATE.AutoEclipseCollection == true
 
+    HOLY_FARM_STATE.RejoinAfterEclipseHarvest =
+        HOLY_FARM_STATE.RejoinAfterEclipseHarvest == true
+
     HOLY_FARM_STATE.MutatedWeightOverride =
         HOLY_FARM_STATE.MutatedWeightOverride == true
 
@@ -13393,6 +13410,9 @@ function HolySaveFarmSettings()
         AutoEclipseCollection =
             HOLY_FARM_STATE.AutoEclipseCollection == true,
 
+        RejoinAfterEclipseHarvest =
+            HOLY_FARM_STATE.RejoinAfterEclipseHarvest == true,
+
         MutatedWeightOverride =
             HOLY_FARM_STATE.MutatedWeightOverride == true,
 
@@ -13546,6 +13566,9 @@ function HolyLoadFarmSettings()
 
     HOLY_FARM_STATE.AutoEclipseCollection =
         data.AutoEclipseCollection == true
+
+    HOLY_FARM_STATE.RejoinAfterEclipseHarvest =
+        data.RejoinAfterEclipseHarvest == true
 
     HOLY_FARM_STATE.MutatedWeightOverride =
         data.MutatedWeightOverride == true
@@ -19984,6 +20007,63 @@ function HolyEclipseCollectionEnsureRuntime()
     runtime.WaitingForEnd =
         runtime.WaitingForEnd == true
 
+    runtime.Confirming =
+        runtime.Confirming == true
+
+    runtime.PendingEntry =
+        type(runtime.PendingEntry) == "table"
+        and runtime.PendingEntry
+        or nil
+
+    runtime.ConfirmationStartedAt =
+        tonumber(
+            runtime.ConfirmationStartedAt
+        )
+        or 0
+
+    runtime.ConfirmationTimeout =
+        math.clamp(
+            tonumber(
+                runtime.ConfirmationTimeout
+            )
+            or 2.5,
+            0.5,
+            10
+        )
+
+    runtime.RetryCount =
+        math.max(
+            0,
+            math.floor(
+                tonumber(
+                    runtime.RetryCount
+                )
+                or 0
+            )
+        )
+
+    runtime.RetryDelay =
+        math.clamp(
+            tonumber(
+                runtime.RetryDelay
+            )
+            or 0.75,
+            0.25,
+            5
+        )
+
+    runtime.RejoinPending =
+        runtime.RejoinPending == true
+
+    runtime.RejoinAt =
+        tonumber(
+            runtime.RejoinAt
+        )
+        or 0
+
+    runtime.Teleporting =
+        runtime.Teleporting == true
+
     runtime.NextCollectAt =
         tonumber(
             runtime.NextCollectAt
@@ -20327,12 +20407,248 @@ function HolyEclipseCollectionFindEntry()
     return HolyEclipseCollectionFindWorkspaceEntry()
 end
 
-function HolyEclipseCollectionFireOne()
+function HolyEclipseCollectionTargetExists(
+    entry
+)
+
+    if type(entry) ~= "table" then
+        return false
+    end
+
+    local plantId =
+        HolyCleanText(
+            entry.PlantId
+            or ""
+        )
+
+    local fruitId =
+        HolyCleanText(
+            entry.FruitId
+            or ""
+        )
+
+    if plantId == "" then
+        return false
+    end
+
+    if type(HOLY_FARM_STATE) == "table"
+    and HOLY_FARM_STATE.ProFruitCollector == true
+    and type(HolyProFarmTargetExists) == "function" then
+
+        local proRuntime =
+            type(HOLY_PRO_FARM_RUNTIME) == "table"
+            and HOLY_PRO_FARM_RUNTIME
+            or {}
+
+        if proRuntime.SnapshotReady == true then
+
+            local ok,
+                exists =
+                pcall(function()
+
+                    return HolyProFarmTargetExists(
+                        entry
+                    )
+                end)
+
+            if ok == true then
+                return exists == true
+            end
+        end
+    end
+
+    local plot =
+        HolyFarmResolveOwnPlot(
+            false
+        )
+
+    if typeof(plot) ~= "Instance" then
+
+        plot =
+            HolyFarmResolveOwnPlot(
+                true
+            )
+    end
+
+    if typeof(plot) ~= "Instance" then
+
+        if entry.Kind == "PlantHarvest"
+        and typeof(entry.Plant) == "Instance" then
+
+            return entry.Plant.Parent ~= nil
+        end
+
+        if typeof(entry.Fruit) == "Instance" then
+
+            return entry.Fruit.Parent ~= nil
+        end
+
+        return true
+    end
+
+    local plantsFolder =
+        plot:FindFirstChild(
+            "Plants"
+        )
+
+    if typeof(plantsFolder) ~= "Instance" then
+        return true
+    end
+
+    for _, plant in ipairs(
+        plantsFolder:GetChildren()
+    ) do
+
+        if HolyCleanText(
+            HolyFarmReadPlantId(
+                plant
+            )
+        ) == plantId then
+
+            if entry.Kind == "PlantHarvest"
+            or fruitId == "" then
+
+                return true
+            end
+
+            local fruitsFolder =
+                plant:FindFirstChild(
+                    "Fruits"
+                )
+
+            if typeof(fruitsFolder) ~= "Instance" then
+                return false
+            end
+
+            for _, fruit in ipairs(
+                fruitsFolder:GetChildren()
+            ) do
+
+                if HolyCleanText(
+                    HolyFarmReadFruitId(
+                        plant,
+                        fruit
+                    )
+                ) == fruitId then
+
+                    return true
+                end
+            end
+
+            return false
+        end
+    end
+
+    return false
+end
+
+function HolyEclipseCollectionClearPending()
+
+    local runtime =
+        HolyEclipseCollectionEnsureRuntime()
+
+    runtime.Confirming =
+        false
+
+    runtime.PendingEntry =
+        nil
+
+    runtime.ConfirmationStartedAt =
+        0
+
+    runtime.RetryCount =
+        0
+
+    return true
+end
+
+function HolyEclipseCollectionCancelRejoin(
+    resumeCollection
+)
+
+    local runtime =
+        HolyEclipseCollectionEnsureRuntime()
+
+    runtime.RejoinPending =
+        false
+
+    runtime.RejoinAt =
+        0
+
+    if resumeCollection == true
+    and runtime.Running == true
+    and HOLY_FARM_STATE.AutoEclipseCollection == true then
+
+        local eclipseActive =
+            HolyEclipseCollectionWeatherActive()
+
+        runtime.WaitingForStart =
+            eclipseActive ~= true
+
+        runtime.WaitingForEnd =
+            eclipseActive == true
+
+        runtime.NextCollectAt =
+            math.huge
+    end
+
+    return true
+end
+
+function HolyEclipseCollectionCompleteConfirmation()
+
+    local runtime =
+        HolyEclipseCollectionEnsureRuntime()
+
+    HolyEclipseCollectionClearPending()
+
+    runtime.NextCollectAt =
+        math.huge
+
+    if HOLY_FARM_STATE.AutoEclipseCollection == true
+    and HOLY_FARM_STATE.RejoinAfterEclipseHarvest == true then
+
+        runtime.WaitingForStart =
+            false
+
+        runtime.WaitingForEnd =
+            false
+
+        runtime.RejoinPending =
+            true
+
+        runtime.RejoinAt =
+            os.clock()
+            + 1
+
+        return true
+    end
+
+    runtime.RejoinPending =
+        false
+
+    runtime.RejoinAt =
+        0
+
+    runtime.WaitingForStart =
+        true
+
+    runtime.WaitingForEnd =
+        false
+
+    return true
+end
+
+function HolyEclipseCollectionSendEntry(
+    entry,
+    retryCount
+)
 
     local runtime =
         HolyEclipseCollectionEnsureRuntime()
 
     if HOLY_FARM_STATE.AutoEclipseCollection ~= true
+    or type(entry) ~= "table"
     or HolyEclipseCollectionWeatherActive() == true then
 
         return false
@@ -20344,14 +20660,10 @@ function HolyEclipseCollectionFireOne()
         return false
     end
 
-    local entry =
-        HolyEclipseCollectionFindEntry()
+    if HolyEclipseCollectionTargetExists(
+        entry
+    ) ~= true then
 
-    if type(entry) ~= "table" then
-        return false
-    end
-
-    if HolyEclipseCollectionWeatherActive() == true then
         return false
     end
 
@@ -20380,8 +20692,28 @@ function HolyEclipseCollectionFireOne()
         return false
     end
 
-    runtime.WaitingForStart =
+    runtime.Confirming =
         true
+
+    runtime.PendingEntry =
+        entry
+
+    runtime.ConfirmationStartedAt =
+        os.clock()
+
+    runtime.RetryCount =
+        math.max(
+            0,
+            math.floor(
+                tonumber(
+                    retryCount
+                )
+                or 0
+            )
+        )
+
+    runtime.WaitingForStart =
+        false
 
     runtime.WaitingForEnd =
         false
@@ -20407,6 +20739,300 @@ function HolyEclipseCollectionFireOne()
     return true
 end
 
+function HolyEclipseCollectionProcessConfirmation()
+
+    local runtime =
+        HolyEclipseCollectionEnsureRuntime()
+
+    if runtime.Confirming ~= true then
+        return false
+    end
+
+    local entry =
+        runtime.PendingEntry
+
+    if type(entry) ~= "table" then
+
+        HolyEclipseCollectionClearPending()
+
+        runtime.NextCollectAt =
+            os.clock()
+            + 1
+
+        return false
+    end
+
+    if HolyEclipseCollectionTargetExists(
+        entry
+    ) ~= true then
+
+        return HolyEclipseCollectionCompleteConfirmation()
+    end
+
+    local elapsed =
+        os.clock()
+        - (
+            tonumber(
+                runtime.ConfirmationStartedAt
+            )
+            or os.clock()
+        )
+
+    if elapsed < runtime.ConfirmationTimeout then
+        return false
+    end
+
+    if runtime.RetryCount < 1 then
+
+        if HolyEclipseCollectionWeatherActive() == true then
+            return false
+        end
+
+        if type(HolyFarmAutoCollectBlocked) == "function"
+        and HolyFarmAutoCollectBlocked() == true then
+
+            return false
+        end
+
+        task.wait(
+            runtime.RetryDelay
+        )
+
+        if HolyEclipseCollectionTargetExists(
+            entry
+        ) ~= true then
+
+            return HolyEclipseCollectionCompleteConfirmation()
+        end
+
+        if HolyEclipseCollectionSendEntry(
+            entry,
+            1
+        ) == true then
+
+            return true
+        end
+
+        if HolyEclipseCollectionTargetExists(
+            entry
+        ) ~= true then
+
+            return HolyEclipseCollectionCompleteConfirmation()
+        end
+
+        HolyEclipseCollectionClearPending()
+
+        runtime.NextCollectAt =
+            os.clock()
+            + 1
+
+        return false
+    end
+
+    if HOLY_FARM_STATE.ProFruitCollector == true
+    and type(HolyProFarmRequestSnapshot) == "function" then
+
+        HolyProFarmRequestSnapshot(
+            "eclipse confirmation failed"
+        )
+    end
+
+    HolyEclipseCollectionClearPending()
+
+    runtime.NextCollectAt =
+        os.clock()
+        + 1
+
+    return false
+end
+
+function HolyEclipseCollectionRejoinBlocked()
+
+    if type(HolyFarmAutoCollectBlocked) == "function"
+    and HolyFarmAutoCollectBlocked() == true then
+
+        return true
+    end
+
+    local sniper =
+        type(HOLY_SNIPER_RUNTIME) == "table"
+        and HOLY_SNIPER_RUNTIME
+        or {}
+
+    if sniper.ManualBuying == true
+    or sniper.BatchActive == true then
+
+        return true
+    end
+
+    if type(HolySniperServerSwitchBlocked) == "function"
+    and HolySniperServerSwitchBlocked(
+        "Eclipse harvest rejoin",
+        false
+    ) == true then
+
+        return true
+    end
+
+    if type(HOLY_SERVER_STATE) == "table"
+    and HOLY_SERVER_STATE.Hopping == true then
+
+        return true
+    end
+
+    if type(HOLY_SERVER_FINDER_AUTO_JOIN_RUNTIME) == "table"
+    and HOLY_SERVER_FINDER_AUTO_JOIN_RUNTIME.Teleporting == true then
+
+        return true
+    end
+
+    if type(HOLY_WATERING_REJOIN_RUNTIME) == "table"
+    and (
+        HOLY_WATERING_REJOIN_RUNTIME.Running == true
+        or HOLY_WATERING_REJOIN_RUNTIME.Teleporting == true
+    ) then
+
+        return true
+    end
+
+    return false
+end
+
+function HolyEclipseCollectionProcessRejoin()
+
+    local runtime =
+        HolyEclipseCollectionEnsureRuntime()
+
+    if runtime.RejoinPending ~= true then
+        return false
+    end
+
+    if HOLY_FARM_STATE.AutoEclipseCollection ~= true
+    or HOLY_FARM_STATE.RejoinAfterEclipseHarvest ~= true then
+
+        HolyEclipseCollectionCancelRejoin(
+            true
+        )
+
+        return false
+    end
+
+    if runtime.Teleporting == true then
+        return true
+    end
+
+    if os.clock() < runtime.RejoinAt then
+        return false
+    end
+
+    if HolyEclipseCollectionRejoinBlocked() == true then
+
+        runtime.RejoinAt =
+            os.clock()
+            + 0.5
+
+        return false
+    end
+
+    if type(HolyRejoin) ~= "function" then
+
+        runtime.RejoinAt =
+            os.clock()
+            + 1
+
+        return false
+    end
+
+    local token =
+        runtime.Token
+
+    local startedJobId =
+        tostring(
+            game.JobId
+        )
+
+    runtime.Teleporting =
+        true
+
+    local callOk,
+        rejoinStarted =
+        pcall(function()
+
+            return HolyRejoin()
+        end)
+
+    if callOk == true
+    and rejoinStarted == true then
+
+        runtime.RejoinPending =
+            false
+
+        task.delay(15, function()
+
+            if runtime.Token == token
+            and tostring(game.JobId) == startedJobId
+            and HOLY_FARM_STATE.AutoEclipseCollection == true
+            and HOLY_FARM_STATE.RejoinAfterEclipseHarvest == true then
+
+                runtime.Teleporting =
+                    false
+
+                runtime.RejoinPending =
+                    true
+
+                runtime.RejoinAt =
+                    os.clock()
+                    + 1
+            end
+        end)
+
+        return true
+    end
+
+    runtime.Teleporting =
+        false
+
+    runtime.RejoinPending =
+        true
+
+    runtime.RejoinAt =
+        os.clock()
+        + 3
+
+    return false
+end
+
+function HolyEclipseCollectionFireOne()
+
+    if HOLY_FARM_STATE.AutoEclipseCollection ~= true
+    or HolyEclipseCollectionWeatherActive() == true then
+
+        return false
+    end
+
+    if type(HolyFarmAutoCollectBlocked) == "function"
+    and HolyFarmAutoCollectBlocked() == true then
+
+        return false
+    end
+
+    local entry =
+        HolyEclipseCollectionFindEntry()
+
+    if type(entry) ~= "table" then
+        return false
+    end
+
+    if HolyEclipseCollectionWeatherActive() == true then
+        return false
+    end
+
+    return HolyEclipseCollectionSendEntry(
+        entry,
+        0
+    )
+end
+
 function HolyEclipseCollectionRunWorker(
     token
 )
@@ -20420,7 +21046,24 @@ function HolyEclipseCollectionRunWorker(
         local eclipseActive =
             HolyEclipseCollectionWeatherActive()
 
-        if runtime.WaitingForStart == true then
+        if runtime.Teleporting == true then
+
+            task.wait(
+                0.25
+            )
+
+            continue
+        end
+
+        if runtime.RejoinPending == true then
+
+            HolyEclipseCollectionProcessRejoin()
+
+        elseif runtime.Confirming == true then
+
+            HolyEclipseCollectionProcessConfirmation()
+
+        elseif runtime.WaitingForStart == true then
 
             if eclipseActive == true then
 
@@ -20497,6 +21140,27 @@ function HolyEclipseCollectionStart(
     runtime.Running =
         true
 
+    runtime.Confirming =
+        false
+
+    runtime.PendingEntry =
+        nil
+
+    runtime.ConfirmationStartedAt =
+        0
+
+    runtime.RetryCount =
+        0
+
+    runtime.RejoinPending =
+        false
+
+    runtime.RejoinAt =
+        0
+
+    runtime.Teleporting =
+        false
+
     runtime.WaitingForStart =
         false
 
@@ -20540,6 +21204,27 @@ function HolyEclipseCollectionStop(
     runtime.WaitingForEnd =
         false
 
+    runtime.Confirming =
+        false
+
+    runtime.PendingEntry =
+        nil
+
+    runtime.ConfirmationStartedAt =
+        0
+
+    runtime.RetryCount =
+        0
+
+    runtime.RejoinPending =
+        false
+
+    runtime.RejoinAt =
+        0
+
+    runtime.Teleporting =
+        false
+
     runtime.NextCollectAt =
         0
 
@@ -20573,6 +21258,27 @@ function HolyEclipseCollectionSetEnabled(
         HolyFarmRequestRebuild(
             "eclipse collection disabled",
             0.05
+        )
+    end
+
+    return true
+end
+
+function HolyEclipseCollectionSetRejoinAfterHarvest(
+    value
+)
+
+    HolyFarmEnsureState()
+
+    HOLY_FARM_STATE.RejoinAfterEclipseHarvest =
+        value == true
+
+    HolySaveFarmSettings()
+
+    if HOLY_FARM_STATE.RejoinAfterEclipseHarvest ~= true then
+
+        HolyEclipseCollectionCancelRejoin(
+            true
         )
     end
 
@@ -141922,6 +142628,28 @@ and type(FarmCollectionOverridesBox.AddToggle) == "function" then
     HOLY_FARM_UI.EclipseCollectionToggle:OnChanged(function(value)
 
         HolyEclipseCollectionSetEnabled(
+            value == true
+        )
+    end)
+
+    HOLY_FARM_UI.RejoinAfterEclipseHarvestToggle =
+        FarmCollectionOverridesBox:AddToggle(
+            "HolyFarmRejoinAfterEclipseHarvest",
+            {
+                Text =
+                    "🔄 Rejoin After Eclipse Harvest",
+
+                Default =
+                    HOLY_FARM_STATE.RejoinAfterEclipseHarvest == true,
+
+                Tooltip =
+                    "Rejoins after Auto Collect Eclipse Bloom confirms a successful harvest. Failed collection attempts will not trigger a rejoin.",
+            }
+        )
+
+    HOLY_FARM_UI.RejoinAfterEclipseHarvestToggle:OnChanged(function(value)
+
+        HolyEclipseCollectionSetRejoinAfterHarvest(
             value == true
         )
     end)
