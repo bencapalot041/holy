@@ -33,6 +33,9 @@ local RunService =
 local TextService =
     game:GetService("TextService")
 
+local LocalizationService =
+    game:GetService("LocalizationService")
+
 local Stats =
     game:GetService("Stats")
 
@@ -129375,6 +129378,9 @@ HOLY_GUILD_RUNTIME = {
     SnapshotRefreshDueAt = 0,
     LastSnapshotAt = 0,
 
+    LastCompetitionRefreshAt = 0,
+    LastCompetitionKey = "",
+
     KickConfirmUserId = nil,
     KickConfirmUsername = nil,
     KickConfirmExpiresAt = 0,
@@ -130429,18 +130435,125 @@ end
 
 function HolyGuildEpoch(value)
 
+    if typeof(value) == "DateTime" then
+
+        return math.floor(
+            value.UnixTimestamp
+        )
+    end
+
+    if type(value) == "table" then
+
+        local nested =
+            HolyGuildField(
+                value,
+                {
+                    "UnixTimestamp",
+                    "Timestamp",
+                    "Epoch",
+                    "Time",
+                    "Value",
+                }
+            )
+
+        if nested ~= nil
+        and nested ~= value then
+
+            return HolyGuildEpoch(
+                nested
+            )
+        end
+    end
+
     local epoch =
         tonumber(value)
+
+    if epoch == nil
+    and type(value) == "string" then
+
+        local text =
+            HolyCleanText(value)
+
+        if text ~= "" then
+
+            local parsedOk,
+                parsed =
+                pcall(function()
+
+                    return DateTime.fromIsoDate(
+                        text
+                    )
+                end)
+
+            if parsedOk == true
+            and typeof(parsed) == "DateTime" then
+
+                epoch =
+                    parsed.UnixTimestamp
+            end
+        end
+    end
 
     if epoch == nil then
         return nil
     end
 
     if epoch > 100000000000 then
-        epoch = epoch / 1000
+
+        epoch =
+            epoch / 1000
     end
 
     return math.floor(epoch)
+end
+
+function HolyGuildNow()
+
+    local synchronized =
+        nil
+
+    pcall(function()
+
+        synchronized =
+            workspace:GetServerTimeNow()
+    end)
+
+    synchronized =
+        tonumber(synchronized)
+
+    if synchronized ~= nil
+    and synchronized > 0 then
+
+        return synchronized
+    end
+
+    return os.time()
+end
+
+function HolyGuildLocaleId()
+
+    local localeId =
+        "en-us"
+
+    pcall(function()
+
+        localeId =
+            HolyCleanText(
+                LocalizationService.SystemLocaleId
+            )
+
+        if localeId == "" then
+
+            localeId =
+                HolyCleanText(
+                    LocalizationService.RobloxLocaleId
+                )
+        end
+    end)
+
+    return localeId ~= ""
+        and localeId
+        or "en-us"
 end
 
 function HolyGuildFormatDate(value)
@@ -130454,8 +130567,26 @@ function HolyGuildFormatDate(value)
         return "Unknown"
     end
 
-    local ok,
+    local formatted =
+        nil
+
+    pcall(function()
+
         formatted =
+            DateTime.fromUnixTimestamp(
+                epoch
+            ):FormatLocalTime(
+                "MMM D, YYYY",
+                HolyGuildLocaleId()
+            )
+    end)
+
+    if HolyCleanText(formatted) ~= "" then
+        return formatted
+    end
+
+    local ok,
+        fallback =
         pcall(
             os.date,
             "%b %d, %Y",
@@ -130463,7 +130594,49 @@ function HolyGuildFormatDate(value)
         )
 
     return ok == true
-        and formatted
+        and fallback
+        or tostring(epoch)
+end
+
+function HolyGuildFormatLocalDateTime(value)
+
+    local epoch =
+        HolyGuildEpoch(value)
+
+    if epoch == nil
+    or epoch <= 0 then
+
+        return "Unknown"
+    end
+
+    local formatted =
+        nil
+
+    pcall(function()
+
+        formatted =
+            DateTime.fromUnixTimestamp(
+                epoch
+            ):FormatLocalTime(
+                "MMM D, YYYY · h:mm A",
+                HolyGuildLocaleId()
+            )
+    end)
+
+    if HolyCleanText(formatted) ~= "" then
+        return formatted
+    end
+
+    local ok,
+        fallback =
+        pcall(
+            os.date,
+            "%b %d, %Y · %I:%M %p",
+            epoch
+        )
+
+    return ok == true
+        and fallback
         or tostring(epoch)
 end
 
@@ -130497,6 +130670,9 @@ function HolyGuildFormatDuration(seconds)
             ) / 60
         )
 
+    local remainingSeconds =
+        seconds % 60
+
     if days > 0 then
 
         return tostring(days)
@@ -130513,8 +130689,128 @@ function HolyGuildFormatDuration(seconds)
             .. "m"
     end
 
-    return tostring(minutes)
-        .. "m"
+    if minutes > 0 then
+
+        return tostring(minutes)
+            .. "m "
+            .. tostring(remainingSeconds)
+            .. "s"
+    end
+
+    return tostring(remainingSeconds)
+        .. "s"
+end
+
+function HolyGuildFormatCommaNumber(value)
+
+    local numberValue =
+        tonumber(value)
+
+    if numberValue == nil then
+
+        return tostring(
+            value
+            or "0"
+        )
+    end
+
+    local negative =
+        numberValue < 0
+
+    local integerText =
+        tostring(
+            math.floor(
+                math.abs(numberValue)
+            )
+        )
+
+    integerText =
+        integerText
+            :reverse()
+            :gsub(
+                "(%d%d%d)",
+                "%1,"
+            )
+            :reverse()
+            :gsub(
+                "^,",
+                ""
+            )
+
+    return (
+        negative
+        and "-"
+        or ""
+    )
+        .. integerText
+end
+
+function HolyGuildFormatContestScore(
+    value,
+    scoreFormat
+)
+    local numberValue =
+        tonumber(value)
+
+    if numberValue == nil then
+
+        return tostring(
+            value
+            or "0"
+        )
+    end
+
+    local formatKey =
+        HolyGuildKey(
+            scoreFormat
+        )
+
+    if formatKey == "commas"
+    or formatKey == "comma" then
+
+        return HolyGuildFormatCommaNumber(
+            numberValue
+        )
+    end
+
+    if formatKey == "integer"
+    or formatKey == "whole"
+    or formatKey == "wholenumber" then
+
+        return tostring(
+            math.floor(numberValue)
+        )
+    end
+
+    if formatKey == "weight"
+    or formatKey == "kg"
+    or formatKey == "kilograms" then
+
+        return string.format(
+            "%.2f kg",
+            numberValue
+        ):gsub(
+            "%.00 kg",
+            " kg"
+        )
+    end
+
+    if formatKey == "feet"
+    or formatKey == "foot"
+    or formatKey == "ft" then
+
+        return string.format(
+            "%.2f ft",
+            numberValue
+        ):gsub(
+            "%.00 ft",
+            " ft"
+        )
+    end
+
+    return HolyGuildFormatNumber(
+        numberValue
+    )
 end
 
 function HolyGuildGetGuildId()
@@ -133169,6 +133465,521 @@ function HolyGuildRefreshSelectedMemberPanel()
     )
 end
 
+function HolyGuildPlainContestText(value)
+
+    local text =
+        tostring(
+            value
+            or ""
+        )
+
+    text =
+        text:gsub(
+            "<br%s*/?>",
+            "\n"
+        )
+
+    text =
+        text:gsub(
+            "<[^>]+>",
+            ""
+        )
+
+    text =
+        text:gsub(
+            "&nbsp;",
+            " "
+        )
+
+    text =
+        text:gsub(
+            "&amp;",
+            "&"
+        )
+
+    text =
+        text:gsub(
+            "&lt;",
+            "<"
+        )
+
+    text =
+        text:gsub(
+            "&gt;",
+            ">"
+        )
+
+    text =
+        text:gsub(
+            "&quot;",
+            "\""
+        )
+
+    text =
+        text:gsub(
+            "&#39;",
+            "'"
+        )
+
+    return HolyCleanText(
+        text
+    )
+end
+
+function HolyGuildPrettyContestValue(value)
+
+    local text =
+        HolyCleanText(value)
+
+    if text == "" then
+        return ""
+    end
+
+    text =
+        text:gsub(
+            "_",
+            " "
+        )
+
+    text =
+        text:gsub(
+            "(%l)(%u)",
+            "%1 %2"
+        )
+
+    return text
+        :sub(
+            1,
+            1
+        )
+        :upper()
+        .. text:sub(2)
+end
+
+function HolyGuildContestScoreFormatLabel(value)
+
+    local key =
+        HolyGuildKey(value)
+
+    if key == "commas"
+    or key == "comma" then
+
+        return "Comma-separated number"
+    end
+
+    if key == "integer"
+    or key == "whole"
+    or key == "wholenumber" then
+
+        return "Whole number"
+    end
+
+    if key == "weight"
+    or key == "kg"
+    or key == "kilograms" then
+
+        return "Weight"
+    end
+
+    if key == "feet"
+    or key == "foot"
+    or key == "ft" then
+
+        return "Distance"
+    end
+
+    if key == "abbreviated"
+    or key == "abbreviation"
+    or key == "short" then
+
+        return "Abbreviated number"
+    end
+
+    local pretty =
+        HolyGuildPrettyContestValue(
+            value
+        )
+
+    return pretty ~= ""
+        and pretty
+        or "Number"
+end
+
+function HolyGuildBuildContestGuide(config)
+
+    local description =
+        HolyGuildField(
+            config,
+            {
+                "Description",
+                "Instructions",
+                "Guide",
+                "HowTo",
+                "Objective",
+            }
+        )
+
+    local candidates = {}
+
+    if type(description) == "table" then
+
+        for index = 1, #description do
+
+            candidates[
+                #candidates
+                + 1
+            ] =
+                description[index]
+        end
+
+        if #candidates <= 0 then
+
+            for _, value in pairs(
+                description
+            ) do
+
+                candidates[
+                    #candidates
+                    + 1
+                ] =
+                    value
+            end
+        end
+
+    elseif description ~= nil then
+
+        candidates[1] =
+            description
+    end
+
+    local lines = {}
+
+    for _, candidate in ipairs(
+        candidates
+    ) do
+
+        local plain =
+            HolyGuildPlainContestText(
+                candidate
+            )
+
+        for line in plain:gmatch(
+            "[^\r\n]+"
+        ) do
+
+            line =
+                HolyCleanText(
+                    line:gsub(
+                        "%s+",
+                        " "
+                    )
+                )
+
+            if line ~= "" then
+
+                lines[
+                    #lines
+                    + 1
+                ] =
+                    line
+            end
+        end
+    end
+
+    local displayed = {}
+
+    for _, line in ipairs(lines) do
+
+        displayed[
+            #displayed
+            + 1
+        ] =
+            "• "
+            .. line
+    end
+
+    return lines,
+        table.concat(
+            displayed,
+            "\n"
+        )
+end
+
+function HolyGuildFindOwnContestStanding(
+    localBracket
+)
+    if type(localBracket) ~= "table" then
+        return nil
+    end
+
+    local standings =
+        HolyGuildField(
+            localBracket,
+            {
+                "Standings",
+                "Entries",
+                "Rows",
+                "Guilds",
+            }
+        )
+
+    if type(standings) ~= "table" then
+        return nil
+    end
+
+    local ownGuildId =
+        HolyGuildGetGuildId()
+
+    local guildRoot =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    local ownName =
+        HolyCleanText(
+            HolyGuildField(
+                guildRoot,
+                {
+                    "Name",
+                    "GuildName",
+                },
+                ""
+            )
+        ):lower()
+
+    local ownTag =
+        HolyCleanText(
+            HolyGuildField(
+                guildRoot,
+                {
+                    "Tag",
+                    "GuildTag",
+                },
+                ""
+            )
+        ):lower()
+
+    for _, row in pairs(standings) do
+
+        if type(row) == "table" then
+
+            local rowGuildId =
+                tostring(
+                    HolyGuildField(
+                        row,
+                        {
+                            "GuildId",
+                            "GuildID",
+                            "Id",
+                        },
+                        ""
+                    )
+                )
+
+            local rowName =
+                HolyCleanText(
+                    HolyGuildField(
+                        row,
+                        {
+                            "Name",
+                            "GuildName",
+                        },
+                        ""
+                    )
+                ):lower()
+
+            local rowTag =
+                HolyCleanText(
+                    HolyGuildField(
+                        row,
+                        {
+                            "Tag",
+                            "GuildTag",
+                        },
+                        ""
+                    )
+                ):lower()
+
+            local idMatches =
+                ownGuildId ~= ""
+                and rowGuildId == ownGuildId
+
+            local nameMatches =
+                ownName ~= ""
+                and rowName == ownName
+                and (
+                    ownTag == ""
+                    or rowTag == ownTag
+                )
+
+            if idMatches
+            or nameMatches then
+
+                return row
+            end
+        end
+    end
+
+    return nil
+end
+
+function HolyGuildBuildContestMembers(view)
+
+    local members =
+        HolyGuildBuildMembers()
+
+    local byUserId = {}
+
+    for _, member in ipairs(members) do
+
+        byUserId[
+            member.UserId
+        ] =
+            member
+    end
+
+    local contributors =
+        type(view) == "table"
+        and view.Contributors
+        or nil
+
+    if type(contributors) ~= "table" then
+        return members
+    end
+
+    for key, rawContributor in pairs(
+        contributors
+    ) do
+
+        if type(rawContributor) == "table" then
+
+            local userId =
+                tonumber(
+                    HolyGuildField(
+                        rawContributor,
+                        {
+                            "UserId",
+                            "UserID",
+                            "PlayerId",
+                            "Id",
+                        },
+                        key
+                    )
+                )
+
+            local score =
+                tonumber(
+                    HolyGuildField(
+                        rawContributor,
+                        {
+                            "Score",
+                            "Shekels",
+                            "Contribution",
+                            "WeeklyContribution",
+                        }
+                    )
+                )
+
+            if userId ~= nil then
+
+                local member =
+                    byUserId[userId]
+
+                local username =
+                    HolyCleanText(
+                        HolyGuildField(
+                            rawContributor,
+                            {
+                                "Name",
+                                "Username",
+                                "UserName",
+                            },
+                            ""
+                        )
+                    )
+
+                if username ~= "" then
+
+                    HOLY_GUILD_STATE.NameCache[
+                        userId
+                    ] =
+                        username
+                end
+
+                if member then
+
+                    if score ~= nil then
+
+                        member.Weekly =
+                            score
+                    end
+
+                    if username ~= "" then
+
+                        member.Username =
+                            username
+                    end
+
+                else
+
+                    member = {
+                        UserId =
+                            userId,
+
+                        Username =
+                            username ~= ""
+                            and username
+                            or (
+                                HOLY_GUILD_STATE.NameCache[
+                                    userId
+                                ]
+                                or (
+                                    "User "
+                                    .. tostring(userId)
+                                )
+                            ),
+
+                        DisplayName =
+                            "",
+
+                        Role =
+                            "Member",
+
+                        Weekly =
+                            score
+                            or 0,
+
+                        Lifetime =
+                            0,
+
+                        JoinedAt =
+                            nil,
+
+                        Online =
+                            HOLY_GUILD_STATE.OnlineMembers[
+                                userId
+                            ] == true,
+
+                        Raw =
+                            rawContributor,
+                    }
+
+                    members[
+                        #members
+                        + 1
+                    ] =
+                        member
+
+                    byUserId[userId] =
+                        member
+                end
+            end
+        end
+    end
+
+    return members
+end
+
 function HolyGuildGetContestView()
 
     local root =
@@ -133194,31 +134005,6 @@ function HolyGuildGetContestView()
     local phaseLower =
         rawPhase:lower()
 
-    local state =
-        (
-            phaseLower == "active"
-            or phaseLower == "live"
-        )
-        and "Active"
-        or (
-            (
-                phaseLower == "pending"
-                or phaseLower == "upcoming"
-                or phaseLower == "scheduled"
-            )
-            and "Upcoming"
-            or (
-                (
-                    phaseLower == "completed"
-                    or phaseLower == "complete"
-                    or phaseLower == "ended"
-                    or phaseLower == "finished"
-                )
-                and "Completed"
-                or rawPhase
-            )
-        )
-
     local active =
         HolyGuildField(
             root,
@@ -133241,31 +134027,57 @@ function HolyGuildGetContestView()
         )
 
     local shown =
-        state == "Active"
-        and type(active) == "table"
+        type(active) == "table"
         and active
-        or (
-            state == "Completed"
-            and type(previous) == "table"
-            and previous
-            or (
-                type(active) == "table"
-                and active
-                or (
-                    type(previous) == "table"
-                    and previous
-                    or root
-                )
-            )
+        or root
+
+    if (
+        phaseLower == "completed"
+        or phaseLower == "complete"
+        or phaseLower == "ended"
+        or phaseLower == "finished"
+    )
+    and type(previous) == "table" then
+
+        shown =
+            previous
+    end
+
+    local config =
+        HolyGuildField(
+            shown,
+            {
+                "Config",
+                "CompetitionConfig",
+                "Definition",
+            }
         )
+
+    if type(config) ~= "table" then
+
+        config =
+            HolyGuildField(
+                root,
+                {
+                    "Config",
+                    "CompetitionConfig",
+                    "Definition",
+                }
+            )
+    end
+
+    if type(config) ~= "table" then
+
+        config =
+            shown
+    end
 
     local startsAt =
         HolyGuildEpoch(
             HolyGuildField(
-                root,
+                config,
                 {
-                    "NextCompetitionStart",
-                    "NextStartAt",
+                    "StartAt",
                     "StartsAt",
                     "StartTime",
                 }
@@ -133273,6 +134085,17 @@ function HolyGuildGetContestView()
             or HolyGuildField(
                 shown,
                 {
+                    "StartAt",
+                    "StartsAt",
+                    "StartTime",
+                }
+            )
+            or HolyGuildField(
+                root,
+                {
+                    "NextCompetitionStart",
+                    "NextStartAt",
+                    "StartAt",
                     "StartsAt",
                     "StartTime",
                 }
@@ -133282,35 +134105,103 @@ function HolyGuildGetContestView()
     local endsAt =
         HolyGuildEpoch(
             HolyGuildField(
+                root,
+                {
+                    "EndsAt",
+                    "EndAt",
+                    "EndTime",
+                }
+            )
+            or HolyGuildField(
+                config,
+                {
+                    "EndsAt",
+                    "EndAt",
+                    "EndTime",
+                }
+            )
+            or HolyGuildField(
                 shown,
                 {
                     "EndsAt",
+                    "EndAt",
                     "EndTime",
                 }
             )
         )
 
+    local state =
+        (
+            phaseLower == "active"
+            or phaseLower == "live"
+            or phaseLower == "running"
+        )
+        and "Active"
+        or (
+            (
+                phaseLower == "pending"
+                or phaseLower == "upcoming"
+                or phaseLower == "scheduled"
+            )
+            and "Upcoming"
+            or (
+                (
+                    phaseLower == "completed"
+                    or phaseLower == "complete"
+                    or phaseLower == "ended"
+                    or phaseLower == "finished"
+                )
+                and "Completed"
+                or "Syncing"
+            )
+        )
+
+    local now =
+        HolyGuildNow()
+
+    if startsAt ~= nil
+    and now < startsAt then
+
+        state =
+            "Upcoming"
+
+    elseif endsAt ~= nil
+    and now >= endsAt then
+
+        state =
+            "Completed"
+
+    elseif state == "Syncing"
+    and startsAt ~= nil
+    and endsAt ~= nil
+    and now >= startsAt
+    and now < endsAt then
+
+        state =
+            "Active"
+    end
+
     local timing =
-        "Timing unavailable"
+        "Loading event timing..."
 
     if state == "Upcoming"
-    and startsAt then
+    and startsAt ~= nil then
 
         timing =
             "Starts in "
             .. HolyGuildFormatDuration(
                 startsAt
-                - os.time()
+                - now
             )
 
     elseif state == "Active"
-    and endsAt then
+    and endsAt ~= nil then
 
         timing =
             "Ends in "
             .. HolyGuildFormatDuration(
                 endsAt
-                - os.time()
+                - now
             )
 
     elseif state == "Completed" then
@@ -133319,47 +134210,50 @@ function HolyGuildGetContestView()
             "Competition ended"
     end
 
-    return {
-        Root = root,
-        Shown = shown,
-        State = state,
-        RawPhase = rawPhase,
-        StartsAt = startsAt,
-        EndsAt = endsAt,
-        Timing = timing,
+    local guideLines,
+        guideText =
+        HolyGuildBuildContestGuide(
+            config
+        )
 
-        Name =
-            HolyCleanText(
+    if guideText == "" then
+
+        guideText =
+            "Official instructions are not available yet."
+    end
+
+    local name =
+        HolyCleanText(
+            HolyGuildField(
+                config,
+                {
+                    "DisplayName",
+                    "Name",
+                    "Title",
+                },
                 HolyGuildField(
                     shown,
                     {
+                        "DisplayName",
                         "Name",
                         "Title",
-                        "DisplayName",
                     },
                     state == "Upcoming"
                     and "Next Guild Competition"
                     or "Guild Competition"
                 )
-            ),
+            )
+        )
 
-        Objective =
-            HolyCleanText(
-                HolyGuildField(
-                    shown,
-                    {
-                        "Objective",
-                        "Description",
-                        "ObjectiveDescription",
-                        "ObjectiveTag",
-                        "Tag",
-                    },
-                    "Objective unavailable"
-                )
-            ),
-
-        Mode =
-            HolyCleanText(
+    local rawMode =
+        HolyCleanText(
+            HolyGuildField(
+                config,
+                {
+                    "Mode",
+                    "WinMode",
+                    "ScoringMode",
+                },
                 HolyGuildField(
                     shown,
                     {
@@ -133369,10 +134263,18 @@ function HolyGuildGetContestView()
                     },
                     ""
                 )
-            ),
+            )
+        )
 
-        ScoreFormat =
-            HolyCleanText(
+    local rawScoreFormat =
+        HolyCleanText(
+            HolyGuildField(
+                config,
+                {
+                    "ScoreFormat",
+                    "Format",
+                    "Unit",
+                },
                 HolyGuildField(
                     shown,
                     {
@@ -133382,6 +134284,247 @@ function HolyGuildGetContestView()
                     },
                     "Number"
                 )
+            )
+        )
+
+    local localBracket =
+        HolyGuildField(
+            root,
+            {
+                "LocalBracket",
+                "BracketData",
+            }
+        )
+
+    local ownStanding =
+        HolyGuildFindOwnContestStanding(
+            localBracket
+        )
+
+    local placement =
+        tonumber(
+            HolyGuildField(
+                root,
+                {
+                    "LocalPlacement",
+                    "GuildPlacement",
+                    "Placement",
+                    "Rank",
+                }
+            )
+        )
+
+    if placement == nil
+    and type(ownStanding) == "table" then
+
+        placement =
+            tonumber(
+                HolyGuildField(
+                    ownStanding,
+                    {
+                        "Rank",
+                        "Placement",
+                        "Position",
+                    }
+                )
+            )
+    end
+
+    local bracketLabel =
+        type(localBracket) == "table"
+        and HolyCleanText(
+            HolyGuildField(
+                localBracket,
+                {
+                    "Label",
+                    "DisplayName",
+                    "Name",
+                },
+                ""
+            )
+        )
+        or ""
+
+    local bracketBand =
+        type(localBracket) == "table"
+        and HolyCleanText(
+            HolyGuildField(
+                localBracket,
+                {
+                    "Band",
+                    "Tier",
+                    "League",
+                },
+                ""
+            )
+        )
+        or ""
+
+    local bracketNumber =
+        type(localBracket) == "table"
+        and tonumber(
+            HolyGuildField(
+                localBracket,
+                {
+                    "Bracket",
+                    "BracketNumber",
+                    "Number",
+                }
+            )
+        )
+        or nil
+
+    if bracketLabel == ""
+    and bracketBand ~= "" then
+
+        bracketLabel =
+            bracketBand
+            .. (
+                bracketNumber ~= nil
+                and (
+                    " · Bracket "
+                    .. tostring(bracketNumber)
+                )
+                or ""
+            )
+    end
+
+    local competitionId =
+        HolyCleanText(
+            HolyGuildField(
+                config,
+                {
+                    "Id",
+                    "CompetitionId",
+                    "Key",
+                },
+                name
+            )
+        )
+
+    local version =
+        HolyCleanText(
+            HolyGuildField(
+                root,
+                {
+                    "CompetitionsVersion",
+                    "CompetitionVersion",
+                    "Version",
+                },
+                ""
+            )
+        )
+
+    local competitionKey =
+        table.concat(
+            {
+                competitionId,
+                version,
+                tostring(startsAt or ""),
+                tostring(endsAt or ""),
+                name,
+            },
+            "|"
+        )
+
+    local windowParts = {}
+
+    if startsAt ~= nil then
+
+        windowParts[
+            #windowParts
+            + 1
+        ] =
+            "Starts: "
+            .. HolyGuildFormatLocalDateTime(
+                startsAt
+            )
+    end
+
+    if endsAt ~= nil then
+
+        windowParts[
+            #windowParts
+            + 1
+        ] =
+            "Ends: "
+            .. HolyGuildFormatLocalDateTime(
+                endsAt
+            )
+    end
+
+    local localWindow =
+        #windowParts > 0
+        and table.concat(
+            windowParts,
+            "\n"
+        )
+        or "Local event dates are unavailable."
+
+    return {
+        Root =
+            root,
+
+        Shown =
+            shown,
+
+        Config =
+            config,
+
+        State =
+            state,
+
+        RawPhase =
+            rawPhase,
+
+        CompetitionId =
+            competitionId,
+
+        CompetitionVersion =
+            version,
+
+        CompetitionKey =
+            competitionKey,
+
+        StartsAt =
+            startsAt,
+
+        EndsAt =
+            endsAt,
+
+        Timing =
+            timing,
+
+        LocalWindow =
+            localWindow,
+
+        Name =
+            name,
+
+        Objective =
+            guideLines[1]
+            or "Official instructions are not available yet.",
+
+        GuideLines =
+            guideLines,
+
+        GuideText =
+            guideText,
+
+        RawMode =
+            rawMode,
+
+        Mode =
+            HolyGuildPrettyContestValue(
+                rawMode
+            ),
+
+        RawScoreFormat =
+            rawScoreFormat,
+
+        ScoreFormat =
+            HolyGuildContestScoreFormatLabel(
+                rawScoreFormat
             ),
 
         Score =
@@ -133389,6 +134532,7 @@ function HolyGuildGetContestView()
                 HolyGuildField(
                     root,
                     {
+                        "OwnScore",
                         "GuildScore",
                         "Score",
                         "CurrentScore",
@@ -133399,25 +134543,90 @@ function HolyGuildGetContestView()
             or 0,
 
         Placement =
+            placement,
+
+        Bracket =
+            bracketLabel ~= ""
+            and bracketLabel
+            or nil,
+
+        BracketBand =
+            bracketBand,
+
+        BracketNumber =
+            bracketNumber,
+
+        BracketSize =
             tonumber(
                 HolyGuildField(
-                    root,
+                    HolyGuildField(
+                        config,
+                        {
+                            "Local",
+                            "LocalConfig",
+                        },
+                        {}
+                    ),
                     {
-                        "GuildPlacement",
-                        "Placement",
-                        "Rank",
+                        "BracketSize",
+                        "Size",
                     }
                 )
             ),
 
-        Bracket =
+        Contributors =
             HolyGuildField(
                 root,
                 {
-                    "Bracket",
-                    "League",
-                    "Tier",
-                }
+                    "GuildmateScores",
+                    "GuildmateContribs",
+                    "Contributors",
+                    "MemberScores",
+                },
+                {}
+            ),
+
+        GlobalStandings =
+            HolyGuildField(
+                root,
+                {
+                    "Standings",
+                    "GlobalStandings",
+                    "Leaderboard",
+                },
+                {}
+            ),
+
+        LocalBracket =
+            localBracket,
+
+        OwnStanding =
+            ownStanding,
+
+        Rewards =
+            HolyGuildField(
+                config,
+                {
+                    "Rewards",
+                },
+                {}
+            ),
+
+        LocalRewards =
+            HolyGuildField(
+                HolyGuildField(
+                    config,
+                    {
+                        "Local",
+                        "LocalConfig",
+                    },
+                    {}
+                ),
+                {
+                    "Bands",
+                    "Rewards",
+                },
+                {}
             ),
     }
 end
@@ -133434,12 +134643,14 @@ function HolyGuildRefreshContestPanel()
         type(view) == "table"
         and table.concat(
             {
+                tostring(view.CompetitionKey),
                 tostring(view.State),
                 tostring(view.Name),
-                tostring(view.Objective),
+                tostring(view.GuideText),
                 tostring(view.Mode),
                 tostring(view.ScoreFormat),
                 tostring(view.Timing),
+                tostring(view.LocalWindow),
             },
             "\31"
         )
@@ -133501,24 +134712,60 @@ function HolyGuildRefreshContestPanel()
         return
     end
 
-    local objectiveHeight =
+    local guideHeight =
         HolyGuildMeasurePanelText(
-            view.Objective,
+            view.GuideText,
             10,
             width - 24
         )
 
+    local detailRows = {
+        {
+            "Score format",
+            view.ScoreFormat,
+        },
+    }
+
+    if view.Mode ~= "" then
+
+        table.insert(
+            detailRows,
+            1,
+            {
+                "Scoring mode",
+                view.Mode,
+            }
+        )
+    end
+
     local detailsY =
-        112
-        + objectiveHeight
+        124
+        + guideHeight
+
+    local detailsHeight =
+        #detailRows
+        * 26
+
+    local windowLabelY =
+        detailsY
+        + detailsHeight
+        + 3
+
+    local windowTextY =
+        windowLabelY
+        + 15
+
+    local windowHeight =
+        HolyGuildMeasurePanelText(
+            view.LocalWindow,
+            9,
+            width - 24
+        )
 
     local totalHeight =
-        detailsY
-        + (
-            view.Mode ~= ""
-            and 58
-            or 32
-        )
+        windowTextY
+        + windowHeight
+        + 13
 
     local card =
         HolyGuildPanelCard(
@@ -133529,26 +134776,40 @@ function HolyGuildRefreshContestPanel()
             view.State == "Active"
         )
 
+    local badgeText =
+        view.State == "Active"
+        and "LIVE"
+        or (
+            view.State == "Upcoming"
+            and "UPCOMING"
+            or (
+                view.State == "Completed"
+                and "ENDED"
+                or "SYNCING"
+            )
+        )
+
+    local badgeWidth =
+        badgeText == "UPCOMING"
+        and 78
+        or (
+            badgeText == "SYNCING"
+            and 72
+            or 62
+        )
+
     HolyGuildPanelBadge(
         panel,
         card,
-        view.State == "Active"
-            and "LIVE"
-            or (
-                view.State == "Upcoming"
-                and "UPCOMING"
-                or "COMPLETED"
-            ),
+        badgeText,
         UDim2.fromOffset(12, 11),
-        view.State == "Upcoming"
-            and 78
-            or 72,
+        badgeWidth,
         view.State == "Active"
             and "Success"
             or (
-                view.State == "Upcoming"
-                and "Accent"
-                or "Warning"
+                view.State == "Completed"
+                and "Warning"
+                or "Accent"
             )
     )
 
@@ -133580,8 +134841,8 @@ function HolyGuildRefreshContestPanel()
     HolyGuildPanelText(
         panel,
         card,
-        "OBJECTIVE",
-        UDim2.fromOffset(12, 91),
+        "WHAT TO DO",
+        UDim2.fromOffset(12, 92),
         UDim2.new(1, -24, 0, 12),
         {
             TextSize = 8,
@@ -133592,13 +134853,13 @@ function HolyGuildRefreshContestPanel()
     HolyGuildPanelText(
         panel,
         card,
-        view.Objective,
-        UDim2.fromOffset(12, 106),
+        view.GuideText,
+        UDim2.fromOffset(12, 108),
         UDim2.new(
             1,
             -24,
             0,
-            objectiveHeight
+            guideHeight
         ),
         {
             TextSize = 10,
@@ -133611,27 +134872,8 @@ function HolyGuildRefreshContestPanel()
     HolyGuildPanelDivider(
         panel,
         card,
-        detailsY - 7
+        detailsY - 8
     )
-
-    local detailRows = {
-        {
-            "Score format",
-            view.ScoreFormat,
-        },
-    }
-
-    if view.Mode ~= "" then
-
-        table.insert(
-            detailRows,
-            1,
-            {
-                "Mode",
-                view.Mode,
-            }
-        )
-    end
 
     for index, detail in ipairs(
         detailRows
@@ -133646,7 +134888,7 @@ function HolyGuildRefreshContestPanel()
             card,
             detail[1],
             UDim2.fromOffset(12, y),
-            UDim2.new(0.55, -12, 0, 22),
+            UDim2.new(0.48, -12, 0, 22),
             {
                 TextSize = 9,
                 Transparency = 0.45,
@@ -133658,16 +134900,54 @@ function HolyGuildRefreshContestPanel()
             panel,
             card,
             detail[2],
-            UDim2.new(0.55, 0, 0, y),
-            UDim2.new(0.45, -12, 0, 22),
+            UDim2.new(0.48, 0, 0, y),
+            UDim2.new(0.52, -12, 0, 22),
             {
-                TextSize = 10,
+                TextSize = 9,
                 XAlignment =
                     Enum.TextXAlignment.Right,
                 Truncate = true,
             }
         )
     end
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "EVENT WINDOW · YOUR LOCAL TIME",
+        UDim2.fromOffset(
+            12,
+            windowLabelY
+        ),
+        UDim2.new(1, -24, 0, 12),
+        {
+            TextSize = 8,
+            Transparency = 0.50,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        view.LocalWindow,
+        UDim2.fromOffset(
+            12,
+            windowTextY
+        ),
+        UDim2.new(
+            1,
+            -24,
+            0,
+            windowHeight
+        ),
+        {
+            TextSize = 9,
+            Transparency = 0.18,
+            Wrapped = true,
+            YAlignment =
+                Enum.TextYAlignment.Top,
+        }
+    )
 
     HolyGuildSetInfoPanelHeight(
         panel,
@@ -133684,7 +134964,9 @@ function HolyGuildRefreshContestProgressPanel()
         HolyGuildGetContestView()
 
     local members =
-        HolyGuildBuildMembers()
+        HolyGuildBuildContestMembers(
+            view
+        )
 
     table.sort(
         members,
@@ -133822,7 +135104,21 @@ function HolyGuildRefreshContestProgressPanel()
     end
 
     local localMember =
-        HolyGuildGetLocalMember()
+        nil
+
+    for _, member in ipairs(
+        members
+    ) do
+
+        if member.UserId
+            == LocalPlayer.UserId then
+
+            localMember =
+                member
+
+            break
+        end
+    end
 
     local contribution =
         localMember
@@ -133869,8 +135165,9 @@ function HolyGuildRefreshContestProgressPanel()
             view.State == "Completed"
                 and "FINAL SCORE"
                 or "GUILD SCORE",
-            HolyGuildFormatNumber(
-                view.Score
+            HolyGuildFormatContestScore(
+                view.Score,
+                view.RawScoreFormat
             ),
         },
         {
@@ -133888,8 +135185,9 @@ function HolyGuildRefreshContestProgressPanel()
         },
         {
             "YOUR SCORE",
-            HolyGuildFormatNumber(
-                contribution
+            HolyGuildFormatContestScore(
+                contribution,
+                view.RawScoreFormat
             ),
         },
         {
@@ -134242,8 +135540,9 @@ function HolyGuildRefreshContestProgressPanel()
         HolyGuildPanelText(
             panel,
             row,
-            HolyGuildFormatNumber(
-                member.Weekly
+            HolyGuildFormatContestScore(
+                member.Weekly,
+                view.RawScoreFormat
             ),
             UDim2.new(0.70, 0, 0, 0),
             UDim2.new(0.30, -7, 1, 0),
@@ -136659,6 +137958,9 @@ function HolyGuildRefreshCompetition(quiet)
     HOLY_GUILD_RUNTIME.Busy.Competition =
         true
 
+    local previousView =
+        HolyGuildGetContestView()
+
     local ok,
         first,
         second,
@@ -136669,6 +137971,9 @@ function HolyGuildRefreshCompetition(quiet)
 
     HOLY_GUILD_RUNTIME.Busy.Competition =
         false
+
+    HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt =
+        os.clock()
 
     if ok ~= true then
 
@@ -136683,17 +137988,88 @@ function HolyGuildRefreshCompetition(quiet)
         return false
     end
 
-    HOLY_GUILD_STATE.Competition =
+    local result =
         HolyGuildFirstTable(
             first,
             second,
             third
         )
 
+    if type(result) ~= "table" then
+
+        if quiet ~= true then
+
+            HolyGuildSetStatus(
+                "Competition refresh returned no data"
+            )
+        end
+
+        return false
+    end
+
+    HOLY_GUILD_STATE.Competition =
+        result
+
+    local currentView =
+        HolyGuildGetContestView()
+
+    local previousKey =
+        type(previousView) == "table"
+        and tostring(
+            previousView.CompetitionKey
+            or ""
+        )
+        or ""
+
+    local currentKey =
+        type(currentView) == "table"
+        and tostring(
+            currentView.CompetitionKey
+            or ""
+        )
+        or ""
+
+    local rolledOver =
+        previousKey ~= ""
+        and currentKey ~= ""
+        and previousKey ~= currentKey
+
+    HOLY_GUILD_RUNTIME.LastCompetitionKey =
+        currentKey
+
+    if rolledOver then
+
+        HOLY_GUILD_STATE.SelectedGuildId =
+            nil
+
+        if HOLY_GUILD_UI.ContestPanel then
+
+            HOLY_GUILD_UI.ContestPanel.Signature =
+                ""
+        end
+
+        if HOLY_GUILD_UI.ContestProgressPanel then
+
+            HOLY_GUILD_UI.ContestProgressPanel.Signature =
+                ""
+        end
+
+        if HOLY_GUILD_UI.LeaderboardPanel then
+
+            HOLY_GUILD_UI.LeaderboardPanel.Signature =
+                ""
+        end
+
+        if HOLY_GUILD_UI.SelectedGuildPanel then
+
+            HOLY_GUILD_UI.SelectedGuildPanel.Signature =
+                ""
+        end
+    end
+
     HolyGuildRefreshUI()
 
-    return HOLY_GUILD_STATE.Competition
-        ~= nil
+    return true
 end
 
 function HolyGuildRefreshLeaderboard(quiet)
@@ -141115,11 +142491,16 @@ function HolyGuildStart()
         while HOLY_GUILD_RUNTIME.Running == true
         and HOLY_GUILD_RUNTIME.Token == token do
 
-            if HOLY_GUILD_STATE.Page == "Contest" then
+            local currentPage =
+                HOLY_GUILD_STATE.Page
+
+            if currentPage == "Contest" then
 
                 HolyGuildRefreshContestPanel()
 
-            elseif HOLY_GUILD_STATE.Page == "Invites"
+                HolyGuildRefreshContestProgressPanel()
+
+            elseif currentPage == "Invites"
             and os.clock()
                 - (
                     HOLY_GUILD_RUNTIME.LastInviteRefreshAt
@@ -141132,6 +142513,54 @@ function HolyGuildStart()
                     HolyGuildRefreshInvites(
                         true
                     )
+                end)
+            end
+
+            local refreshInterval =
+                currentPage == "Contest"
+                and 60
+                or 180
+
+            local timeSinceContestRefresh =
+                os.clock()
+                - (
+                    tonumber(
+                        HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt
+                    )
+                    or 0
+                )
+
+            local competitionBusy =
+                HOLY_GUILD_RUNTIME.Busy.All == true
+                or HOLY_GUILD_RUNTIME.Busy.Competition == true
+                or HOLY_GUILD_RUNTIME.Busy.Snapshot == true
+                or HOLY_GUILD_RUNTIME.Busy.Leaderboard == true
+
+            if timeSinceContestRefresh
+                >= refreshInterval
+            and competitionBusy ~= true then
+
+                HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt =
+                    os.clock()
+
+                task.spawn(function()
+
+                    if HolyGuildRefreshCompetition(
+                        true
+                    ) then
+
+                        HolyGuildRefreshSnapshot(
+                            true
+                        )
+
+                        if HOLY_GUILD_STATE.Page
+                            == "Contest" then
+
+                            HolyGuildRefreshLeaderboard(
+                                true
+                            )
+                        end
+                    end
                 end)
             end
 
@@ -152165,6 +153594,14 @@ HOLY_GUILD_UI.ContestActions =
                                 if HolyGuildRefreshCompetition(
                                     false
                                 ) then
+
+                                    HolyGuildRefreshSnapshot(
+                                        true
+                                    )
+
+                                    HolyGuildRefreshLeaderboard(
+                                        true
+                                    )
 
                                     HolyGuildSetStatus(
                                         "Competition data is up to date"
