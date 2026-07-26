@@ -3225,6 +3225,7 @@ HOLY_SHOP_STATE = {
 
     PetSellSelectedKey = "",
     PetSellKeepAmount = 1,
+    PetSellBatchAmount = 5,
 
     AutoDoubleOrNothing = false,
     DoubleTargetWins = "1",
@@ -11790,6 +11791,17 @@ function HolySaveShopSettings()
                 )
             ),
 
+        PetSellBatchAmount =
+            math.max(
+                1,
+                math.floor(
+                    tonumber(
+                        HOLY_SHOP_STATE.PetSellBatchAmount
+                    )
+                    or 5
+                )
+            ),
+
         AutoDoubleOrNothing =
             HOLY_SHOP_STATE.AutoDoubleOrNothing == true,
 
@@ -12154,6 +12166,28 @@ function HolyLoadShopSettings()
             0,
             math.floor(
                 loadedPetSellKeepAmount
+            )
+        )
+
+    local loadedPetSellBatchAmount =
+        tonumber(
+            data.PetSellBatchAmount
+        )
+
+    if type(loadedPetSellBatchAmount) ~= "number"
+    or loadedPetSellBatchAmount ~= loadedPetSellBatchAmount
+    or loadedPetSellBatchAmount == math.huge
+    or loadedPetSellBatchAmount == -math.huge then
+
+        loadedPetSellBatchAmount =
+            5
+    end
+
+    HOLY_SHOP_STATE.PetSellBatchAmount =
+        math.max(
+            1,
+            math.floor(
+                loadedPetSellBatchAmount
             )
         )
 
@@ -45485,6 +45519,43 @@ function HolyPetSellReadKeepAmount(value)
     )
 end
 
+function HolyPetSellReadBatchAmount(value)
+
+    local amount =
+        tonumber(
+            value
+        )
+
+    if type(amount) ~= "number"
+    or amount ~= amount
+    or amount == math.huge
+    or amount == -math.huge then
+
+        amount =
+            tonumber(
+                HOLY_SHOP_STATE
+                and HOLY_SHOP_STATE.PetSellBatchAmount
+            )
+            or 5
+    end
+
+    if type(amount) ~= "number"
+    or amount ~= amount
+    or amount == math.huge
+    or amount == -math.huge then
+
+        amount =
+            5
+    end
+
+    return math.max(
+        1,
+        math.floor(
+            amount
+        )
+    )
+end
+
 function HolyPetSellPrettyName(value)
 
     return HolyCleanText(
@@ -46424,8 +46495,16 @@ function HolyPetSellStart()
             HOLY_SHOP_STATE.PetSellKeepAmount
         )
 
+    local batchAmount =
+        HolyPetSellReadBatchAmount(
+            HOLY_SHOP_STATE.PetSellBatchAmount
+        )
+
     HOLY_SHOP_STATE.PetSellKeepAmount =
         keepAmount
+
+    HOLY_SHOP_STATE.PetSellBatchAmount =
+        batchAmount
 
     HolySaveShopSettings()
 
@@ -46596,7 +46675,7 @@ function HolyPetSellStart()
 
                     local wanted =
                         math.min(
-                            5,
+                            batchAmount,
                             plannedTotal
                                 - soldTotal,
                             currentlyAllowed
@@ -173465,13 +173544,54 @@ HOLY_SHOP_UI.PetSellKeepInput:OnChanged(function(value)
     end
 end)
 
+HOLY_SHOP_UI.PetSellBatchInput =
+    ShopPetSellerBox:AddInput(
+        "HolyShopPetSellBatchAmount",
+        {
+            Text =
+                "Batch Amount",
+
+            Default =
+                tostring(
+                    HolyPetSellReadBatchAmount(
+                        HOLY_SHOP_STATE.PetSellBatchAmount
+                    )
+                ),
+
+            Placeholder =
+                "5",
+
+            Numeric =
+                true,
+
+            Finished =
+                true,
+
+            ClearTextOnFocus =
+                false,
+
+            Tooltip =
+                "How many eligible pets to sell together per batch. There is no configured maximum. If fewer pets remain, all remaining pets are used.",
+        }
+    )
+
+HOLY_SHOP_UI.PetSellBatchInput:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellBatchAmount =
+        HolyPetSellReadBatchAmount(
+            value
+        )
+
+    HolySaveShopSettings()
+end)
+
 HOLY_SHOP_UI.PetSellStartButton =
     ShopPetSellerBox:AddButton({
         Text =
-            "Sell Extras",
+            "Sell Pets",
 
         Tooltip =
-            "Sells the selected exact pet group down to Keep Amount using confirmed batches of five.",
+            "Sells the selected exact pet group down to Keep Amount using your chosen Batch Amount.",
 
         Func =
             function()
