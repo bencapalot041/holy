@@ -172320,6 +172320,2842 @@ HOLY_SHOP_UI =
     and HOLY_SHOP_UI
     or {}
 
+ShopAuctionBox:AddToggle(
+    "HolyShopAutoBuyAuctions",
+    {
+        Text =
+            "Auto Buy Auctions",
+
+        Default =
+            HOLY_SHOP_STATE.AutoBuyAuctions == true,
+
+        Tooltip =
+            "Automatically buys selected auction items at or below your Max Price.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.AutoBuyAuctions =
+        value == true
+
+    HOLY_SHOP_STATE.AuctionNextRetryAt =
+        0
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoBuyAuctions == true then
+
+        if HOLY_SHOP_STATE.AuctionNetworkReady == true then
+
+            HolyAuctionSetStatus(
+                HOLY_SHOP_STATE.AuctionDryRun == true
+                and "Auto enabled — safety dry run"
+                or "Auto enabled — purchases armed"
+            )
+
+            HolyAuctionQueueWorker(
+                "toggle on"
+            )
+
+        else
+
+            HolyAuctionSetStatus(
+                "Auto enabled — waiting synchronized network data"
+            )
+        end
+
+    else
+
+        HolyAuctionSetStatus(
+            "Auto buy off"
+        )
+    end
+end)
+
+ShopAuctionBox:AddToggle(
+    "HolyShopAuctionDryRun",
+    {
+        Text =
+            "Test Mode",
+
+        Default =
+            HOLY_SHOP_STATE.AuctionDryRun ~= false,
+
+        Tooltip =
+            "Shows what Auto Buy would purchase without spending anything.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.AuctionDryRun =
+        value == true
+
+    HOLY_SHOP_STATE.AuctionNextRetryAt =
+        0
+
+    HolySaveShopSettings()
+
+    HolyAuctionSetStatus(
+        HOLY_SHOP_STATE.AuctionDryRun == true
+        and "Safety dry run enabled"
+        or "Real purchases armed"
+    )
+
+    HolyAuctionRefreshUI()
+end)
+
+HOLY_AUCTION_WATCHLIST_UI =
+    type(HOLY_AUCTION_WATCHLIST_UI) == "table"
+    and HOLY_AUCTION_WATCHLIST_UI
+    or {}
+
+function HolyAuctionWatchlistLiveRow(itemName)
+
+    local wantedKey =
+        HolyAuctionItemKey(
+            itemName
+        )
+
+    for _, row in ipairs(
+        HOLY_SHOP_STATE.AuctionLastLots
+        or {}
+    ) do
+
+        if HolyAuctionItemKey(row.Name) == wantedKey then
+
+            return row
+        end
+    end
+
+    return nil
+end
+
+function HolyAuctionWatchlistState(entry)
+
+    local row =
+        HolyAuctionWatchlistLiveRow(
+            entry.Name
+        )
+
+    if type(row) ~= "table" then
+
+        return "WAIT",
+            Color3.fromRGB(245, 199, 100)
+    end
+
+    if row.Expired == true then
+
+        return "ENDED",
+            Color3.fromRGB(135, 141, 153)
+    end
+
+    if row.StockKnown == true
+    and (
+        tonumber(row.Stock)
+        or 0
+    ) <= 0 then
+
+        return "SOLD OUT",
+            Color3.fromRGB(135, 141, 153)
+    end
+
+    if row.Active == true
+    and row.NetworkReady == true
+    and HolyAuctionPriceAllows(row) == true then
+
+        return "READY",
+            Color3.fromRGB(105, 229, 160)
+    end
+
+    return "WAIT",
+        Color3.fromRGB(245, 199, 100)
+end
+
+function HolyAuctionWatchlistAvailableItems()
+
+    local values = {}
+
+    for _, row in ipairs(
+        HolyAuctionBuildItemRows(
+            true
+        )
+    ) do
+
+        if HolyAuctionGetWatchEntry(row.Name) == nil then
+
+            values[#values + 1] =
+                tostring(
+                    row.Name
+                )
+        end
+    end
+
+    return values
+end
+
+function HolyAuctionWatchlistReadSingleValue(value)
+
+    if type(value) ~= "table" then
+
+        return HolyCleanText(
+            value
+        )
+    end
+
+    for key, enabled in pairs(value) do
+
+        if enabled == true then
+
+            return HolyCleanText(
+                key
+            )
+        end
+    end
+
+    return HolyCleanText(
+        value[1]
+    )
+end
+
+function HolyAuctionOpenAddWatchDialog()
+
+    local available =
+        HolyAuctionWatchlistAvailableItems()
+
+    if #available <= 0 then
+
+        HolyNotify(
+            "Auction Watchlist",
+            "No new auction items are currently available.",
+            4
+        )
+
+        return
+    end
+
+    table.sort(
+        available,
+        function(a, b)
+
+            return tostring(a):lower()
+                < tostring(b):lower()
+        end
+    )
+
+    local selectedItem =
+        available[1]
+
+    local enteredPrice =
+        "0"
+
+    local dialog
+
+    local function updateValidation()
+
+        if dialog == nil then
+            return
+        end
+
+        local parsedPrice =
+            HolyAuctionReadMoney(
+                enteredPrice
+            )
+
+        dialog:SetDescription(
+            parsedPrice > 0
+            and (
+                "Maximum price: "
+                .. HolyAuctionFormatMoney(
+                    parsedPrice
+                )
+            )
+            or "Choose an item and enter the most you are willing to pay."
+        )
+
+        dialog:SetButtonDisabled(
+            "Add",
+            selectedItem == ""
+                or parsedPrice <= 0
+        )
+    end
+
+    dialog =
+        Window:AddDialog(
+            "HolyAuctionAddWatchItem",
+            {
+                Title =
+                    "Add Auction Item",
+
+                Description =
+                    "Choose an item and enter the most you are willing to pay.",
+
+                AutoDismiss =
+                    false,
+
+                OutsideClickDismiss =
+                    true,
+
+                FooterButtons = {
+                    Cancel = {
+                        Title =
+                            "Cancel",
+
+                        Variant =
+                            "Ghost",
+
+                        Order =
+                            1,
+
+                        Callback =
+                            function()
+
+                                dialog:Dismiss()
+                            end,
+                    },
+
+                    Add = {
+                        Title =
+                            "Add Item",
+
+                        Variant =
+                            "Primary",
+
+                        Order =
+                            2,
+
+                        Callback =
+                            function()
+
+                                local success,
+                                    reason =
+                                    HolyAuctionUpsertWatchItem(
+                                        selectedItem,
+                                        enteredPrice
+                                    )
+
+                                if success == true then
+
+                                    dialog:Dismiss()
+
+                                else
+
+                                    dialog:SetDescription(
+                                        tostring(
+                                            reason
+                                        )
+                                    )
+                                end
+                            end,
+                    },
+                },
+            }
+        )
+
+    dialog:AddDropdown(
+        "HolyAuctionAddWatchItemDropdown",
+        {
+            Text =
+                "Item",
+
+            Values =
+                available,
+
+            Default =
+                1,
+
+            Multi =
+                false,
+
+            AllowNull =
+                false,
+
+            Searchable =
+                true,
+
+            MaxVisibleDropdownItems =
+                8,
+        }
+    ):OnChanged(function(value)
+
+        selectedItem =
+            HolyAuctionWatchlistReadSingleValue(
+                value
+            )
+
+        updateValidation()
+    end)
+
+    dialog:AddInput(
+        "HolyAuctionAddWatchItemPrice",
+        {
+            Text =
+                "Maximum Price",
+
+            Default =
+                "0",
+
+            Placeholder =
+                "Example: 50M",
+
+            Numeric =
+                false,
+
+            Finished =
+                false,
+
+            ClearTextOnFocus =
+                false,
+        }
+    ):OnChanged(function(value)
+
+        enteredPrice =
+            tostring(
+                value
+                or "0"
+            )
+
+        updateValidation()
+    end)
+
+    updateValidation()
+end
+
+function HolyAuctionOpenEditWatchDialog()
+
+    local entry =
+        HolyAuctionGetSelectedWatchEntry()
+
+    if type(entry) ~= "table" then
+
+        HolyNotify(
+            "Auction Watchlist",
+            "Select an item first.",
+            3
+        )
+
+        return
+    end
+
+    local itemName =
+        tostring(
+            entry.Name
+        )
+
+    local enteredPrice =
+        tostring(
+            entry.MaxPrice
+            or "0"
+        )
+
+    local liveRow =
+        HolyAuctionWatchlistLiveRow(
+            itemName
+        )
+
+    local currentText =
+        type(liveRow) == "table"
+        and tostring(
+            liveRow.PriceText
+            or HolyAuctionFormatMoney(
+                liveRow.Price
+            )
+        )
+        or "Unavailable"
+
+    local dialog
+
+    local function updateValidation()
+
+        local parsedPrice =
+            HolyAuctionReadMoney(
+                enteredPrice
+            )
+
+        dialog:SetDescription(
+            "Current price: "
+            .. currentText
+            .. "\nMaximum price: "
+            .. (
+                parsedPrice > 0
+                and HolyAuctionFormatMoney(
+                    parsedPrice
+                )
+                or "Invalid"
+            )
+        )
+
+        dialog:SetButtonDisabled(
+            "Save",
+            parsedPrice <= 0
+        )
+    end
+
+    dialog =
+        Window:AddDialog(
+            "HolyAuctionEditWatchItem",
+            {
+                Title =
+                    "Edit "
+                    .. itemName,
+
+                Description =
+                    "Current price: "
+                    .. currentText,
+
+                AutoDismiss = false,
+                OutsideClickDismiss = true,
+
+                FooterButtons = {
+                    Remove = {
+                        Title = "Remove",
+                        Variant = "Destructive",
+                        WaitTime = 1,
+                        Order = 1,
+
+                        Callback = function()
+
+                            HolyAuctionRemoveWatchItem(
+                                itemName
+                            )
+
+                            dialog:Dismiss()
+                        end,
+                    },
+
+                    Cancel = {
+                        Title = "Cancel",
+                        Variant = "Ghost",
+                        Order = 2,
+
+                        Callback = function()
+
+                            dialog:Dismiss()
+                        end,
+                    },
+
+                    Save = {
+                        Title = "Save",
+                        Variant = "Primary",
+                        Order = 3,
+
+                        Callback = function()
+
+                            local success,
+                                reason =
+                                HolyAuctionUpsertWatchItem(
+                                    itemName,
+                                    enteredPrice
+                                )
+
+                            if success == true then
+
+                                dialog:Dismiss()
+
+                            else
+
+                                dialog:SetDescription(
+                                    tostring(
+                                        reason
+                                    )
+                                )
+                            end
+                        end,
+                    },
+                },
+            }
+        )
+
+    dialog:AddInput(
+        "HolyAuctionEditWatchItemPrice",
+        {
+            Text = "Maximum Price",
+            Default = enteredPrice,
+            Placeholder = "Example: 50M",
+            Numeric = false,
+            Finished = false,
+            ClearTextOnFocus = false,
+        }
+    ):OnChanged(function(value)
+
+        enteredPrice =
+            tostring(
+                value
+                or "0"
+            )
+
+        updateValidation()
+    end)
+
+    updateValidation()
+end
+
+local AuctionWatchlistSurface =
+    Instance.new(
+        "Frame"
+    )
+
+AuctionWatchlistSurface.Name =
+    "HolyAuctionWatchlistSurface"
+
+AuctionWatchlistSurface.BackgroundTransparency =
+    1
+
+AuctionWatchlistSurface.BorderSizePixel =
+    0
+
+AuctionWatchlistSurface.Size =
+    UDim2.new(
+        1,
+        0,
+        0,
+        194
+    )
+
+local AuctionWatchlistSummary =
+    Instance.new(
+        "TextLabel"
+    )
+
+AuctionWatchlistSummary.BackgroundTransparency =
+    1
+
+AuctionWatchlistSummary.Position =
+    UDim2.fromOffset(
+        1,
+        0
+    )
+
+AuctionWatchlistSummary.Size =
+    UDim2.new(
+        1,
+        -2,
+        0,
+        18
+    )
+
+AuctionWatchlistSummary.Text =
+    "0 watched"
+
+AuctionWatchlistSummary.TextColor3 =
+    Library.Scheme.FontColor
+
+AuctionWatchlistSummary.TextTransparency =
+    0.32
+
+AuctionWatchlistSummary.TextSize =
+    12
+
+AuctionWatchlistSummary.TextXAlignment =
+    Enum.TextXAlignment.Left
+
+AuctionWatchlistSummary.FontFace =
+    Library.Scheme.Font
+
+AuctionWatchlistSummary.Parent =
+    AuctionWatchlistSurface
+
+local AuctionWatchlistHeader =
+    Instance.new(
+        "Frame"
+    )
+
+AuctionWatchlistHeader.BackgroundTransparency =
+    1
+
+AuctionWatchlistHeader.Position =
+    UDim2.fromOffset(
+        0,
+        20
+    )
+
+AuctionWatchlistHeader.Size =
+    UDim2.new(
+        1,
+        0,
+        0,
+        16
+    )
+
+AuctionWatchlistHeader.Parent =
+    AuctionWatchlistSurface
+
+local function createHeaderLabel(text, position, size, alignment)
+
+    local label =
+        Instance.new(
+            "TextLabel"
+        )
+
+    label.BackgroundTransparency =
+        1
+
+    label.Position =
+        position
+
+    label.Size =
+        size
+
+    label.Text =
+        text
+
+    label.TextColor3 =
+        Library.Scheme.FontColor
+
+    label.TextTransparency =
+        0.50
+
+    label.TextSize =
+        10
+
+    label.TextXAlignment =
+        alignment
+
+    label.FontFace =
+        Library.Scheme.Font
+
+    label.Parent =
+        AuctionWatchlistHeader
+
+    return label
+end
+
+createHeaderLabel(
+    "ITEM",
+    UDim2.fromOffset(8, 0),
+    UDim2.new(0.57, -8, 1, 0),
+    Enum.TextXAlignment.Left
+)
+
+createHeaderLabel(
+    "MAX",
+    UDim2.fromScale(0.57, 0),
+    UDim2.new(0.26, 0, 1, 0),
+    Enum.TextXAlignment.Left
+)
+
+createHeaderLabel(
+    "STATE",
+    UDim2.fromScale(0.83, 0),
+    UDim2.new(0.17, -6, 1, 0),
+    Enum.TextXAlignment.Right
+)
+
+local AuctionWatchlistList =
+    Instance.new(
+        "ScrollingFrame"
+    )
+
+AuctionWatchlistList.Active =
+    true
+
+AuctionWatchlistList.AutomaticCanvasSize =
+    Enum.AutomaticSize.Y
+
+AuctionWatchlistList.BackgroundTransparency =
+    1
+
+AuctionWatchlistList.BorderSizePixel =
+    0
+
+AuctionWatchlistList.CanvasSize =
+    UDim2.fromOffset(
+        0,
+        0
+    )
+
+AuctionWatchlistList.Position =
+    UDim2.fromOffset(
+        0,
+        38
+    )
+
+AuctionWatchlistList.Size =
+    UDim2.new(
+        1,
+        0,
+        0,
+        120
+    )
+
+AuctionWatchlistList.ScrollBarThickness =
+    2
+
+AuctionWatchlistList.ScrollBarImageColor3 =
+    Library.Scheme.OutlineColor
+
+AuctionWatchlistList.Parent =
+    AuctionWatchlistSurface
+
+local AuctionWatchlistLayout =
+    Instance.new(
+        "UIListLayout"
+    )
+
+AuctionWatchlistLayout.Padding =
+    UDim.new(
+        0,
+        4
+    )
+
+AuctionWatchlistLayout.SortOrder =
+    Enum.SortOrder.LayoutOrder
+
+AuctionWatchlistLayout.Parent =
+    AuctionWatchlistList
+
+local AuctionWatchlistEmpty =
+    Instance.new(
+        "TextLabel"
+    )
+
+AuctionWatchlistEmpty.BackgroundTransparency =
+    1
+
+AuctionWatchlistEmpty.LayoutOrder =
+    0
+
+AuctionWatchlistEmpty.Size =
+    UDim2.new(
+        1,
+        -4,
+        0,
+        58
+    )
+
+AuctionWatchlistEmpty.Text =
+    "No auction items added."
+
+AuctionWatchlistEmpty.TextColor3 =
+    Library.Scheme.FontColor
+
+AuctionWatchlistEmpty.TextTransparency =
+    0.46
+
+AuctionWatchlistEmpty.TextSize =
+    12
+
+AuctionWatchlistEmpty.FontFace =
+    Library.Scheme.Font
+
+AuctionWatchlistEmpty.Parent =
+    AuctionWatchlistList
+
+local AuctionWatchlistActions =
+    Instance.new(
+        "Frame"
+    )
+
+AuctionWatchlistActions.BackgroundTransparency =
+    1
+
+AuctionWatchlistActions.Position =
+    UDim2.fromOffset(
+        0,
+        166
+    )
+
+AuctionWatchlistActions.Size =
+    UDim2.new(
+        1,
+        0,
+        0,
+        28
+    )
+
+AuctionWatchlistActions.Parent =
+    AuctionWatchlistSurface
+
+local function createWatchlistAction(text, position, size, primary)
+
+    local button =
+        Instance.new(
+            "TextButton"
+        )
+
+    button.AutoButtonColor =
+        false
+
+    button.BackgroundColor3 =
+        primary == true
+        and Library.Scheme.AccentColor
+        or Library.Scheme.MainColor
+
+    button.BackgroundTransparency =
+        primary == true
+        and 0.12
+        or 0.22
+
+    button.BorderSizePixel =
+        0
+
+    button.Position =
+        position
+
+    button.Size =
+        size
+
+    button.Text =
+        text
+
+    button.TextColor3 =
+        Library.Scheme.FontColor
+
+    button.TextSize =
+        11
+
+    button.FontFace =
+        Library.Scheme.Font
+
+    button.Parent =
+        AuctionWatchlistActions
+
+    local corner =
+        Instance.new(
+            "UICorner"
+        )
+
+    corner.CornerRadius =
+        UDim.new(
+            0,
+            4
+        )
+
+    corner.Parent =
+        button
+
+    local stroke =
+        Instance.new(
+            "UIStroke"
+        )
+
+    stroke.ApplyStrokeMode =
+        Enum.ApplyStrokeMode.Border
+
+    stroke.Color =
+        primary == true
+        and Library.Scheme.AccentColor
+        or Library.Scheme.OutlineColor
+
+    stroke.Transparency =
+        primary == true
+        and 0.05
+        or 0.24
+
+    stroke.Thickness =
+        1
+
+    stroke.Parent =
+        button
+
+    return button
+end
+
+local AuctionWatchlistAddButton =
+    createWatchlistAction(
+        "+ Add Item",
+        UDim2.fromOffset(0, 0),
+        UDim2.new(0.5, -3, 1, 0),
+        true
+    )
+
+local AuctionWatchlistEditButton =
+    createWatchlistAction(
+        "Edit",
+        UDim2.new(0.5, 3, 0, 0),
+        UDim2.new(0.5, -3, 1, 0),
+        false
+    )
+
+AuctionWatchlistAddButton.MouseButton1Click:Connect(function()
+
+    HolyAuctionOpenAddWatchDialog()
+end)
+
+AuctionWatchlistEditButton.MouseButton1Click:Connect(function()
+
+    if HolyAuctionGetSelectedWatchEntry() ~= nil then
+
+        HolyAuctionOpenEditWatchDialog()
+    end
+end)
+
+HOLY_AUCTION_WATCHLIST_UI.Root =
+    AuctionWatchlistSurface
+
+HOLY_AUCTION_WATCHLIST_UI.List =
+    AuctionWatchlistList
+
+HOLY_AUCTION_WATCHLIST_UI.Summary =
+    AuctionWatchlistSummary
+
+HOLY_AUCTION_WATCHLIST_UI.Empty =
+    AuctionWatchlistEmpty
+
+HOLY_AUCTION_WATCHLIST_UI.EditButton =
+    AuctionWatchlistEditButton
+
+HOLY_AUCTION_WATCHLIST_UI.Rows =
+    {}
+
+HOLY_AUCTION_WATCHLIST_UI.Signature =
+    ""
+
+HOLY_SHOP_UI.AuctionWatchlistPassthrough =
+    ShopAuctionWatchlistBox:AddUIPassthrough(
+        "HolyShopAuctionWatchlistSurface",
+        {
+            Instance =
+                AuctionWatchlistSurface,
+
+            Height =
+                194,
+
+            Visible =
+                true,
+        }
+    )
+
+function HolyAuctionCreateWatchlistRow(entry, index)
+
+    local key =
+        HolyAuctionItemKey(
+            entry.Name
+        )
+
+    local button =
+        Instance.new(
+            "TextButton"
+        )
+
+    button.AutoButtonColor =
+        false
+
+    button.BackgroundColor3 =
+        Library.Scheme.MainColor
+
+    button.BackgroundTransparency =
+        0.30
+
+    button.BorderSizePixel =
+        0
+
+    button.LayoutOrder =
+        index
+
+    button.Size =
+        UDim2.new(
+            1,
+            -4,
+            0,
+            27
+        )
+
+    button.Text =
+        ""
+
+    button.Parent =
+        AuctionWatchlistList
+
+    local corner =
+        Instance.new(
+            "UICorner"
+        )
+
+    corner.CornerRadius =
+        UDim.new(
+            0,
+            3
+        )
+
+    corner.Parent =
+        button
+
+    local stroke =
+        Instance.new(
+            "UIStroke"
+        )
+
+    stroke.ApplyStrokeMode =
+        Enum.ApplyStrokeMode.Border
+
+    stroke.Color =
+        Library.Scheme.OutlineColor
+
+    stroke.Transparency =
+        0.26
+
+    stroke.Thickness =
+        1
+
+    stroke.Parent =
+        button
+
+    local nameLabel =
+        Instance.new(
+            "TextLabel"
+        )
+
+    nameLabel.BackgroundTransparency =
+        1
+
+    nameLabel.Position =
+        UDim2.fromOffset(
+            8,
+            0
+        )
+
+    nameLabel.Size =
+        UDim2.new(
+            0.57,
+            -8,
+            1,
+            0
+        )
+
+    nameLabel.Text =
+        tostring(
+            entry.Name
+        )
+
+    nameLabel.TextColor3 =
+        Library.Scheme.FontColor
+
+    nameLabel.TextSize =
+        11
+
+    nameLabel.TextTruncate =
+        Enum.TextTruncate.AtEnd
+
+    nameLabel.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    nameLabel.FontFace =
+        Library.Scheme.Font
+
+    nameLabel.Parent =
+        button
+
+    local maxLabel =
+        Instance.new(
+            "TextLabel"
+        )
+
+    maxLabel.BackgroundTransparency =
+        1
+
+    maxLabel.Position =
+        UDim2.fromScale(
+            0.57,
+            0
+        )
+
+    maxLabel.Size =
+        UDim2.new(
+            0.26,
+            0,
+            1,
+            0
+        )
+
+    maxLabel.Text =
+        HolyAuctionFormatMoney(
+            entry.MaxPrice
+        )
+
+    maxLabel.TextColor3 =
+        Library.Scheme.FontColor
+
+    maxLabel.TextTransparency =
+        0.25
+
+    maxLabel.TextSize =
+        11
+
+    maxLabel.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    maxLabel.FontFace =
+        Library.Scheme.Font
+
+    maxLabel.Parent =
+        button
+
+    local stateLabel =
+        Instance.new(
+            "TextLabel"
+        )
+
+    stateLabel.BackgroundTransparency =
+        1
+
+    stateLabel.Position =
+        UDim2.fromScale(
+            0.83,
+            0
+        )
+
+    stateLabel.Size =
+        UDim2.new(
+            0.17,
+            -7,
+            1,
+            0
+        )
+
+    stateLabel.Text =
+        "WAIT"
+
+    stateLabel.TextSize =
+        10
+
+    stateLabel.TextXAlignment =
+        Enum.TextXAlignment.Right
+
+    stateLabel.FontFace =
+        Library.Scheme.Font
+
+    stateLabel.Parent =
+        button
+
+    button.MouseButton1Click:Connect(function()
+
+        HOLY_SHOP_STATE.AuctionWatchlistSelectedKey =
+            key
+
+        HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
+            true
+
+        pcall(function()
+
+            HolyAuctionRefreshWatchlistUI(
+                false
+            )
+        end)
+    end)
+
+    HOLY_AUCTION_WATCHLIST_UI.Rows[key] = {
+        Button = button,
+        Stroke = stroke,
+        Name = nameLabel,
+        Max = maxLabel,
+        State = stateLabel,
+    }
+end
+
+function HolyAuctionRefreshWatchlistUI(forceRebuild)
+
+    local ui =
+        HOLY_AUCTION_WATCHLIST_UI
+
+    if type(ui) ~= "table"
+    or typeof(ui.List) ~= "Instance" then
+
+        return false
+    end
+
+    HOLY_SHOP_STATE.AuctionWatchlist =
+        HolyAuctionNormalizeWatchlist(
+            HOLY_SHOP_STATE.AuctionWatchlist
+        )
+
+    local watchlist =
+        HOLY_SHOP_STATE.AuctionWatchlist
+
+    local signatureParts = {}
+
+    for _, entry in ipairs(watchlist) do
+
+        signatureParts[#signatureParts + 1] =
+            HolyAuctionItemKey(
+                entry.Name
+            )
+            .. ":"
+            .. tostring(
+                entry.MaxPrice
+            )
+    end
+
+    local signature =
+        table.concat(
+            signatureParts,
+            "|"
+        )
+
+    if forceRebuild == true
+    or signature ~= ui.Signature then
+
+        for _, rowUi in pairs(
+            ui.Rows
+            or {}
+        ) do
+
+            if typeof(rowUi.Button) == "Instance" then
+
+                rowUi.Button:Destroy()
+            end
+        end
+
+        ui.Rows = {}
+        ui.Signature = signature
+
+        for index, entry in ipairs(watchlist) do
+
+            HolyAuctionCreateWatchlistRow(
+                entry,
+                index
+            )
+        end
+    end
+
+    local selectedKey =
+        tostring(
+            HOLY_SHOP_STATE.AuctionWatchlistSelectedKey
+            or ""
+        )
+
+    local selectedValid =
+        false
+
+    local readyCount =
+        0
+
+    for _, entry in ipairs(watchlist) do
+
+        local key =
+            HolyAuctionItemKey(
+                entry.Name
+            )
+
+        local rowUi =
+            ui.Rows[key]
+
+        if type(rowUi) == "table" then
+
+            local selected =
+                selectedKey == key
+
+            if selected == true then
+
+                selectedValid =
+                    true
+            end
+
+            local stateText,
+                stateColor =
+                HolyAuctionWatchlistState(
+                    entry
+                )
+
+            if stateText == "READY" then
+
+                readyCount =
+                    readyCount + 1
+            end
+
+            rowUi.Name.Text =
+                tostring(
+                    entry.Name
+                )
+
+            rowUi.Max.Text =
+                HolyAuctionFormatMoney(
+                    entry.MaxPrice
+                )
+
+            rowUi.State.Text =
+                stateText
+
+            rowUi.State.TextColor3 =
+                stateColor
+
+            rowUi.Button.BackgroundColor3 =
+                selected == true
+                and Library.Scheme.AccentColor
+                or Library.Scheme.MainColor
+
+            rowUi.Button.BackgroundTransparency =
+                selected == true
+                and 0.82
+                or 0.30
+
+            rowUi.Stroke.Color =
+                selected == true
+                and Library.Scheme.AccentColor
+                or Library.Scheme.OutlineColor
+
+            rowUi.Stroke.Transparency =
+                selected == true
+                and 0.02
+                or 0.26
+
+            rowUi.Name.TextTransparency =
+                selected == true
+                and 0
+                or 0.10
+        end
+    end
+
+    if selectedValid ~= true then
+
+        HOLY_SHOP_STATE.AuctionWatchlistSelectedKey =
+            ""
+    end
+
+    ui.Empty.Visible =
+        #watchlist <= 0
+
+    ui.Summary.Text =
+        tostring(#watchlist)
+        .. (
+            #watchlist == 1
+            and " watched"
+            or " watched"
+        )
+        .. "  •  "
+        .. tostring(readyCount)
+        .. " ready"
+
+    ui.EditButton.Active =
+        selectedValid
+
+    ui.EditButton.Selectable =
+        selectedValid
+
+    ui.EditButton.TextTransparency =
+        selectedValid == true
+        and 0
+        or 0.55
+
+    return true
+end
+
+HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN =
+    {}
+
+local HolyAuctionWatchlistRefreshToken =
+    HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN
+
+HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
+    true
+
+HOLY_SHOP_STATE.AuctionWatchlistUIForceRebuild =
+    true
+
+pcall(function()
+
+    HolyAuctionRefreshWatchlistUI(
+        true
+    )
+end)
+
+task.spawn(function()
+
+    while HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN
+        == HolyAuctionWatchlistRefreshToken do
+
+        local surfaceAlive =
+            false
+
+        pcall(function()
+
+            surfaceAlive =
+                AuctionWatchlistSurface.Parent
+                ~= nil
+        end)
+
+        if surfaceAlive ~= true then
+            break
+        end
+
+        if HOLY_SHOP_STATE.AuctionWatchlistUIDirty == true then
+
+            local forceRebuild =
+                HOLY_SHOP_STATE
+                    .AuctionWatchlistUIForceRebuild
+                    == true
+
+            HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
+                false
+
+            HOLY_SHOP_STATE.AuctionWatchlistUIForceRebuild =
+                false
+
+            local refreshed =
+                pcall(function()
+
+                    HolyAuctionRefreshWatchlistUI(
+                        forceRebuild
+                    )
+                end)
+
+            if refreshed ~= true then
+
+                HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
+                    true
+            end
+        end
+
+        task.wait(
+            0.25
+        )
+    end
+end)
+
+ShopAuctionBox:AddToggle(
+    "HolyShopAuctionBuyUntilSoldOut",
+    {
+        Text =
+            "Buy Until Sold Out",
+
+        Default =
+            HOLY_SHOP_STATE.AuctionBuyUntilSoldOut ~= false,
+
+        Tooltip =
+            "Keeps buying selected items until they are sold out.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.AuctionBuyUntilSoldOut =
+        value == true
+
+    HOLY_SHOP_STATE.AuctionNextRetryAt =
+        0
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoBuyAuctions == true
+    and value == true then
+
+        HolyAuctionQueueWorker(
+            "buy until enabled"
+        )
+    end
+end)
+
+ShopAuctionBox:AddToggle(
+    "HolyShopAuctionLiveHud",
+    {
+        Text =
+            "Live Auction HUD",
+
+        Default =
+            HOLY_SHOP_STATE.AuctionHudEnabled == true,
+
+        Tooltip =
+            "Shows a small auction status window.",
+    }
+):OnChanged(function(value)
+
+    HolyAuctionSetHudVisible(
+        value == true,
+        "toggle"
+    )
+end)
+
+ShopAuctionBox:AddDropdown(
+    "HolyShopAuctionHudScale",
+    {
+        Text =
+            "HUD Scale",
+
+        Values = {
+            "60%",
+            "70%",
+            "80%",
+            "90%",
+            "100%",
+            "110%",
+        },
+
+        Default =
+            HolyAuctionFormatHudScale(
+                HOLY_SHOP_STATE.AuctionHudScale
+                or "80%"
+            ),
+
+        Multi =
+            false,
+
+        Searchable =
+            false,
+
+        MaxVisibleDropdownItems =
+            6,
+
+        Tooltip =
+            "Changes the size of the auction status window.",
+    }
+):OnChanged(function(value)
+
+    HolyAuctionSetHudScale(
+        value
+    )
+end)
+
+local HolyAuctionButtons =
+    ShopAuctionBox:AddButton({
+        Text =
+            "Refresh Auctions",
+
+        Tooltip =
+            "Requests server stock and refreshes current live auction lots.",
+
+        Func =
+            function()
+
+                HolyAuctionRefreshDropdown(
+                    true
+                )
+
+                HolyAuctionRequestSnapshot()
+
+                HolyAuctionRefreshUI()
+            end,
+    })
+
+HolyAuctionButtons:AddButton({
+    Text =
+        "Buy Once",
+
+    Tooltip =
+        "Buys one selected auction item when it is within your Max Price.",
+
+    Func =
+        function()
+
+            HolyAuctionManualBuyOnce(
+                "button"
+            )
+
+            HolyAuctionRefreshUI()
+        end,
+})
+
+HOLY_SHOP_UI.AuctionLiveLabel =
+    HolySniperAddLabel(
+        ShopAuctionBox,
+        "Live: waiting auction data."
+    )
+
+HOLY_SHOP_UI.AuctionStatusLabel =
+    HolySniperAddLabel(
+        ShopAuctionBox,
+        "Status: Ready"
+    )
+
+function HolyShopRefreshSellControls()
+
+    local filtered =
+        HolySellIsFilteredMethod(
+            HOLY_SHOP_STATE.SellMethod
+        )
+
+    local sellDelayControl =
+        HOLY_SHOP_UI.SellDelayControl
+
+    local fruitsAtOnceControl =
+        HOLY_SHOP_UI.FruitsAtOnceControl
+
+    if type(sellDelayControl) == "table"
+    and type(sellDelayControl.SetVisible) == "function" then
+
+        pcall(function()
+
+            sellDelayControl:SetVisible(
+                filtered ~= true
+            )
+        end)
+    end
+
+    if type(fruitsAtOnceControl) == "table"
+    and type(fruitsAtOnceControl.SetVisible) == "function" then
+
+        pcall(function()
+
+            fruitsAtOnceControl:SetVisible(
+                filtered == true
+            )
+        end)
+    end
+end
+
+HOLY_SHOP_UI.AutoSellToggle =
+    ShopSellBox:AddToggle(
+        "HolyShopAutoSellFruits",
+        {
+            Text =
+                "💰 Auto Sell Fruits",
+
+            Default =
+                HOLY_SHOP_STATE.AutoSellFruits,
+        }
+    )
+
+HOLY_SHOP_UI.AutoSellToggle:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.AutoSellFruits =
+        value == true
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellStartWatcher()
+
+        if HolySellIsFilteredMethod(
+            HOLY_SHOP_STATE.SellMethod
+        ) == true then
+
+            HolySellScanExistingFruitTools(
+                "toggle on"
+            )
+
+        else
+
+            HolySellScheduleSellAll(
+                "toggle on"
+            )
+        end
+
+        HolySellStartWorker()
+
+    else
+
+        HolySellStopWorker()
+    end
+end)
+
+HOLY_SHOP_UI.SellMethodControl =
+    ShopSellBox:AddDropdown(
+        "HolyShopSellMethod",
+        {
+            Text =
+                "⚙️ Method",
+
+            Values = {
+                HolySellMethodDisplay(
+                    "Sell All"
+                ),
+
+                HolySellMethodDisplay(
+                    "Filtered Sell"
+                ),
+            },
+
+            Default =
+                HolySellMethodDisplay(
+                    HOLY_SHOP_STATE.SellMethod
+                ),
+
+            Multi =
+                false,
+
+            Searchable =
+                false,
+
+            MaxVisibleDropdownItems =
+                2,
+
+            Tooltip =
+                "Sell All sells the full inventory. Filtered Sell concurrently sells matching fruits.",
+        }
+    )
+
+HOLY_SHOP_UI.SellMethodControl:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellMethod =
+        HolySellNormalizeMethod(
+            value
+        )
+
+    HolySellClearQueue()
+    HolySaveShopSettings()
+    HolyShopRefreshSellControls()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellStartWatcher()
+
+        if HolySellIsFilteredMethod(
+            HOLY_SHOP_STATE.SellMethod
+        ) == true then
+
+            HolySellScanExistingFruitTools(
+                "method changed"
+            )
+
+        else
+
+            HolySellScheduleSellAll(
+                "method changed"
+            )
+        end
+
+        HolySellStartWorker()
+    end
+end)
+
+HOLY_SHOP_UI.SellDelayControl =
+    ShopSellBox:AddSlider(
+        "HolyShopSellAllSpeed",
+        {
+            Text =
+                "⚡ Sell Delay",
+
+            Default =
+                math.clamp(
+                    tonumber(HOLY_SHOP_STATE.SellAllInterval)
+                    or 0.10,
+                    0,
+                    5
+                ),
+
+            Min =
+                0,
+
+            Max =
+                5,
+
+            Rounding =
+                2,
+
+            Suffix =
+                "s",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "How long Sell All waits after detecting fruit. 0 = immediate.",
+        }
+    )
+
+HOLY_SHOP_UI.SellDelayControl:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellAllInterval =
+        math.clamp(
+            tonumber(value)
+            or 0.10,
+            0,
+            5
+        )
+
+    HolySaveShopSettings()
+end)
+
+HOLY_SHOP_UI.FruitsAtOnceControl =
+    ShopSellBox:AddInput(
+        "HolyShopFruitsAtOnce",
+        {
+            Text =
+                "🍎 Fruits at Once",
+
+            Default =
+                tostring(
+                    HolySellReadFruitsAtOnce(
+                        HOLY_SHOP_STATE.FruitsAtOnce
+                    )
+                ),
+
+            Numeric =
+                true,
+
+            Finished =
+                true,
+
+            ClearTextOnFocus =
+                false,
+
+            Placeholder =
+                "25",
+
+            Tooltip =
+                "Number of filtered fruits sold concurrently. There is no upper limit.",
+        }
+    )
+
+HOLY_SHOP_UI.FruitsAtOnceControl:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.FruitsAtOnce =
+        HolySellReadFruitsAtOnce(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true
+    and HolySellIsFilteredMethod(
+        HOLY_SHOP_STATE.SellMethod
+    ) == true then
+
+        HolySellStartWorker()
+    end
+end)
+
+HolyShopRefreshSellControls()
+
+HOLY_SHOP_UI =
+    type(HOLY_SHOP_UI) == "table"
+    and HOLY_SHOP_UI
+    or {}
+
+ShopDoubleBox:AddToggle(
+    "HolyShopAutoDoubleOrNothing",
+    {
+        Text =
+            "🎲 Auto Double or Nothing",
+
+        Default =
+            HOLY_SHOP_STATE.AutoDoubleOrNothing == true,
+
+        Tooltip =
+            "Automatically doubles until Target Wins, then cashes out.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.AutoDoubleOrNothing =
+        value == true
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoDoubleOrNothing == true then
+
+        HolyDoubleStartWorker(
+            "toggle on"
+        )
+
+    else
+
+        HolyDoubleStopWorker(
+            "Off"
+        )
+    end
+end)
+
+ShopDoubleBox:AddInput(
+    "HolyShopDoubleTargetWins",
+    {
+        Text =
+            "🎯 Target Wins",
+
+        Default =
+            tostring(
+                HOLY_SHOP_STATE.DoubleTargetWins
+                or "1"
+            ),
+
+        Placeholder =
+            "1",
+
+        Numeric =
+            true,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "Cashout after this many wins. Minimum 1. No max clamp.",
+    }
+):OnChanged(function(value)
+
+    HolyDoubleSetTargetWins(
+        value
+    )
+end)
+
+ShopDoubleBox:AddInput(
+    "HolyShopDoubleBustFavDelay",
+    {
+        Text =
+            "🛡️ Bust Fav Delay",
+
+        Default =
+            tostring(
+                HOLY_SHOP_STATE.DoubleBustFavDelay
+                or "0.10"
+            ),
+
+        Placeholder =
+            "0.10",
+
+        Numeric =
+            false,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "Delay after rolling before burst-favoriting fruits. Depends on ping. Lower = earlier, higher = later.",
+    }
+):OnChanged(function(value)
+
+    HolyDoubleSetBustFavDelay(
+        value
+    )
+end)
+
+ShopDoubleBox:AddInput(
+    "HolyShopDoubleUnfavoriteDelay",
+    {
+        Text =
+            "🔓 Unfav Delay",
+
+        Default =
+            tostring(
+                HOLY_SHOP_STATE.DoubleUnfavoriteDelay
+                or "1.00"
+            ),
+
+        Placeholder =
+            "1.00",
+
+        Numeric =
+            false,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "How long to wait before unfavoriting auto-touched fruits after a roll.",
+    }
+):OnChanged(function(value)
+
+    HolyDoubleSetUnfavoriteDelay(
+        value
+    )
+end)
+
+local HolyDoubleManualButton =
+    ShopDoubleBox:AddButton({
+        Text =
+            "🎲 Manual Double",
+
+        Tooltip =
+            "Roll Double or Nothing one time using the same favorite timing.",
+
+        Func =
+            function()
+
+                HolyDoubleManualDouble()
+            end,
+    })
+
+HolyDoubleManualButton:AddButton({
+    Text =
+        "💰 Cashout",
+
+    Tooltip =
+        "Unfavorites auto-touched fruits, waits briefly, then cashes out.",
+
+    Func =
+        function()
+
+            HolyDoubleManualCashout()
+        end,
+})
+
+ShopDoubleBox:AddToggle(
+    "HolyShopDoubleHud",
+    {
+        Text =
+            "📌 Pot HUD",
+
+        Default =
+            HOLY_SHOP_STATE.DoubleHudEnabled == true,
+
+        Tooltip =
+            "Shows a small transparent draggable HUD with pot, wins, and next pot.",
+    }
+):OnChanged(function(value)
+
+    HolyDoubleSetHudVisible(
+        value == true
+    )
+end)
+
+HOLY_SHOP_UI.DoubleStatusLabel =
+    HolySniperAddLabel(
+        ShopDoubleBox,
+        HolyDoubleBuildStatusText()
+    )
+
+HolyDoubleRefreshUI()
+
+if HOLY_SHOP_STATE.DoubleHudEnabled == true then
+
+    task.defer(function()
+
+        HolyDoubleSetHudVisible(
+            true
+        )
+    end)
+end
+
+HolySniperAddLabel(
+    ShopDailyDealBox,
+    "Daily Deal All sells every eligible harvested fruit.\nTrigger Fruits only decide when to activate."
+)
+
+ShopDailyDealBox:AddToggle(
+    "HolyShopAutoDailyDealAll",
+    {
+        Text =
+            "⚡ Auto Daily Deal All",
+
+        Default =
+            HOLY_SHOP_STATE.AutoDailyDealAll == true,
+
+        Tooltip =
+            "Strict auto Daily Deal. Uses CheckDailyDeal, FruitStock.Request, and PreviewSellAll before UseDailyDealAll.",
+    }
+):OnChanged(function(value)
+
+    HolyDailyDealSetAutoEnabled(
+        value == true,
+        value == true
+        and "toggle on"
+        or "toggle off"
+    )
+end)
+
+ShopDailyDealBox:AddDropdown(
+    "HolyShopDailyDealTriggerFruits",
+    {
+        Text =
+            "🍅 Trigger Fruits",
+
+        Values =
+            HolyDailyDealGetTriggerFruitDropdownValues(),
+
+        Default =
+            HolyShopSelectionArray(
+                HOLY_SHOP_STATE.DailyDealTriggerFruits
+            ),
+
+        Multi =
+            true,
+
+        Searchable =
+            true,
+
+        MaxVisibleDropdownItems =
+            8,
+
+        Tooltip =
+            "These fruits only decide WHEN Daily Deal All triggers. Daily Deal All still sells every eligible fruit.",
+    }
+):OnChanged(function(value)
+
+    HolyDailyDealSetTriggerFruits(
+        value
+    )
+end)
+
+ShopDailyDealBox:AddInput(
+    "HolyShopDailyDealMinStockMultiplier",
+    {
+        Text =
+            "📈 Min Stock Multiplier",
+
+        Default =
+            tostring(
+                HOLY_SHOP_STATE.DailyDealMinStockMultiplier
+                or "2"
+            ),
+
+        Placeholder =
+            "2",
+
+        Numeric =
+            false,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "Text input only. Commits only after Enter/click-away. Valid range: 0.01 to 100.",
+    }
+):OnChanged(function(value)
+
+    HolyDailyDealSetMinStockMultiplier(
+        value
+    )
+end)
+
+ShopDailyDealBox:AddInput(
+    "HolyShopDailyDealMinFriendBoost",
+    {
+        Text =
+            "👥 Min Friend Boost %",
+
+        Default =
+            tostring(
+                HOLY_SHOP_STATE.DailyDealMinFriendBoost
+                or "0"
+            ),
+
+        Placeholder =
+            "0",
+
+        Numeric =
+            false,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "Text input only. Commits only after Enter/click-away. Accepts 10 or 10%. Valid range: 0 to 100.",
+    }
+):OnChanged(function(value)
+
+    HolyDailyDealSetMinFriendBoost(
+        value
+    )
+end)
+
+ShopDailyDealBox:AddInput(
+    "HolyShopDailyDealMinInventoryValue",
+    {
+        Text =
+            "🎒 Min Inventory Value",
+
+        Default =
+            tostring(
+                HOLY_SHOP_STATE.DailyDealMinInventoryValue
+                or "0"
+            ),
+
+        Placeholder =
+            "500B",
+
+        Numeric =
+            false,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "Optional. 0 disables this check. Uses PreviewSellAll base inventory value before Daily Deal multiplier. Supports K, M, B, T, Q.",
+    }
+):OnChanged(function(value)
+
+    HolyDailyDealSetMinInventoryValue(
+        value
+    )
+end)
+
+ShopDailyDealBox:AddInput(
+    "HolyShopDailyDealMinValue",
+    {
+        Text =
+            "💰 Min Daily Payout",
+
+        Default =
+            tostring(
+                HOLY_SHOP_STATE.DailyDealMinValue
+                or "0"
+            ),
+
+        Placeholder =
+            "1T",
+
+        Numeric =
+            false,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "Optional. 0 disables this check. Expected payout after Daily Deal multiplier. Supports K, M, B, T, Q.",
+    }
+):OnChanged(function(value)
+
+    HolyDailyDealSetMinValue(
+        value
+    )
+end)
+
+ShopDailyDealBox:AddToggle(
+    "HolyShopDailyDealAutoDisable",
+    {
+        Text =
+            "🛑 Disable After Success",
+
+        Default =
+            HOLY_SHOP_STATE.DailyDealAutoDisable ~= false,
+
+        Tooltip =
+            "Recommended ON. Turns Auto Daily Deal off after a successful sale.",
+    }
+):OnChanged(function(value)
+
+    HolyDailyDealSetAutoDisable(
+        value == true
+    )
+end)
+
+local HolyDailyDealCheckButton =
+    ShopDailyDealBox:AddButton({
+        Text =
+            "🔎 Check Now",
+
+        Tooltip =
+            "Safe check only. Reads stock, cooldown, boost, and preview. Does not sell.",
+
+        Func =
+            function()
+
+                HolyDailyDealCheckNow()
+            end,
+    })
+
+HolyDailyDealCheckButton:AddButton({
+    Text =
+        "⚡ Use Once",
+
+    Tooltip =
+        "Runs the same strict checks, then uses Daily Deal All once if every condition passes.",
+
+    Func =
+        function()
+
+            HolyDailyDealUseOnce()
+        end,
+})
+
+HOLY_SHOP_UI.DailyDealStatusLabel =
+    HolySniperAddLabel(
+        ShopDailyDealBox,
+        "Daily: Ready"
+    )
+
+HOLY_SHOP_UI.DailyDealStockLabel =
+    HolySniperAddLabel(
+        ShopDailyDealBox,
+        "Stock: --"
+    )
+
+HOLY_SHOP_UI.DailyDealPreviewLabel =
+    HolySniperAddLabel(
+        ShopDailyDealBox,
+        "Preview: --"
+    )
+
+HOLY_SHOP_UI.DailyDealLastLabel =
+    HolySniperAddLabel(
+        ShopDailyDealBox,
+        "Last: --"
+    )
+
+HolyDailyDealRefreshUI()
+
+ShopFiltersBox:AddToggle(
+    "HolyShopUseSellFilters",
+    {
+        Text =
+            "🛡️ Use Sell Filters",
+
+        Default =
+            HOLY_SHOP_STATE.UseSellFilters,
+
+        Tooltip =
+            "OFF = sell all detected fruits in Selected Only. ON = apply the filters below.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.UseSellFilters =
+        value == true
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "use filters changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddDropdown(
+    "HolyShopSellFruits",
+    {
+        Text =
+            "🍎 Only Fruits",
+
+        Tooltip =
+            "Only sell selected fruits. Empty allows all fruits.",
+
+        Values =
+            HolySellGetFruitDropdownValues(),
+
+        Default =
+            HolyShopSelectionArray(
+                HOLY_SHOP_STATE.SellFruits
+            ),
+
+        Multi =
+            true,
+
+        Searchable =
+            true,
+
+        MaxVisibleDropdownItems =
+            6,
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellFruits =
+        HolyShopSelectionArray(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellStartWatcher()
+
+        HolySellScanExistingFruitTools(
+            "only fruits changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddDropdown(
+    "HolyShopSellRarities",
+    {
+        Text =
+            "⭐ Only Rarity",
+
+        Tooltip =
+            "Only sell selected rarities. Empty allows all rarities.",
+
+        Values = {
+            "All",
+            "Common",
+            "Uncommon",
+            "Rare",
+            "Epic",
+            "Legendary",
+            "Mythic",
+            "Super",
+        },
+
+        Default =
+            HolyShopSelectionArray(
+                HOLY_SHOP_STATE.SellRarities
+            ),
+
+        Multi =
+            true,
+
+        Searchable =
+            false,
+
+        MaxVisibleDropdownItems =
+            6,
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellRarities =
+        HolyShopSelectionArray(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "only rarity changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddDropdown(
+    "HolyShopSellMutations",
+    {
+        Text =
+            "🧬 Only Mutations",
+
+        Tooltip =
+            "Only sell fruits with selected mutations. Empty allows all mutations.",
+
+        Values =
+            HolySellGetMutationDropdownValues(),
+
+        Default =
+            HolyShopSelectionArray(
+                HOLY_SHOP_STATE.SellMutations
+            ),
+
+        Multi =
+            true,
+
+        Searchable =
+            true,
+
+        MaxVisibleDropdownItems =
+            8,
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellMutations =
+        HolyShopSelectionArray(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "only mutations changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddDropdown(
+    "HolyShopProtectMutations",
+    {
+        Text =
+            "🚫 Protect Mutations",
+
+        Tooltip =
+            "Selected mutations will not be sold. Protect wins over Only.",
+
+        Values =
+            HolySellGetProtectMutationDropdownValues(),
+
+        Default =
+            HolyShopSelectionArray(
+                HOLY_SHOP_STATE.ProtectMutations
+            ),
+
+        Multi =
+            true,
+
+        Searchable =
+            true,
+
+        MaxVisibleDropdownItems =
+            8,
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.ProtectMutations =
+        HolyShopSelectionArray(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "protect mutations changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddDropdown(
+    "HolyShopSellVariants",
+    {
+        Text =
+            "🌈 Only Variants",
+
+        Tooltip =
+            "Only sell selected variants. Empty allows all variants.",
+
+        Values =
+            HolySellGetVariantDropdownValues(),
+
+        Default =
+            HolyShopSelectionArray(
+                HOLY_SHOP_STATE.SellVariants
+            ),
+
+        Multi =
+            true,
+
+        Searchable =
+            false,
+
+        MaxVisibleDropdownItems =
+            4,
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellVariants =
+        HolyShopSelectionArray(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "only variants changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddDropdown(
+    "HolyShopProtectVariants",
+    {
+        Text =
+            "🛡️ Protect Variants",
+
+        Tooltip =
+            "Selected variants will not be sold. Protect wins over Only.",
+
+        Values =
+            HolySellGetProtectVariantDropdownValues(),
+
+        Default =
+            HolyShopSelectionArray(
+                HOLY_SHOP_STATE.ProtectVariants
+            ),
+
+        Multi =
+            true,
+
+        Searchable =
+            false,
+
+        MaxVisibleDropdownItems =
+            3,
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.ProtectVariants =
+        HolyShopSelectionArray(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "protect variants changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddInput(
+    "HolyShopMinWeightKg",
+    {
+        Text =
+            "⬇️ Min Weight KG",
+
+        Default =
+            HOLY_SHOP_STATE.MinWeightKg,
+
+        Numeric =
+            true,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "0 = no minimum weight filter.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.MinWeightKg =
+        tostring(value or "0")
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "min weight changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddInput(
+    "HolyShopMaxWeightKg",
+    {
+        Text =
+            "⬆️ Max Weight KG",
+
+        Default =
+            HOLY_SHOP_STATE.MaxWeightKg,
+
+        Numeric =
+            true,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "0 = no maximum weight filter.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.MaxWeightKg =
+        tostring(value or "0")
+
+    HolySaveShopSettings()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "max weight changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddDropdown(
+    "HolyShopSellValueMode",
+    {
+        Text =
+            "💸 Value Mode",
+
+        Values = {
+            "Below",
+            "Above",
+        },
+
+        Default =
+            HolySellNormalizeValueMode(
+                HOLY_SHOP_STATE.SellValueMode
+                or "Below"
+            ),
+
+        Multi =
+            false,
+
+        Searchable =
+            false,
+
+        MaxVisibleDropdownItems =
+            2,
+
+        Tooltip =
+            "Filtered Sell only. Below sells fruits at or below Value $. Above sells fruits at or above Value $.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellValueMode =
+        HolySellNormalizeValueMode(
+            value
+        )
+
+    HolySaveShopSettings()
+    HolySellClearQueue()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        HolySellScanExistingFruitTools(
+            "value mode changed"
+        )
+
+        HolySellStartWorker()
+    end
+end)
+
+ShopFiltersBox:AddInput(
+    "HolyShopSellValueThreshold",
+    {
+        Text =
+            "💰 Value $ (0 = off)",
+
+        Default =
+            tostring(
+                HolySellReadValueThreshold(
+                    HOLY_SHOP_STATE.SellValueThreshold
+                    or "0"
+                )
+            ),
+
+        Numeric =
+            false,
+
+        Finished =
+            true,
+
+        ClearTextOnFocus =
+            false,
+
+        Tooltip =
+            "Filtered Sell only. Supports 500k, 1.5m, 2b, 1t, or 250000. 0 disables value filtering.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.SellValueThreshold =
+        tostring(
+            HolySellReadValueThreshold(
+                value
+            )
+        )
+
+    HolySaveShopSettings()
+    HolySellClearQueue()
+
+    if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+        task.delay(0.10, function()
+
+            if HOLY_SHOP_STATE.AutoSellFruits == true then
+
+                HolySellScanExistingFruitTools(
+                    "value threshold changed"
+                )
+
+                HolySellStartWorker()
+            end
+        end)
+    end
+end)
+
 HOLY_SHOP_STATE.PetSellNames =
     HolyPetSellNormalizePetSelection(
         HOLY_SHOP_STATE.PetSellNames
