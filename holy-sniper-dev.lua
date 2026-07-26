@@ -47793,6 +47793,3567 @@ function HolySniperStart(reason)
     return true
 end
 
+-- [2.44A] MULTI-BUY + CONTESTED PET OVERRIDE
+--==================================================
+
+HOLY_SNIPER_TAME_CONNECTIONS =
+    type(HOLY_SNIPER_TAME_CONNECTIONS) == "table"
+    and HOLY_SNIPER_TAME_CONNECTIONS
+    or {}
+
+for _, connection in ipairs(
+    HOLY_SNIPER_TAME_CONNECTIONS
+) do
+
+    pcall(function()
+
+        connection:Disconnect()
+    end)
+end
+
+table.clear(
+    HOLY_SNIPER_TAME_CONNECTIONS
+)
+
+HOLY_SNIPER_BASE_FIND_MATCHES =
+    HOLY_SNIPER_BASE_FIND_MATCHES
+    or HolySniperFindMatches
+
+HOLY_SNIPER_BASE_VALIDATE_TARGET =
+    HOLY_SNIPER_BASE_VALIDATE_TARGET
+    or HolySniperValidateTargetForBuy
+
+HOLY_SNIPER_BASE_RETURN_AFTER_BATCH =
+    HOLY_SNIPER_BASE_RETURN_AFTER_BATCH
+    or HolySniperMaybeReturnAfterBatchNoMatches
+
+HOLY_SNIPER_BASE_AUTO_HOP_CAN_RUN =
+    HOLY_SNIPER_BASE_AUTO_HOP_CAN_RUN
+    or HolySniperAutoHopCanRun
+
+HOLY_SNIPER_BASE_START =
+    HOLY_SNIPER_BASE_START
+    or HolySniperStart
+
+HOLY_SNIPER_BASE_STOP =
+    HOLY_SNIPER_BASE_STOP
+    or HolySniperStop
+
+function HolySniperBatchEnsureRuntime()
+
+    HOLY_SNIPER_RUNTIME =
+        type(HOLY_SNIPER_RUNTIME) == "table"
+        and HOLY_SNIPER_RUNTIME
+        or {}
+
+    HOLY_SNIPER_RUNTIME.BatchDispatching =
+        HOLY_SNIPER_RUNTIME.BatchDispatching == true
+
+    HOLY_SNIPER_RUNTIME.BatchIndex =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchIndex
+        )
+        or 0
+
+    HOLY_SNIPER_RUNTIME.BatchTotal =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchTotal
+        )
+        or 0
+
+    HOLY_SNIPER_RUNTIME.BatchSuccessCount =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchSuccessCount
+        )
+        or 0
+
+    HOLY_SNIPER_RUNTIME.BatchFailedCount =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchFailedCount
+        )
+        or 0
+
+    HOLY_SNIPER_RUNTIME.BatchContestedCount =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchContestedCount
+        )
+        or 0
+
+    HOLY_SNIPER_RUNTIME.PendingTames =
+        type(HOLY_SNIPER_RUNTIME.PendingTames) == "table"
+        and HOLY_SNIPER_RUNTIME.PendingTames
+        or {}
+
+    HOLY_SNIPER_RUNTIME.SettlingPets =
+        type(HOLY_SNIPER_RUNTIME.SettlingPets) == "table"
+        and HOLY_SNIPER_RUNTIME.SettlingPets
+        or {}
+
+    HOLY_SNIPER_RUNTIME.TameSignalsConnected =
+        HOLY_SNIPER_RUNTIME.TameSignalsConnected == true
+
+    HOLY_SNIPER_RUNTIME.TameResultTimeout =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.TameResultTimeout
+        )
+        or 1.25
+
+    HOLY_SNIPER_RUNTIME.TameRetryCount =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.TameRetryCount
+        )
+        or 1
+
+    local defense =
+        HolyDefenseEnsureRuntime()
+
+    defense.QueuedTargets =
+        type(defense.QueuedTargets) == "table"
+        and defense.QueuedTargets
+        or {}
+
+    defense.CurrentRecordKey =
+        HolyDefenseNormalizeId(
+            defense.CurrentRecordKey
+        )
+
+    defense.LastRebuyAt =
+        tonumber(
+            defense.LastRebuyAt
+        )
+        or 0
+
+    defense.RebuyCooldown =
+        math.clamp(
+            tonumber(defense.RebuyCooldown)
+            or 0.35,
+            0.20,
+            1
+        )
+
+    defense.LastWorkerStatusAt =
+        tonumber(
+            defense.LastWorkerStatusAt
+        )
+        or 0
+
+    return HOLY_SNIPER_RUNTIME,
+        defense
+end
+
+function HolySniperFindMatches(entries)
+
+    HolySniperBatchEnsureRuntime()
+
+    local candidates =
+        HOLY_SNIPER_BASE_FIND_MATCHES(
+            entries
+        )
+
+    local matches =
+        {}
+
+    local seen =
+        {}
+
+    for _, match in ipairs(
+        candidates
+    ) do
+
+        local key =
+            HolySniperEntryKey(
+                match.Entry
+            )
+
+        if key ~= ""
+        and seen[key] ~= true then
+
+            local filterKey =
+                HolySniperFilterKey(
+                    match.Filter
+                )
+
+            local bought =
+                tonumber(
+                    HOLY_SNIPER_RUNTIME.BoughtCounts[
+                        filterKey
+                    ]
+                )
+                or 0
+
+            local amount =
+                HolySniperReadAmount(
+                    match.Filter.Amount
+                )
+
+            if amount >= 999
+            or bought < amount then
+
+                seen[key] =
+                    true
+
+                matches[
+                    #matches
+                    + 1
+                ] =
+                    match
+            end
+        end
+    end
+
+    return matches
+end
+
+function HolySniperValidateTargetForBuy(entry, filter)
+
+    local valid,
+        refreshed,
+        reason =
+        HOLY_SNIPER_BASE_VALIDATE_TARGET(
+            entry,
+            filter
+        )
+
+    if valid ~= true then
+
+        return valid,
+            refreshed,
+            reason
+    end
+
+    local price =
+        tonumber(
+            refreshed.Price
+        )
+        or 0
+
+    local sheckles =
+        HolySniperReadSheckles()
+
+    if price > 0
+    and sheckles ~= nil
+    and sheckles < price then
+
+        return false,
+            refreshed,
+            "not enough sheckles"
+    end
+
+    return true,
+        refreshed,
+        "ok"
+end
+
+function HolySniperTameKeyFromRef(ref)
+
+    if typeof(ref) ~= "Instance" then
+        return ""
+    end
+
+    local key =
+        HolySniperUuidFromName(
+            ref.Name
+        )
+
+    if key ~= "" then
+        return key
+    end
+
+    return HolyCleanText(
+        HolySniperReadModelAttribute(
+            ref,
+            {
+                "PetId",
+                "PetID",
+                "UUID",
+                "Id",
+            }
+        )
+    )
+end
+
+function HolySniperDisconnectTameSignals()
+
+    for _, connection in ipairs(
+        HOLY_SNIPER_TAME_CONNECTIONS
+    ) do
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+
+    table.clear(
+        HOLY_SNIPER_TAME_CONNECTIONS
+    )
+
+    HOLY_SNIPER_RUNTIME.TameSignalsConnected =
+        false
+end
+
+function HolySniperRegisterSettlingPet(entry, reason)
+
+    HolySniperBatchEnsureRuntime()
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    local key =
+        HolySniperEntryKey(
+            entry
+        )
+
+    if key == "" then
+        return false
+    end
+
+    local record =
+        HOLY_SNIPER_RUNTIME.SettlingPets[key]
+
+    if type(record) ~= "table" then
+
+        record = {
+            Key =
+                key,
+
+            StartedAt =
+                os.clock(),
+        }
+
+        HOLY_SNIPER_RUNTIME.SettlingPets[key] =
+            record
+    end
+
+    record.Ref =
+        entry.Ref
+        or record.Ref
+
+    record.Entry =
+        entry
+
+    record.Pet =
+        HolyCleanText(
+            entry.Pet
+            or entry.PetName
+            or record.Pet
+            or "pet"
+        )
+
+    record.Reason =
+        tostring(
+            reason
+            or record.Reason
+            or "confirmed"
+        )
+
+    record.HardUntil =
+        math.max(
+            tonumber(record.HardUntil)
+            or 0,
+            os.clock() + 150
+        )
+
+    return true
+end
+
+function HolySniperRefreshSettlingPets()
+
+    HolySniperBatchEnsureRuntime()
+
+    local now =
+        os.clock()
+
+    local count =
+        0
+
+    for key, record in pairs(
+        HOLY_SNIPER_RUNTIME.SettlingPets
+    ) do
+
+        if type(record) ~= "table"
+        or (
+            tonumber(record.HardUntil)
+            or 0
+        ) <= now then
+
+            HOLY_SNIPER_RUNTIME.SettlingPets[key] =
+                nil
+
+            continue
+        end
+
+        local ref =
+            record.Ref
+
+        if typeof(ref) ~= "Instance"
+        or ref.Parent == nil then
+
+            ref =
+                HolySniperFindPetBuyProtectionRef({
+                    UUID =
+                        key,
+
+                    Key =
+                        key,
+                })
+
+            record.Ref =
+                ref
+        end
+
+        if typeof(ref) ~= "Instance"
+        or ref.Parent == nil then
+
+            if (
+                tonumber(record.MissingAt)
+                or 0
+            ) <= 0 then
+
+                record.MissingAt =
+                    now
+            end
+
+            if now - record.MissingAt >= 3 then
+
+                HOLY_SNIPER_RUNTIME.SettlingPets[key] =
+                    nil
+
+            else
+
+                count +=
+                    1
+            end
+
+            continue
+        end
+
+        record.MissingAt =
+            0
+
+        local state =
+            HolyCleanText(
+                HolySniperReadModelAttribute(
+                    ref,
+                    {
+                        "State",
+                        "PetState",
+                    }
+                )
+            )
+
+        local owner =
+            tonumber(
+                HolySniperReadModelAttribute(
+                    ref,
+                    {
+                        "OwnerUserId",
+                        "OwnerUserID",
+                        "Owner",
+                        "UserId",
+                        "UserID",
+                    }
+                )
+            )
+            or 0
+
+        if HolySniperPetBuyStateLooksPending(
+            state
+        ) == true then
+
+            record.SettledAt =
+                0
+
+            count +=
+                1
+
+            continue
+        end
+
+        if owner == tonumber(LocalPlayer.UserId) then
+
+            if (
+                tonumber(record.SettledAt)
+                or 0
+            ) <= 0 then
+
+                record.SettledAt =
+                    now
+            end
+
+            if now - record.SettledAt < 2.5 then
+
+                count +=
+                    1
+
+            else
+
+                HOLY_SNIPER_RUNTIME.SettlingPets[key] =
+                    nil
+            end
+
+        elseif owner > 0
+        and HOLY_SNIPER_STATE.DefendBoughtPets == true
+        and HOLY_SNIPER_STATE.DefendRebuyIfStolen == true
+        and type(
+            HolyDefenseGetQueuedRecordForRef(
+                ref
+            )
+        ) == "table" then
+
+            count +=
+                1
+
+        else
+
+            HOLY_SNIPER_RUNTIME.SettlingPets[key] =
+                nil
+        end
+    end
+
+    return count
+end
+
+function HolySniperHasSettlingPets()
+
+    return HolySniperRefreshSettlingPets()
+        > 0
+end
+
+function HolySniperEnsureTameSignals()
+
+    HolySniperBatchEnsureRuntime()
+
+    if HOLY_SNIPER_RUNTIME.TameSignalsConnected == true
+    and type(HOLY_SNIPER_RUNTIME.TamePacket) == "table"
+    and type(HOLY_SNIPER_RUNTIME.TameResultPacket) == "table" then
+
+        return true
+    end
+
+    HolySniperDisconnectTameSignals()
+
+    local networking =
+        HolyDefenseGetNetworking()
+
+    local pets =
+        type(networking) == "table"
+        and type(networking.Pets) == "table"
+        and networking.Pets
+        or nil
+
+    if type(pets) ~= "table" then
+        return false
+    end
+
+    local tamePacket =
+        pets.WildPetTame
+
+    local resultPacket =
+        pets.WildPetTameResult
+
+    if type(tamePacket) ~= "table"
+    or type(tamePacket.Fire) ~= "function"
+    or type(resultPacket) ~= "table"
+    or resultPacket.OnClientEvent == nil then
+
+        return false
+    end
+
+    HOLY_SNIPER_RUNTIME.TamePacket =
+        tamePacket
+
+    HOLY_SNIPER_RUNTIME.TameResultPacket =
+        resultPacket
+
+    local ok,
+        connection =
+        pcall(function()
+
+            return resultPacket.OnClientEvent:Connect(
+                function(ref, buyerUserId)
+
+                    local key =
+                        HolySniperTameKeyFromRef(
+                            ref
+                        )
+
+                    local owner =
+                        tonumber(
+                            buyerUserId
+                        )
+                        or 0
+
+                    local pending =
+                        key ~= ""
+                        and HOLY_SNIPER_RUNTIME.PendingTames[
+                            key
+                        ]
+                        or nil
+
+                    if type(pending) == "table" then
+
+                        pending.ResultRef =
+                            ref
+
+                        pending.ResultOwnerUserId =
+                            owner
+
+                        pending.ResultAt =
+                            os.clock()
+
+                        if owner == tonumber(
+                            LocalPlayer.UserId
+                        ) then
+
+                            HolySniperRegisterSettlingPet(
+                                pending.Entry,
+                                "WildPetTameResult"
+                            )
+                        end
+                    end
+
+                    HolyDefenseOnTameResult(
+                        ref,
+                        owner
+                    )
+                end
+            )
+        end)
+
+    if ok ~= true
+    or connection == nil then
+
+        return false
+    end
+
+    table.insert(
+        HOLY_SNIPER_TAME_CONNECTIONS,
+        connection
+    )
+
+    HOLY_SNIPER_RUNTIME.TameSignalsConnected =
+        true
+
+    return true
+end
+
+function HolySniperAwaitTameResult(entry, token)
+
+    local key =
+        HolySniperEntryKey(
+            entry
+        )
+
+    local deadline =
+        os.clock()
+        + HOLY_SNIPER_RUNTIME.TameResultTimeout
+
+    while key ~= ""
+    and os.clock() <= deadline do
+
+        if token ~= nil
+        and HolySniperStillActive(token) ~= true then
+
+            return false,
+                "cancelled",
+                "cancelled",
+                0
+        end
+
+        local pending =
+            HOLY_SNIPER_RUNTIME.PendingTames[
+                key
+            ]
+
+        local resultOwner =
+            type(pending) == "table"
+            and tonumber(
+                pending.ResultOwnerUserId
+            )
+            or nil
+
+        if resultOwner ~= nil then
+
+            if resultOwner == tonumber(
+                LocalPlayer.UserId
+            ) then
+
+                return true,
+                    "WildPetTameResult",
+                    "confirmed",
+                    resultOwner
+            end
+
+            return false,
+                "stolen by user "
+                .. tostring(resultOwner),
+                "stolen",
+                resultOwner
+        end
+
+        local ref =
+            entry.Ref
+
+        if typeof(ref) == "Instance"
+        and ref.Parent ~= nil then
+
+            local owner =
+                tonumber(
+                    HolySniperReadModelAttribute(
+                        ref,
+                        {
+                            "OwnerUserId",
+                            "OwnerUserID",
+                            "Owner",
+                            "UserId",
+                            "UserID",
+                        }
+                    )
+                )
+                or 0
+
+            if owner == tonumber(
+                LocalPlayer.UserId
+            ) then
+
+                HolySniperRegisterSettlingPet(
+                    entry,
+                    "owner fallback"
+                )
+
+                return true,
+                    "owner attribute fallback",
+                    "confirmed",
+                    owner
+            end
+        end
+
+        task.wait(
+            0.04
+        )
+    end
+
+    return false,
+        "no tame result",
+        "timeout",
+        0
+end
+
+function HolySniperFireTame(entry)
+
+    if HolySniperEnsureTameSignals() ~= true then
+
+        return false,
+            "tame networking unavailable"
+    end
+
+    local key =
+        HolySniperEntryKey(
+            entry
+        )
+
+    local ref =
+        entry.Ref
+
+    if key == ""
+    or typeof(ref) ~= "Instance"
+    or ref.Parent == nil then
+
+        return false,
+            "target ref unavailable"
+    end
+
+    HOLY_SNIPER_RUNTIME.PendingTames[key] = {
+        Entry =
+            entry,
+
+        RequestedAt =
+            os.clock(),
+    }
+
+    if HolySniperNormalizeBuyMode(
+        HOLY_SNIPER_STATE.BuyMode
+    ) == "Hold" then
+
+        return HolySniperTriggerPrompt(
+            entry.Prompt
+        )
+    end
+
+    local ok,
+        err =
+        pcall(function()
+
+            HOLY_SNIPER_RUNTIME.TamePacket:Fire(
+                ref
+            )
+        end)
+
+    return ok == true,
+        ok == true
+        and "WildPetTame"
+        or tostring(err)
+end
+
+function HolySniperRequestTame(entry, filter, token)
+
+    local attempts =
+        1
+        + math.max(
+            0,
+            math.floor(
+                HOLY_SNIPER_RUNTIME.TameRetryCount
+            )
+        )
+
+    local currentEntry =
+        entry
+
+    local finalReason =
+        "no tame result"
+
+    local finalCode =
+        "timeout"
+
+    local finalOwner =
+        0
+
+    for attempt = 1, attempts do
+
+        if attempt > 1 then
+
+            local valid,
+                refreshed,
+                reason =
+                HolySniperValidateTargetForBuy(
+                    currentEntry,
+                    filter
+                )
+
+            currentEntry =
+                refreshed
+                or currentEntry
+
+            if valid ~= true then
+
+                local invalidKey =
+                    HolySniperEntryKey(
+                        currentEntry
+                    )
+
+                if invalidKey ~= "" then
+
+                    HOLY_SNIPER_RUNTIME.PendingTames[
+                        invalidKey
+                    ] =
+                        nil
+                end
+
+                return false,
+                    reason,
+                    "invalid",
+                    0,
+                    currentEntry
+            end
+        end
+
+        local fired,
+            fireReason =
+            HolySniperFireTame(
+                currentEntry
+            )
+
+        if fired ~= true then
+
+            local failedKey =
+                HolySniperEntryKey(
+                    currentEntry
+                )
+
+            if failedKey ~= "" then
+
+                HOLY_SNIPER_RUNTIME.PendingTames[
+                    failedKey
+                ] =
+                    nil
+            end
+
+            return false,
+                fireReason,
+                "fire failed",
+                0,
+                currentEntry
+        end
+
+        local confirmed,
+            confirmReason,
+            resultCode,
+            buyerUserId =
+            HolySniperAwaitTameResult(
+                currentEntry,
+                token
+            )
+
+        finalReason =
+            confirmReason
+
+        finalCode =
+            resultCode
+
+        finalOwner =
+            tonumber(
+                buyerUserId
+            )
+            or 0
+
+        if confirmed == true
+        or finalCode == "stolen"
+        or finalCode == "cancelled" then
+
+            break
+        end
+
+        if attempt < attempts then
+
+            HolySniperSetStatus(
+                "No result, retrying "
+                .. HolySniperDescribeEntry(
+                    currentEntry
+                )
+            )
+
+            task.wait(
+                0.08
+            )
+        end
+    end
+
+    local key =
+        HolySniperEntryKey(
+            currentEntry
+        )
+
+    if key ~= "" then
+
+        HOLY_SNIPER_RUNTIME.PendingTames[key] =
+            nil
+    end
+
+    return finalCode == "confirmed",
+        finalReason,
+        finalCode,
+        finalOwner,
+        currentEntry
+end
+
+function HolyDefenseQueueTarget(
+    entry,
+    filter,
+    reason,
+    match,
+    counted
+)
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true then
+        return nil
+    end
+
+    HolySniperBatchEnsureRuntime()
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    local ref =
+        entry.Ref
+
+    if typeof(ref) ~= "Instance"
+    or ref.Parent == nil then
+
+        ref =
+            HolySniperFindPetBuyProtectionRef({
+                UUID =
+                    entry.UUID
+                    or entry.Key,
+
+                Key =
+                    entry.Key,
+            })
+    end
+
+    local key =
+        HolyDefenseNormalizeId(
+            HolySniperEntryKey(
+                entry
+            )
+        )
+
+    if key == ""
+    and typeof(ref) == "Instance" then
+
+        key =
+            HolyDefenseRefKey(
+                ref
+            )
+    end
+
+    if key == "" then
+        return nil
+    end
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    local record =
+        runtime.QueuedTargets[key]
+
+    if type(record) ~= "table" then
+
+        record = {
+            Key =
+                key,
+
+            QueuedAt =
+                os.clock(),
+
+            RebuyCount =
+                0,
+
+            Counted =
+                false,
+        }
+
+        runtime.QueuedTargets[key] =
+            record
+    end
+
+    record.Ref =
+        ref
+        or record.Ref
+
+    record.Entry =
+        entry
+
+    if typeof(record.Ref) == "Instance" then
+
+        record.Entry.Ref =
+            record.Ref
+    end
+
+    if type(record.Filter) ~= "table"
+    or type(match) == "table" then
+
+        record.Filter =
+            type(filter) == "table"
+            and HolySniperNormalizeFilter(
+                filter
+            )
+            or record.Filter
+            or HolyDefenseFindFilterForEntry(
+                entry
+            )
+    end
+
+    record.Match =
+        type(match) == "table"
+        and match
+        or record.Match
+
+    record.Counted =
+        record.Counted == true
+        or counted == true
+
+    record.Reason =
+        tostring(
+            reason
+            or record.Reason
+            or "queued"
+        )
+
+    record.LastSeenAt =
+        os.clock()
+
+    record.MissingAt =
+        0
+
+    record.TerminalAt =
+        0
+
+    return record
+end
+
+function HolyDefenseQueuedTargetCount()
+
+    HolySniperBatchEnsureRuntime()
+
+    local count =
+        0
+
+    for _, record in pairs(
+        HOLY_DEFENSE_RUNTIME.QueuedTargets
+    ) do
+
+        if type(record) == "table" then
+
+            count +=
+                1
+        end
+    end
+
+    return count
+end
+
+function HolyDefenseRemoveQueuedTarget(key)
+
+    HolySniperBatchEnsureRuntime()
+
+    key =
+        HolyDefenseNormalizeId(
+            key
+        )
+
+    if key == ""
+    or type(
+        HOLY_DEFENSE_RUNTIME.QueuedTargets[key]
+    ) ~= "table" then
+
+        return false
+    end
+
+    HOLY_DEFENSE_RUNTIME.QueuedTargets[key] =
+        nil
+
+    return true
+end
+
+function HolyDefenseGetQueuedRecordForRef(ref)
+
+    HolySniperBatchEnsureRuntime()
+
+    if typeof(ref) ~= "Instance" then
+        return nil
+    end
+
+    local key =
+        HolyDefenseRefKey(
+            ref
+        )
+
+    local direct =
+        key ~= ""
+        and HOLY_DEFENSE_RUNTIME.QueuedTargets[
+            key
+        ]
+        or nil
+
+    if type(direct) == "table" then
+        return direct
+    end
+
+    for _, record in pairs(
+        HOLY_DEFENSE_RUNTIME.QueuedTargets
+    ) do
+
+        if type(record) == "table"
+        and record.Ref == ref then
+
+            return record
+        end
+    end
+
+    return nil
+end
+
+function HolyDefenseOnTameResult(ref, buyerUserId)
+
+    local record =
+        HolyDefenseGetQueuedRecordForRef(
+            ref
+        )
+
+    if type(record) ~= "table" then
+        return false
+    end
+
+    local owner =
+        tonumber(
+            buyerUserId
+        )
+        or 0
+
+    record.LastResultOwnerUserId =
+        owner
+
+    record.LastResultAt =
+        os.clock()
+
+    if owner == tonumber(
+        LocalPlayer.UserId
+    ) then
+
+        record.Reason =
+            "reclaimed"
+
+        record.Entry.Ref =
+            ref
+
+        HolySniperRegisterSettlingPet(
+            record.Entry,
+            "defense reclaim"
+        )
+
+        if record.Counted ~= true
+        and type(record.Match) == "table" then
+
+            HolySniperMarkBought(
+                record.Match,
+                record.Entry
+            )
+
+            HolySniperRegisterConfirmedBuy(
+                record.Match,
+                record.Entry
+            )
+
+            record.Counted =
+                true
+        end
+
+        HolySniperSetStatus(
+            "Reclaimed: "
+            .. HolySniperDescribeEntry(
+                record.Entry
+            )
+        )
+
+    else
+
+        record.Reason =
+            "contested by user "
+            .. tostring(owner)
+    end
+
+    return true
+end
+
+function HolyDefenseRecordPriority(record)
+
+    if type(record) ~= "table"
+    or typeof(record.Ref) ~= "Instance"
+    or record.Ref.Parent == nil then
+
+        return math.huge,
+            nil
+    end
+
+    local state =
+        HolyCleanText(
+            HolyDefenseReadAnyAttr(
+                record.Ref,
+                {
+                    "State",
+                    "PetState",
+                }
+            )
+            or ""
+        )
+
+    if HolySniperPetBuyStateLooksPending(
+        state
+    ) ~= true then
+
+        return math.huge,
+            nil
+    end
+
+    local owner =
+        tonumber(
+            HolyDefenseReadAnyAttr(
+                record.Ref,
+                {
+                    "OwnerUserId",
+                    "OwnerUserID",
+                    "Owner",
+                    "UserId",
+                    "UserID",
+                }
+            )
+        )
+        or 0
+
+    local resultOwner =
+        tonumber(
+            record.LastResultOwnerUserId
+        )
+        or 0
+
+    if owner > 0
+    and owner ~= tonumber(LocalPlayer.UserId) then
+
+        return HOLY_SNIPER_STATE.DefendRebuyIfStolen == true
+            and 1
+            or math.huge,
+            nil
+    end
+
+    if owner <= 0
+    and resultOwner > 0
+    and resultOwner ~= tonumber(LocalPlayer.UserId) then
+
+        return HOLY_SNIPER_STATE.DefendRebuyIfStolen == true
+            and 1
+            or math.huge,
+            nil
+    end
+
+    if owner == tonumber(LocalPlayer.UserId) then
+
+        local targetPos =
+            HolyDefenseGetPosition(
+                record.Ref
+            )
+
+        local threat =
+            typeof(targetPos) == "Vector3"
+            and HolyDefenseFindThreat(
+                targetPos
+            )
+            or nil
+
+        return threat ~= nil
+            and threat.Distance <= 18
+            and 2
+            or 3,
+            threat
+    end
+
+    return 4,
+        nil
+end
+
+function HolyDefenseBestQueuedRecord()
+
+    HolySniperBatchEnsureRuntime()
+
+    local best =
+        nil
+
+    local bestPriority =
+        math.huge
+
+    for _, record in pairs(
+        HOLY_DEFENSE_RUNTIME.QueuedTargets
+    ) do
+
+        local priority =
+            HolyDefenseRecordPriority(
+                record
+            )
+
+        if priority < bestPriority
+        or (
+            priority == bestPriority
+            and type(best) == "table"
+            and (
+                tonumber(record.QueuedAt)
+                or math.huge
+            ) < (
+                tonumber(best.QueuedAt)
+                or math.huge
+            )
+        ) then
+
+            best =
+                record
+
+            bestPriority =
+                priority
+        end
+    end
+
+    return best,
+        bestPriority
+end
+
+function HolyDefenseImmediatePriorityActive()
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    if runtime.Active == true
+    and typeof(runtime.Target) == "Instance"
+    and runtime.Target.Parent ~= nil then
+
+        local owner =
+            tonumber(
+                HolyDefenseReadAnyAttr(
+                    runtime.Target,
+                    {
+                        "OwnerUserId",
+                        "OwnerUserID",
+                        "Owner",
+                        "UserId",
+                        "UserID",
+                    }
+                )
+            )
+            or 0
+
+        if owner > 0
+        and owner ~= tonumber(LocalPlayer.UserId) then
+
+            return true
+        end
+
+        local targetPos =
+            HolyDefenseGetPosition(
+                runtime.Target
+            )
+
+        local threat =
+            typeof(targetPos) == "Vector3"
+            and HolyDefenseFindThreat(
+                targetPos
+            )
+            or nil
+
+        if threat ~= nil
+        and threat.Distance <= 18 then
+
+            return true
+        end
+    end
+
+    local best,
+        priority =
+        HolyDefenseBestQueuedRecord()
+
+    if type(best) == "table"
+    and priority <= 2 then
+
+        if runtime.Active ~= true then
+
+            HolyDefenseMonitorScan()
+        end
+
+        return true
+    end
+
+    return false
+end
+
+function HolyDefenseMonitorScan()
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true then
+        return false
+    end
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    local root =
+        HolySniperGetWildPetRefRoot()
+
+    if typeof(root) ~= "Instance" then
+        return false
+    end
+
+    local now =
+        os.clock()
+
+    for key, expiresAt in pairs(
+        runtime.CompletedTargets
+    ) do
+
+        if tonumber(expiresAt) == nil
+        or tonumber(expiresAt) <= now then
+
+            runtime.CompletedTargets[key] =
+                nil
+        end
+    end
+
+    for _, ref in ipairs(
+        root:GetChildren()
+    ) do
+
+        local key =
+            HolyDefenseRefKey(
+                ref
+            )
+
+        local completed =
+            key ~= ""
+            and (
+                tonumber(
+                    runtime.CompletedTargets[key]
+                )
+                or 0
+            ) > now
+
+        if completed ~= true
+        and HolyDefenseRefReady(
+            ref
+        ) == true then
+
+            local entry =
+                HolyDefenseBuildEntryFromRef(
+                    ref
+                )
+
+            if type(entry) == "table" then
+
+                HolyDefenseQueueTarget(
+                    entry,
+                    HolyDefenseFindFilterForEntry(
+                        entry
+                    ),
+                    "defense monitor",
+                    nil,
+                    false
+                )
+            end
+        end
+    end
+
+    for key, record in pairs(
+        runtime.QueuedTargets
+    ) do
+
+        if type(record) ~= "table" then
+
+            runtime.QueuedTargets[key] =
+                nil
+
+            continue
+        end
+
+        local ref =
+            record.Ref
+
+        if typeof(ref) ~= "Instance"
+        or ref.Parent == nil then
+
+            record.MissingAt =
+                (
+                    tonumber(record.MissingAt)
+                    or 0
+                ) > 0
+                and record.MissingAt
+                or now
+
+            if now - record.MissingAt >= 3
+            and runtime.CurrentRecordKey ~= key then
+
+                runtime.QueuedTargets[key] =
+                    nil
+            end
+
+            continue
+        end
+
+        record.MissingAt =
+            0
+
+        local state =
+            HolyCleanText(
+                HolyDefenseReadAnyAttr(
+                    ref,
+                    {
+                        "State",
+                        "PetState",
+                    }
+                )
+                or ""
+            )
+
+        if HolySniperPetBuyStateLooksPending(
+            state
+        ) ~= true then
+
+            record.TerminalAt =
+                (
+                    tonumber(record.TerminalAt)
+                    or 0
+                ) > 0
+                and record.TerminalAt
+                or now
+
+            if now - record.TerminalAt >= 3
+            and runtime.CurrentRecordKey ~= key then
+
+                runtime.QueuedTargets[key] =
+                    nil
+            end
+
+        else
+
+            record.TerminalAt =
+                0
+        end
+    end
+
+    local best,
+        bestPriority =
+        HolyDefenseBestQueuedRecord()
+
+    if runtime.Active == true then
+
+        local current =
+            runtime.QueuedTargets[
+                runtime.CurrentRecordKey
+            ]
+
+        local currentPriority =
+            HolyDefenseRecordPriority(
+                current
+            )
+
+        if HOLY_SNIPER_RUNTIME.BatchDispatching == true
+        and currentPriority > 2 then
+
+            HolyDefenseStop(
+                "batch purchase"
+            )
+
+            return false
+        end
+
+        if type(best) == "table"
+        and best.Key ~= runtime.CurrentRecordKey
+        and bestPriority < currentPriority then
+
+            HolyDefenseStop(
+                "priority switch"
+            )
+
+            task.defer(function()
+
+                HolyDefenseMonitorScan()
+            end)
+        end
+
+        return true
+    end
+
+    if type(best) ~= "table"
+    or bestPriority == math.huge
+    or (
+        HOLY_SNIPER_RUNTIME.BatchDispatching == true
+        and bestPriority > 2
+    ) then
+
+        return false
+    end
+
+    return HolyDefenseStartTarget(
+        best.Ref,
+        best.Entry,
+        best.Filter,
+        best.Reason
+        or "defense queue"
+    )
+end
+
+function HolyDefenseCanRebuy(target)
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or HOLY_SNIPER_STATE.DefendRebuyIfStolen ~= true then
+
+        return false
+    end
+
+    local filter =
+        type(runtime.Filter) == "table"
+        and HolySniperNormalizeFilter(
+            runtime.Filter
+        )
+        or {}
+
+    local maxPrice =
+        tonumber(filter.MaxPrice)
+        or 0
+
+    local price =
+        tonumber(
+            HolyDefenseReadAnyAttr(
+                target,
+                {
+                    "Price",
+                    "Cost",
+                    "TameCost",
+                }
+            )
+        )
+        or 0
+
+    local sheckles =
+        HolySniperReadSheckles()
+
+    local state =
+        HolyCleanText(
+            HolyDefenseReadAnyAttr(
+                target,
+                {
+                    "State",
+                    "PetState",
+                }
+            )
+            or ""
+        )
+
+    return price > 0
+        and (
+            maxPrice <= 0
+            or price <= maxPrice
+        )
+        and (
+            sheckles == nil
+            or sheckles >= price
+        )
+        and HolySniperPetBuyStateLooksPending(
+            state
+        ) == true
+end
+
+function HolyDefenseTryRebuy(target)
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    if typeof(target) ~= "Instance"
+    or HolyDefenseCanRebuy(
+        target
+    ) ~= true then
+
+        return false
+    end
+
+    local now =
+        os.clock()
+
+    if now - runtime.LastRebuyAt
+        < runtime.RebuyCooldown then
+
+        return false
+    end
+
+    local root =
+        HolyDefenseGetRoot()
+
+    local targetPos =
+        HolyDefenseGetPosition(
+            target
+        )
+
+    if typeof(root) ~= "Instance"
+    or root:IsA("BasePart") ~= true
+    or typeof(targetPos) ~= "Vector3"
+    or (
+        root.Position
+        - targetPos
+    ).Magnitude > 10 then
+
+        return false
+    end
+
+    HolyDefenseResolvePackets()
+
+    HolySniperEnsureTameSignals()
+
+    if type(runtime.WildTamePacket) ~= "table" then
+        return false
+    end
+
+    local ok =
+        HolyDefenseFirePacket(
+            runtime.WildTamePacket,
+            target
+        )
+
+    if ok == true then
+
+        runtime.RebuyCount =
+            (
+                tonumber(runtime.RebuyCount)
+                or 0
+            )
+            + 1
+
+        runtime.LastRebuyAt =
+            now
+
+        local record =
+            HolyDefenseGetQueuedRecordForRef(
+                target
+            )
+
+        if type(record) == "table" then
+
+            record.RebuyCount =
+                runtime.RebuyCount
+
+            record.LastRebuyAt =
+                now
+        end
+    end
+
+    return ok
+end
+
+function HolyDefenseHandleOwnerChanged(target)
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    if runtime.Active ~= true
+    or target ~= runtime.Target then
+
+        return
+    end
+
+    local record =
+        HolyDefenseGetQueuedRecordForRef(
+            target
+        )
+
+    if type(record) == "table" then
+
+        local owner =
+            tonumber(
+                HolyDefenseReadAnyAttr(
+                    target,
+                    {
+                        "OwnerUserId",
+                        "OwnerUserID",
+                        "Owner",
+                        "UserId",
+                        "UserID",
+                    }
+                )
+            )
+            or 0
+
+        record.Reason =
+            owner == tonumber(LocalPlayer.UserId)
+            and "owned by you"
+            or (
+                "contested by user "
+                .. tostring(owner)
+            )
+    end
+
+    task.defer(function()
+
+        HolyDefenseMonitorScan()
+    end)
+end
+
+function HolyDefenseStop(reason)
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    local reasonText =
+        tostring(
+            reason
+            or "stopped"
+        )
+
+    local key =
+        HolyDefenseNormalizeId(
+            runtime.CurrentRecordKey
+        )
+
+    if key == ""
+    and typeof(runtime.Target) == "Instance" then
+
+        key =
+            HolyDefenseRefKey(
+                runtime.Target
+            )
+    end
+
+    local confirmed =
+        runtime.InventoryConfirmed == true
+
+    local remove =
+        confirmed == true
+        or reasonText == "inventory confirmed"
+        or reasonText == "target completed"
+        or reasonText == "target missing"
+        or reasonText == "price limit"
+        or reasonText == "not enough sheckles"
+        or reasonText == "rebuy unavailable"
+
+    runtime.GearLockActive =
+        false
+
+    HolyDefenseDisconnectGearLock()
+
+    runtime.Token =
+        nil
+
+    runtime.Active =
+        false
+
+    HolyDefenseDisconnect()
+
+    HolyDefenseRestoreControls()
+
+    local humanoid =
+        HolyDefenseGetHumanoid()
+
+    if typeof(humanoid) == "Instance" then
+
+        pcall(function()
+
+            humanoid:Move(
+                Vector3.zero,
+                false
+            )
+
+            if runtime.OriginalWalkSpeed ~= nil then
+
+                humanoid.WalkSpeed =
+                    runtime.OriginalWalkSpeed
+            end
+
+            humanoid.AutoRotate =
+                true
+        end)
+    end
+
+    if confirmed == true
+    and key ~= "" then
+
+        runtime.CompletedTargets[key] =
+            os.clock() + 30
+    end
+
+    if remove == true
+    and key ~= "" then
+
+        HolyDefenseRemoveQueuedTarget(
+            key
+        )
+    end
+
+    if reasonText == "toggle off"
+    or reasonText == "disabled" then
+
+        table.clear(
+            runtime.QueuedTargets
+        )
+    end
+
+    runtime.Target =
+        nil
+
+    runtime.Entry =
+        nil
+
+    runtime.Filter =
+        nil
+
+    runtime.CurrentRecordKey =
+        ""
+
+    runtime.TargetPetId =
+        ""
+
+    runtime.TargetPetName =
+        ""
+
+    runtime.TargetMissingAt =
+        0
+
+    runtime.CompletionStartedAt =
+        0
+
+    runtime.InventoryConfirmed =
+        false
+
+    runtime.InventoryConfirmationItem =
+        nil
+
+    runtime.InventoryBaselineInstances =
+        {}
+
+    runtime.InventoryBaselineIds =
+        {}
+
+    runtime.SmoothedFollowGoal =
+        nil
+
+    runtime.StablePetDirection =
+        nil
+
+    runtime.LastPetSamplePos =
+        nil
+
+    runtime.LastPetSampleAt =
+        0
+
+    runtime.OriginalWalkSpeed =
+        nil
+
+    runtime.LastStopReason =
+        reasonText
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets == true
+    and runtime.MonitorRunning == true
+    and reasonText ~= "batch purchase" then
+
+        task.defer(function()
+
+            HolyDefenseMonitorScan()
+        end)
+    end
+
+    return true
+end
+
+function HolyDefenseRunWorker(token)
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    while runtime.Token == token
+    and runtime.Active == true do
+
+        local wateringState =
+            type(HOLY_WATERING_REJOIN_STATE) == "table"
+            and HOLY_WATERING_REJOIN_STATE
+            or {}
+
+        local wateringRuntime =
+            type(HOLY_WATERING_REJOIN_RUNTIME) == "table"
+            and HOLY_WATERING_REJOIN_RUNTIME
+            or {}
+
+        local wateringOwnsMovement =
+            wateringState.Enabled == true
+            and (
+                wateringRuntime.Running == true
+                or wateringRuntime.Busy == true
+                or wateringRuntime.RespawnPending == true
+                or wateringRuntime.RecoveryScheduled == true
+            )
+
+        if wateringOwnsMovement == true then
+
+            task.wait(
+                0.08
+            )
+
+            continue
+        end
+
+        if HOLY_SNIPER_STATE.DefendBoughtPets ~= true then
+
+            HolyDefenseStop(
+                "toggle off"
+            )
+
+            return
+        end
+
+        if HolyDefenseInventoryConfirmed(
+            false
+        ) == true then
+
+            HolyDefenseStop(
+                "inventory confirmed"
+            )
+
+            return
+        end
+
+        local target =
+            runtime.Target
+
+        if typeof(target) ~= "Instance"
+        or target.Parent == nil then
+
+            runtime.TargetMissingAt =
+                (
+                    tonumber(runtime.TargetMissingAt)
+                    or 0
+                ) > 0
+                and runtime.TargetMissingAt
+                or os.clock()
+
+            HolyDefenseStopMovementOnly()
+
+            if os.clock()
+                - runtime.TargetMissingAt >= 3 then
+
+                HolyDefenseStop(
+                    "target missing"
+                )
+
+                return
+            end
+
+            task.wait(
+                0.08
+            )
+
+            continue
+        end
+
+        runtime.TargetMissingAt =
+            0
+
+        local owner =
+            tonumber(
+                HolyDefenseReadAnyAttr(
+                    target,
+                    {
+                        "OwnerUserId",
+                        "OwnerUserID",
+                        "Owner",
+                        "UserId",
+                        "UserID",
+                    }
+                )
+            )
+            or 0
+
+        local state =
+            HolyCleanText(
+                HolyDefenseReadAnyAttr(
+                    target,
+                    {
+                        "State",
+                        "PetState",
+                    }
+                )
+                or ""
+            )
+
+        if owner ~= tonumber(LocalPlayer.UserId) then
+
+            if HolySniperPetBuyStateLooksPending(
+                state
+            ) ~= true then
+
+                HolyDefenseStop(
+                    "target completed"
+                )
+
+                return
+            end
+
+            if HOLY_SNIPER_STATE.DefendRebuyIfStolen ~= true then
+
+                HolyDefenseStop(
+                    "rebuy unavailable"
+                )
+
+                return
+            end
+
+            local filter =
+                HolySniperNormalizeFilter(
+                    runtime.Filter
+                    or {}
+                )
+
+            local maxPrice =
+                tonumber(filter.MaxPrice)
+                or 0
+
+            local price =
+                tonumber(
+                    HolyDefenseReadAnyAttr(
+                        target,
+                        {
+                            "Price",
+                            "Cost",
+                            "TameCost",
+                        }
+                    )
+                )
+                or 0
+
+            if maxPrice > 0
+            and price > maxPrice then
+
+                HolyDefenseStop(
+                    "price limit"
+                )
+
+                return
+            end
+
+            local sheckles =
+                HolySniperReadSheckles()
+
+            if price > 0
+            and sheckles ~= nil
+            and sheckles < price then
+
+                HolyDefenseStop(
+                    "not enough sheckles"
+                )
+
+                return
+            end
+
+            local targetPos =
+                HolyDefenseGetPosition(
+                    target
+                )
+
+            if typeof(targetPos) == "Vector3" then
+
+                local threat =
+                    HolyDefenseFindThreat(
+                        targetPos
+                    )
+
+                local goal =
+                    HolyDefenseChooseGoal(
+                        targetPos,
+                        threat
+                    )
+
+                if typeof(goal) == "Vector3" then
+
+                    HolyDefenseMoveTo(
+                        goal,
+                        threat
+                    )
+                end
+
+                if threat ~= nil then
+
+                    HolyDefenseUseGear(
+                        threat
+                    )
+                end
+
+                HolyDefenseTryRebuy(
+                    target
+                )
+            end
+
+            if os.clock()
+                - runtime.LastWorkerStatusAt >= 0.55 then
+
+                runtime.LastWorkerStatusAt =
+                    os.clock()
+
+                HolySniperSetStatus(
+                    "Contested · Chasing "
+                    .. HolyCleanText(
+                        runtime.TargetPetName
+                        or "pet"
+                    )
+                    .. " · "
+                    .. HolySniperFormatMoney(
+                        price
+                    )
+                )
+            end
+
+            task.wait(
+                0.04
+            )
+
+            continue
+        end
+
+        local walking =
+            HolySniperPetBuyStateLooksPending(
+                state
+            ) == true
+
+        if walking ~= true then
+
+            runtime.CompletionStartedAt =
+                (
+                    tonumber(runtime.CompletionStartedAt)
+                    or 0
+                ) > 0
+                and runtime.CompletionStartedAt
+                or os.clock()
+
+            HolyDefenseStopMovementOnly()
+
+            if os.clock()
+                - runtime.CompletionStartedAt >= 3 then
+
+                HolyDefenseStop(
+                    "target completed"
+                )
+
+                return
+            end
+
+            task.wait(
+                0.08
+            )
+
+            continue
+        end
+
+        runtime.CompletionStartedAt =
+            0
+
+        local targetPos =
+            HolyDefenseGetPosition(
+                target
+            )
+
+        if typeof(targetPos) == "Vector3" then
+
+            local threat =
+                HolyDefenseFindThreat(
+                    targetPos
+                )
+
+            local goal =
+                HolyDefenseChooseGoal(
+                    targetPos,
+                    threat
+                )
+
+            if typeof(goal) == "Vector3" then
+
+                HolyDefenseMoveTo(
+                    goal,
+                    threat
+                )
+            end
+
+            if threat ~= nil then
+
+                HolyDefenseUseGear(
+                    threat
+                )
+            end
+        end
+
+        task.wait(
+            0.04
+        )
+    end
+end
+
+function HolyDefenseStartTarget(target, entry, filter, reason)
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or typeof(target) ~= "Instance"
+    or target.Parent == nil then
+
+        return false
+    end
+
+    HolySniperBatchEnsureRuntime()
+
+    local state =
+        HolyCleanText(
+            HolyDefenseReadAnyAttr(
+                target,
+                {
+                    "State",
+                    "PetState",
+                }
+            )
+            or ""
+        )
+
+    local owner =
+        tonumber(
+            HolyDefenseReadAnyAttr(
+                target,
+                {
+                    "OwnerUserId",
+                    "OwnerUserID",
+                    "Owner",
+                    "UserId",
+                    "UserID",
+                }
+            )
+        )
+        or 0
+
+    local localOwner =
+        owner == tonumber(
+            LocalPlayer.UserId
+        )
+
+    local queuedRecord =
+        HolyDefenseGetQueuedRecordForRef(
+            target
+        )
+
+    local resultOwner =
+        type(queuedRecord) == "table"
+        and tonumber(
+            queuedRecord.LastResultOwnerUserId
+        )
+        or 0
+
+    local contested =
+        (
+            owner > 0
+            or resultOwner > 0
+        )
+        and localOwner ~= true
+        and HOLY_SNIPER_STATE.DefendRebuyIfStolen == true
+
+    if HolySniperPetBuyStateLooksPending(
+        state
+    ) ~= true
+    or (
+        localOwner ~= true
+        and contested ~= true
+    ) then
+
+        return false
+    end
+
+    local runtime =
+        HOLY_DEFENSE_RUNTIME
+
+    if runtime.Active == true then
+
+        return runtime.Target == target
+    end
+
+    local record =
+        HolyDefenseQueueTarget(
+            entry,
+            filter,
+            reason,
+            nil,
+            false
+        )
+
+    if type(record) ~= "table" then
+
+        return false
+    end
+
+    if type(HolyFarmMiddleCancelForSniper) == "function" then
+
+        HolyFarmMiddleCancelForSniper(
+            "pet defense"
+        )
+    end
+
+    runtime.Active =
+        true
+
+    runtime.Token =
+        {}
+
+    runtime.Target =
+        target
+
+    runtime.Entry =
+        type(record.Entry) == "table"
+        and record.Entry
+        or (
+            type(entry) == "table"
+            and entry
+            or HolyDefenseBuildEntryFromRef(
+                target
+            )
+        )
+
+    runtime.Filter =
+        type(record.Filter) == "table"
+        and record.Filter
+        or (
+            type(filter) == "table"
+            and HolySniperNormalizeFilter(
+                filter
+            )
+            or HolyDefenseFindFilterForEntry(
+                runtime.Entry
+                or {}
+            )
+        )
+
+    runtime.CurrentRecordKey =
+        record.Key
+
+    runtime.TargetPetId =
+        HolyCleanText(
+            HolyDefenseReadPetId(
+                target
+            )
+        )
+
+    if runtime.TargetPetId == "" then
+
+        runtime.TargetPetId =
+            HolyCleanText(
+                runtime.Entry
+                and (
+                    runtime.Entry.UUID
+                    or runtime.Entry.Key
+                )
+                or ""
+            )
+    end
+
+    runtime.TargetPetName =
+        HolyCleanText(
+            runtime.Entry
+            and runtime.Entry.Pet
+            or HolyDefenseReadPetName(
+                target
+            )
+        )
+
+    runtime.TargetMissingAt =
+        0
+
+    runtime.CompletionStartedAt =
+        0
+
+    runtime.InventoryConfirmed =
+        false
+
+    runtime.InventoryConfirmationItem =
+        nil
+
+    runtime.LastInventoryCheckAt =
+        0
+
+    runtime.RebuyCount =
+        tonumber(
+            record.RebuyCount
+        )
+        or 0
+
+    runtime.LastRebuyAt =
+        tonumber(
+            record.LastRebuyAt
+        )
+        or 0
+
+    runtime.LastWorkerStatusAt =
+        0
+
+    runtime.SmoothedFollowGoal =
+        nil
+
+    runtime.StablePetDirection =
+        nil
+
+    runtime.LastPetSamplePos =
+        nil
+
+    runtime.LastPetSampleAt =
+        0
+
+    record.Ref =
+        target
+
+    record.Entry =
+        runtime.Entry
+
+    record.Filter =
+        runtime.Filter
+
+    record.LastSeenAt =
+        os.clock()
+
+    local humanoid =
+        HolyDefenseGetHumanoid()
+
+    runtime.OriginalWalkSpeed =
+        typeof(humanoid) == "Instance"
+        and humanoid.WalkSpeed
+        or nil
+
+    HolyDefenseResolvePackets()
+
+    HolyDefenseWatchTarget(
+        target
+    )
+
+    HolyDefenseStartGearLock()
+
+    local workerToken =
+        runtime.Token
+
+    task.spawn(function()
+
+        HolyDefenseRunWorker(
+            workerToken
+        )
+    end)
+
+    return true
+end
+
+function HolySniperBatchForgetDefenseRecord(entry)
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    local key =
+        HolyDefenseNormalizeId(
+            HolySniperEntryKey(
+                entry
+            )
+        )
+
+    if key == "" then
+        return false
+    end
+
+    return HolyDefenseRemoveQueuedTarget(
+        key
+    )
+end
+
+function HolySniperBatchConfirmMatch(match, entry, reason)
+
+    HolySniperBatchEnsureRuntime()
+
+    local record =
+        HolyDefenseGetQueuedRecordForRef(
+            entry.Ref
+        )
+
+    if type(record) == "table" then
+
+        record.Entry =
+            entry
+
+        record.Match =
+            type(match) == "table"
+            and match
+            or record.Match
+
+        record.Reason =
+            tostring(
+                reason
+                or record.Reason
+                or "confirmed"
+            )
+
+        if record.Counted ~= true then
+
+            HolySniperMarkBought(
+                match,
+                entry
+            )
+
+            HolySniperRegisterConfirmedBuy(
+                match,
+                entry
+            )
+
+            record.Counted =
+                true
+        end
+
+    else
+
+        HolySniperMarkBought(
+            match,
+            entry
+        )
+
+        HolySniperRegisterConfirmedBuy(
+            match,
+            entry
+        )
+    end
+
+    HolySniperRegisterSettlingPet(
+        entry,
+        reason
+        or "confirmed"
+    )
+
+    if HOLY_SNIPER_STATE.ReturnEnabled == true
+    and HolySniperNormalizeReturnTiming(
+        HOLY_SNIPER_STATE.ReturnTiming
+    ) == "After Buy" then
+
+        HOLY_SNIPER_RUNTIME.BatchPendingReturnAfterBuy =
+            true
+    end
+
+    return true
+end
+
+function HolySniperExecuteBatchMatch(match, token, index, total)
+
+    if type(match) ~= "table"
+    or type(match.Entry) ~= "table"
+    or type(match.Filter) ~= "table" then
+
+        return false,
+            "bad match",
+            "invalid"
+    end
+
+    if HolySniperStillActive(
+        token
+    ) ~= true then
+
+        return false,
+            "cancelled",
+            "cancelled"
+    end
+
+    if HolyDefenseImmediatePriorityActive() == true then
+
+        return false,
+            "defense priority",
+            "priority"
+    end
+
+    if type(HolyFarmMiddleCancelForSniper) == "function" then
+
+        HolyFarmMiddleCancelForSniper(
+            "sniper batch buy"
+        )
+    end
+
+    if HOLY_SNIPER_RUNTIME.Buying == true
+    or HOLY_SNIPER_RUNTIME.Returning == true then
+
+        return false,
+            "busy",
+            "busy"
+    end
+
+    HOLY_SNIPER_RUNTIME.Buying =
+        true
+
+    local entry =
+        match.Entry
+
+    local filter =
+        match.Filter
+
+    local success =
+        false
+
+    local finalReason =
+        "unknown"
+
+    local finalCode =
+        "failed"
+
+    local shouldMarkFailed =
+        true
+
+    HolySniperClearHeldToolForMovement(
+        "batch buy flow"
+    )
+
+    HolySniperArmTargetLock(
+        entry,
+        "batch buy flow"
+    )
+
+    HOLY_SNIPER_RUNTIME.CurrentTarget =
+        entry
+
+    HOLY_SNIPER_RUNTIME.CurrentTargetKey =
+        HolySniperEntryKey(
+            entry
+        )
+
+    local root =
+        HolySniperGetCharacterRoot()
+
+    if typeof(root) == "Instance"
+    and root:IsA("BasePart")
+    and typeof(
+        HOLY_SNIPER_RUNTIME.ReturnActivationCFrame
+    ) ~= "CFrame" then
+
+        HOLY_SNIPER_RUNTIME.ReturnActivationCFrame =
+            root.CFrame
+    end
+
+    local ok,
+        err =
+        pcall(function()
+
+            local valid,
+                refreshed,
+                reason =
+                HolySniperValidateTargetForBuy(
+                    entry,
+                    filter
+                )
+
+            entry =
+                refreshed
+                or entry
+
+            if valid ~= true then
+
+                finalReason =
+                    reason
+                    or "target invalid"
+
+                finalCode =
+                    "invalid"
+
+                return
+            end
+
+            HolySniperSetStatus(
+                "Buying "
+                .. tostring(index)
+                .. "/"
+                .. tostring(total)
+                .. ": "
+                .. HolySniperDescribeEntry(
+                    entry
+                )
+            )
+
+            local moveOk,
+                movedEntry,
+                moveReason =
+                false,
+                nil,
+                ""
+
+            if HolySniperNormalizeMovementMode(
+                HOLY_SNIPER_STATE.MovementMode
+            ) == "Teleport" then
+
+                moveOk,
+                    movedEntry,
+                    moveReason =
+                    HolySniperMoveTeleportToEntry(
+                        entry,
+                        filter,
+                        token
+                    )
+
+            else
+
+                moveOk,
+                    movedEntry,
+                    moveReason =
+                    HolySniperMoveWalkToEntry(
+                        entry,
+                        filter,
+                        token
+                    )
+            end
+
+            entry =
+                movedEntry
+                or entry
+
+            if moveOk ~= true then
+
+                finalReason =
+                    moveReason
+                    or "move failed"
+
+                finalCode =
+                    "move failed"
+
+                return
+            end
+
+            if HolyDefenseImmediatePriorityActive() == true then
+
+                finalReason =
+                    "defense priority"
+
+                finalCode =
+                    "priority"
+
+                shouldMarkFailed =
+                    false
+
+                return
+            end
+
+            valid,
+                refreshed,
+                reason =
+                HolySniperValidateTargetForBuy(
+                    entry,
+                    filter
+                )
+
+            entry =
+                refreshed
+                or entry
+
+            if valid ~= true then
+
+                finalReason =
+                    reason
+                    or "target invalid after move"
+
+                finalCode =
+                    "invalid"
+
+                return
+            end
+
+            local distance =
+                HolySniperDistanceToEntry(
+                    entry
+                )
+
+            local safeRange =
+                HolySniperGetSafeRange(
+                    entry.Prompt
+                )
+
+            if distance > safeRange then
+
+                finalReason =
+                    "not in range"
+
+                finalCode =
+                    "range"
+
+                return
+            end
+
+            local defenseRecord =
+                HolyDefenseQueueTarget(
+                    entry,
+                    filter,
+                    "buy request",
+                    match,
+                    false
+                )
+
+            local confirmed,
+                tameReason,
+                tameCode,
+                buyerUserId,
+                refreshedEntry =
+                HolySniperRequestTame(
+                    entry,
+                    filter,
+                    token
+                )
+
+            entry =
+                refreshedEntry
+                or entry
+
+            finalReason =
+                tameReason
+                or "tame failed"
+
+            finalCode =
+                tameCode
+                or "failed"
+
+            if confirmed == true then
+
+                HolySniperBatchConfirmMatch(
+                    match,
+                    entry,
+                    finalReason
+                )
+
+                success =
+                    true
+
+                shouldMarkFailed =
+                    false
+
+                HolySniperSetStatus(
+                    "Bought "
+                    .. tostring(index)
+                    .. "/"
+                    .. tostring(total)
+                    .. ": "
+                    .. HolySniperDescribeEntry(
+                        entry
+                    )
+                )
+
+                return
+            end
+
+            if finalCode == "stolen" then
+
+                shouldMarkFailed =
+                    false
+
+                if type(defenseRecord) == "table" then
+
+                    defenseRecord.LastResultOwnerUserId =
+                        tonumber(
+                            buyerUserId
+                        )
+                        or 0
+
+                    defenseRecord.Reason =
+                        "contested by user "
+                        .. tostring(
+                            defenseRecord.LastResultOwnerUserId
+                        )
+                end
+
+                HolyDefenseMonitorScan()
+
+                return
+            end
+
+            HolySniperBatchForgetDefenseRecord(
+                entry
+            )
+        end)
+
+    if ok ~= true then
+
+        finalReason =
+            tostring(err)
+
+        finalCode =
+            "error"
+    end
+
+    if success ~= true
+    and finalCode ~= "stolen"
+    and finalCode ~= "priority" then
+
+        HolySniperBatchForgetDefenseRecord(
+            entry
+        )
+    end
+
+    if success == true then
+
+        HolySniperClearTargetLock(
+            "batch buy confirmed"
+        )
+
+    else
+
+        if shouldMarkFailed == true then
+
+            HolySniperMarkFailed(
+                entry
+            )
+        end
+
+        HolySniperClearTargetLock(
+            "batch buy ended: "
+            .. tostring(finalReason)
+        )
+
+        if finalCode ~= "priority"
+        and finalCode ~= "stolen"
+        and finalCode ~= "cancelled" then
+
+            HolySniperSetStatus(
+                "Buy failed: "
+                .. tostring(finalReason)
+            )
+        end
+    end
+
+    HOLY_SNIPER_RUNTIME.Buying =
+        false
+
+    HOLY_SNIPER_RUNTIME.CurrentTarget =
+        nil
+
+    HOLY_SNIPER_RUNTIME.CurrentTargetKey =
+        ""
+
+    return success,
+        finalReason,
+        finalCode
+end
+
+function HolySniperMaybeReturnAfterBatchNoMatches(token)
+
+    HolySniperBatchEnsureRuntime()
+
+    if HOLY_SNIPER_RUNTIME.BatchDispatching == true then
+        return false
+    end
+
+    HolyDefenseMonitorScan()
+
+    local settling =
+        HolySniperRefreshSettlingPets()
+
+    local queued =
+        HolyDefenseQueuedTargetCount()
+
+    local defenseActive =
+        HOLY_DEFENSE_RUNTIME.Active == true
+
+    if settling > 0
+    or queued > 0
+    or defenseActive == true then
+
+        HOLY_SNIPER_RUNTIME.BatchEmptySince =
+            0
+
+        return false
+    end
+
+    return HOLY_SNIPER_BASE_RETURN_AFTER_BATCH(
+        token
+    )
+end
+
+function HolySniperAutoHopCanRun()
+
+    HolySniperBatchEnsureRuntime()
+
+    if HOLY_SNIPER_BASE_AUTO_HOP_CAN_RUN() ~= true then
+        return false
+    end
+
+    HolyDefenseMonitorScan()
+
+    if HOLY_SNIPER_RUNTIME.BatchDispatching == true
+    or HOLY_SNIPER_RUNTIME.BatchPendingReturnAfterBuy == true
+    or HolySniperHasSettlingPets() == true
+    or HolyDefenseQueuedTargetCount() > 0
+    or HOLY_DEFENSE_RUNTIME.Active == true then
+
+        HolySniperAutoHopReset(
+            "batch or defense pending"
+        )
+
+        return false
+    end
+
+    return true
+end
+
+function HolySniperTick(token)
+
+    HolySniperBatchEnsureRuntime()
+
+    if HOLY_SNIPER_RUNTIME.Buying == true
+    or HOLY_SNIPER_RUNTIME.Returning == true
+    or HOLY_SNIPER_RUNTIME.BatchDispatching == true then
+
+        return false
+    end
+
+    if HolyDefenseImmediatePriorityActive() == true then
+
+        HolySniperAutoHopReset(
+            "defense priority"
+        )
+
+        HolySniperSetStatus(
+            "Paused: defending contested pet"
+        )
+
+        return false
+    end
+
+    if HolySniperPetBuyProtectionBlocks(
+        "Sniper",
+        false
+    ) == true then
+
+        return false
+    end
+
+    local matches =
+        HolySniperRunScan()
+
+    if #matches <= 0 then
+
+        HOLY_SNIPER_RUNTIME.BatchDispatching =
+            false
+
+        HolyDefenseMonitorScan()
+
+        local settling =
+            HolySniperRefreshSettlingPets()
+
+        local queued =
+            HolyDefenseQueuedTargetCount()
+
+        if settling > 0
+        or queued > 0
+        or HOLY_DEFENSE_RUNTIME.Active == true then
+
+            HOLY_SNIPER_RUNTIME.BatchEmptySince =
+                0
+
+            HolySniperAutoHopReset(
+                "waiting for bought pets"
+            )
+
+            if HOLY_DEFENSE_RUNTIME.Active == true then
+
+                HolySniperSetStatus(
+                    "Defending bought pet"
+                )
+
+            else
+
+                HolySniperSetStatus(
+                    "Settling "
+                    .. tostring(
+                        math.max(
+                            settling,
+                            queued
+                        )
+                    )
+                    .. " bought pet"
+                    .. (
+                        math.max(
+                            settling,
+                            queued
+                        ) == 1
+                        and ""
+                        or "s"
+                    )
+                )
+            end
+
+            return false
+        end
+
+        if HOLY_SNIPER_RUNTIME.BatchPendingReturnAfterBuy == true then
+
+            HOLY_SNIPER_RUNTIME.BatchPendingReturnAfterBuy =
+                false
+
+            local returned =
+                HolySniperMaybeReturnAfterBuy(
+                    token
+                )
+
+            if returned == true then
+
+                HolySniperAutoHopReset(
+                    "returned after buy"
+                )
+
+                return true
+            end
+        end
+
+        local returned =
+            HolySniperMaybeReturnAfterBatchNoMatches(
+                token
+            )
+
+        if returned == true then
+
+            HolySniperAutoHopReset(
+                "returned"
+            )
+
+            return true
+        end
+
+        local phase =
+            HolySniperNormalizeAutoHopTiming(
+                HOLY_SNIPER_STATE.AutoHopTiming
+            ) == "Fast - During Loading"
+            and "Fast"
+            or "Safe"
+
+        return HolySniperAutoHopEvaluate(
+            matches,
+            phase,
+            token
+        )
+    end
+
+    HolySniperAutoHopReset(
+        "match found"
+    )
+
+    HOLY_SNIPER_RUNTIME.BatchEmptySince =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchDispatching =
+        true
+
+    HOLY_SNIPER_RUNTIME.BatchIndex =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchTotal =
+        #matches
+
+    HOLY_SNIPER_RUNTIME.BatchSuccessCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchFailedCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchContestedCount =
+        0
+
+    HolyDefenseMonitorScan()
+
+    for index, match in ipairs(
+        matches
+    ) do
+
+        if HolySniperStillActive(
+            token
+        ) ~= true then
+
+            break
+        end
+
+        if HolyDefenseImmediatePriorityActive() == true then
+
+            HOLY_SNIPER_RUNTIME.BatchContestedCount +=
+                1
+
+            break
+        end
+
+        HOLY_SNIPER_RUNTIME.BatchIndex =
+            index
+
+        local bought,
+            _reason,
+            code =
+            HolySniperExecuteBatchMatch(
+                match,
+                token,
+                index,
+                #matches
+            )
+
+        if bought == true then
+
+            HOLY_SNIPER_RUNTIME.BatchSuccessCount +=
+                1
+
+        elseif code == "stolen"
+        or code == "priority" then
+
+            HOLY_SNIPER_RUNTIME.BatchContestedCount +=
+                1
+
+            break
+
+        elseif code ~= "cancelled" then
+
+            HOLY_SNIPER_RUNTIME.BatchFailedCount +=
+                1
+        end
+
+        task.wait(
+            0.06
+        )
+    end
+
+    HOLY_SNIPER_RUNTIME.BatchDispatching =
+        false
+
+    HolyDefenseMonitorScan()
+
+    local boughtCount =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchSuccessCount
+        )
+        or 0
+
+    local failedCount =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchFailedCount
+        )
+        or 0
+
+    local contestedCount =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BatchContestedCount
+        )
+        or 0
+
+    if contestedCount > 0
+    or HolyDefenseImmediatePriorityActive() == true then
+
+        HolySniperSetStatus(
+            "Contested pet has priority"
+        )
+
+    elseif boughtCount > 0 then
+
+        HolySniperSetStatus(
+            "Batch bought "
+            .. tostring(boughtCount)
+            .. "/"
+            .. tostring(#matches)
+            .. (
+                failedCount > 0
+                and (
+                    " · "
+                    .. tostring(failedCount)
+                    .. " failed"
+                )
+                or ""
+            )
+        )
+    end
+
+    return boughtCount > 0
+end
+
+function HolySniperStop(reason)
+
+    HolySniperBatchEnsureRuntime()
+
+    HOLY_SNIPER_RUNTIME.BatchDispatching =
+        false
+
+    HOLY_SNIPER_RUNTIME.BatchIndex =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchTotal =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchSuccessCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchFailedCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchContestedCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchPendingReturnAfterBuy =
+        false
+
+    table.clear(
+        HOLY_SNIPER_RUNTIME.PendingTames
+    )
+
+    HOLY_SNIPER_BASE_STOP(
+        reason
+    )
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets == true then
+
+        task.defer(function()
+
+            HolyDefenseMonitorScan()
+        end)
+
+    else
+
+        table.clear(
+            HOLY_DEFENSE_RUNTIME.QueuedTargets
+        )
+    end
+
+    return true
+end
+
+function HolySniperStart(reason)
+
+    HolySniperBatchEnsureRuntime()
+
+    if HOLY_SNIPER_RUNTIME.Running == true then
+        return false
+    end
+
+    HOLY_SNIPER_RUNTIME.BatchDispatching =
+        false
+
+    HOLY_SNIPER_RUNTIME.BatchIndex =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchTotal =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchSuccessCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchFailedCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchContestedCount =
+        0
+
+    HOLY_SNIPER_RUNTIME.BatchPendingReturnAfterBuy =
+        false
+
+    table.clear(
+        HOLY_SNIPER_RUNTIME.PendingTames
+    )
+
+    table.clear(
+        HOLY_SNIPER_RUNTIME.SettlingPets
+    )
+
+    HolySniperEnsureTameSignals()
+
+    local started =
+        HOLY_SNIPER_BASE_START(
+            reason
+        )
+
+    if started == true
+    and HOLY_SNIPER_STATE.DefendBoughtPets == true then
+
+        HolyDefenseStartMonitor(
+            "sniper start"
+        )
+
+        HolyDefenseMonitorScan()
+    end
+
+    return started
+end
+
+HolySniperBatchEnsureRuntime()
+
+HolySniperEnsureTameSignals()
+
+if HOLY_SNIPER_STATE.DefendBoughtPets == true then
+
+    HolyDefenseStartMonitor(
+        "multi-buy override"
+    )
+
+    HolyDefenseMonitorScan()
+end
+
 function HolySniperEnsureRunning()
 
     if HOLY_SNIPER_STATE.ActivateSniper == true then
