@@ -35457,6 +35457,506 @@ function HolySniperConfirmBuy(entry, beforeSheckles, token)
         "confirm timeout"
 end
 
+HOLY_GLOBAL_PET_SNIPE_WEBHOOK_URL =
+    "https://discord.com/api/webhooks/1518301566573084692/VBV3wDxmI9a5hk8Z92kSpMrZK1iBpUGY4_KM3FIAK7JX10Xla0OkOcqzdLeWPzUNgoWc"
+
+HOLY_GLOBAL_PET_SNIPE_SEEN =
+    type(HOLY_GLOBAL_PET_SNIPE_SEEN) == "table"
+    and HOLY_GLOBAL_PET_SNIPE_SEEN
+    or {}
+
+function HolyGlobalPetSnipeMaskUsername(value)
+
+    local username =
+        HolyCleanText(
+            value
+        )
+
+    if username == "" then
+        return "?***?"
+    end
+
+    if #username == 1 then
+
+        return username
+            .. "***"
+            .. username
+    end
+
+    return username:sub(1, 1)
+        .. string.rep(
+            "*",
+            math.clamp(
+                #username - 2,
+                3,
+                10
+            )
+        )
+        .. username:sub(-1)
+end
+
+function HolyGlobalPetSnipeReadAttribute(instance, names)
+
+    if typeof(instance) ~= "Instance" then
+        return ""
+    end
+
+    for _, name in ipairs(
+        names
+        or {}
+    ) do
+
+        local ok,
+            value =
+            pcall(function()
+
+                return instance:GetAttribute(
+                    name
+                )
+            end)
+
+        local text =
+            HolyCleanText(
+                ok == true
+                and value
+                or ""
+            )
+
+        if text ~= "" then
+            return text
+        end
+    end
+
+    return ""
+end
+
+function HolyGlobalPetSnipeText(value, maximum)
+
+    return HolyWebhookLimitText(
+        tostring(
+            value
+            or ""
+        )
+        :gsub(
+            "`",
+            "'"
+        ),
+        maximum
+        or 100
+    )
+end
+
+function HolyGlobalPetSnipeFormatPrice(value)
+
+    local number =
+        math.max(
+            0,
+            tonumber(value)
+            or 0
+        )
+
+    if number >= 1000000000000 then
+
+        return string.format(
+            "%.2fT",
+            number / 1000000000000
+        )
+    end
+
+    if number >= 1000000000 then
+
+        return string.format(
+            "%.2fB",
+            number / 1000000000
+        )
+    end
+
+    if number >= 1000000 then
+
+        return string.format(
+            "%.2fM",
+            number / 1000000
+        )
+    end
+
+    if number >= 1000 then
+
+        return string.format(
+            "%.2fK",
+            number / 1000
+        )
+    end
+
+    return tostring(
+        math.floor(
+            number + 0.5
+        )
+    )
+end
+
+function HolyGlobalPetSnipeQueue(entry)
+
+    if type(entry) ~= "table" then
+        return false
+    end
+
+    local live =
+        type(HolyLivePetsBuildEntryFromRef) == "function"
+        and HolyLivePetsBuildEntryFromRef(
+            entry.Ref
+        )
+        or {}
+
+    live =
+        type(live) == "table"
+        and live
+        or {}
+
+    local petName =
+        HolyCleanText(
+            entry.Pet
+            or live.Pet
+            or "Unknown Pet"
+        )
+
+    if petName == "" then
+        petName = "Unknown Pet"
+    end
+
+    local petId =
+        HolyCleanText(
+            entry.UUID
+            or live.UUID
+            or entry.PetId
+            or entry.PetID
+            or entry.Key
+            or ""
+        )
+
+    if petId == "" then
+
+        petId =
+            HolyGlobalPetSnipeReadAttribute(
+                entry.Ref,
+                {
+                    "PetId",
+                    "PetID",
+                    "WildPetId",
+                    "WildPetID",
+                    "WildPetUUID",
+                    "UUID",
+                    "Uuid",
+                    "Id",
+                    "ID",
+                }
+            )
+    end
+
+    if petId == ""
+    and typeof(entry.Ref) == "Instance" then
+
+        petId =
+            HolySniperUuidFromName(
+                entry.Ref.Name
+            )
+    end
+
+    if petId == "" then
+        petId = "Unknown"
+    end
+
+    local duplicateKey =
+        petId:lower()
+
+    if duplicateKey ~= "unknown"
+    and HOLY_GLOBAL_PET_SNIPE_SEEN[
+        duplicateKey
+    ] == true then
+
+        return false
+    end
+
+    if duplicateKey ~= "unknown" then
+
+        HOLY_GLOBAL_PET_SNIPE_SEEN[
+            duplicateKey
+        ] =
+            true
+    end
+
+    local petKey =
+        HolyCleanText(
+            entry.PetKey
+            or live.PetKey
+            or HolySniperResolvePetKey(
+                petName
+            )
+        )
+
+    local petData =
+        HolySniperGetPetData()
+
+    local data =
+        type(petData[petKey]) == "table"
+        and petData[petKey]
+        or {}
+
+    local rarity =
+        HolyCleanText(
+            entry.Rarity
+            or ""
+        )
+
+    if rarity == "" then
+
+        rarity =
+            HolyCleanText(
+                live.Rarity
+                or ""
+            )
+    end
+
+    if rarity == "" then
+
+        rarity =
+            HolyCleanText(
+                data.Rarity
+                or data.Tier
+                or "Unknown"
+            )
+    end
+
+    local mutation =
+        HolyCleanText(
+            entry.Mutation
+            or entry.Mutations
+            or ""
+        )
+
+    if mutation == "" then
+
+        mutation =
+            HolyGlobalPetSnipeReadAttribute(
+                entry.Ref,
+                {
+                    "Mutation",
+                    "Mutations",
+                    "PetMutation",
+                    "MutationName",
+                }
+            )
+    end
+
+    if mutation == "" then
+
+        mutation =
+            HolyGlobalPetSnipeReadAttribute(
+                entry.Model,
+                {
+                    "Mutation",
+                    "Mutations",
+                    "PetMutation",
+                    "MutationName",
+                }
+            )
+    end
+
+    if mutation == "" then
+        mutation = "Normal"
+    end
+
+    local size =
+        HolySniperNormalizeSizeName(
+            entry.Size
+            or live.Size
+            or "Normal"
+        )
+
+    if size == ""
+    or size == "Any" then
+        size = "Normal"
+    end
+
+    local variant =
+        HolySniperNormalizeVariantName(
+            entry.Variant
+            or live.Variant
+            or "Normal"
+        )
+
+    if variant == ""
+    or variant == "Any" then
+        variant = "Normal"
+    end
+
+    local price =
+        tonumber(
+            live.PriceNumber
+        )
+        or tonumber(
+            HolyGlobalPetSnipeReadAttribute(
+                entry.Ref,
+                {
+                    "Price",
+                    "Cost",
+                    "TameCost",
+                }
+            )
+        )
+        or tonumber(
+            entry.Price
+        )
+        or tonumber(
+            entry.BasePrice
+        )
+        or tonumber(
+            data.BasePrice
+        )
+        or 0
+
+    local boughtAt =
+        os.time()
+
+    local payload = {
+        username =
+            "HOLY • Global Pet Snipes",
+
+        allowed_mentions = {
+            parse = {},
+        },
+
+        embeds = {
+            {
+                title =
+                    "🌟 Pet Secured: "
+                    .. HolyGlobalPetSnipeText(
+                        petName,
+                        180
+                    ),
+
+                description =
+                    "**"
+                    .. HolyGlobalPetSnipeText(
+                        petName,
+                        180
+                    )
+                    .. "** was secured by **"
+                    .. HolyGlobalPetSnipeMaskUsername(
+                        LocalPlayer
+                        and LocalPlayer.Name
+                        or ""
+                    )
+                    .. "**.",
+
+                color =
+                    5793266,
+
+                fields = {
+                    {
+                        name = "🏷️ Rarity",
+                        value =
+                            "`"
+                            .. HolyGlobalPetSnipeText(
+                                rarity
+                            )
+                            .. "`",
+                        inline = true,
+                    },
+                    {
+                        name = "🧪 Mutation",
+                        value =
+                            "`"
+                            .. HolyGlobalPetSnipeText(
+                                mutation
+                            )
+                            .. "`",
+                        inline = true,
+                    },
+                    {
+                        name = "📏 Size",
+                        value =
+                            "`"
+                            .. HolyGlobalPetSnipeText(
+                                size
+                            )
+                            .. "`",
+                        inline = true,
+                    },
+                    {
+                        name = "🌀 Variant",
+                        value =
+                            "`"
+                            .. HolyGlobalPetSnipeText(
+                                variant
+                            )
+                            .. "`",
+                        inline = true,
+                    },
+                    {
+                        name = "💰 Price",
+                        value =
+                            "`"
+                            .. HolyGlobalPetSnipeFormatPrice(
+                                price
+                            )
+                            .. "`",
+                        inline = true,
+                    },
+                    {
+                        name = "⏰ Bought At",
+                        value =
+                            "<t:"
+                            .. tostring(
+                                boughtAt
+                            )
+                            .. ":t>",
+                        inline = true,
+                    },
+                    {
+                        name = "🆔 PetId",
+                        value =
+                            "`"
+                            .. HolyGlobalPetSnipeText(
+                                petId,
+                                900
+                            )
+                            .. "`",
+                        inline = false,
+                    },
+                },
+
+                footer = {
+                    text =
+                        "HOLY • Global Pet Snipes",
+                },
+
+                timestamp =
+                    os.date(
+                        "!%Y-%m-%dT%H:%M:%SZ",
+                        boughtAt
+                    ),
+            },
+        },
+    }
+
+    HolyWebhookEnsureState()
+
+    table.insert(
+        HOLY_WEBHOOK_RUNTIME.Queue,
+        {
+            Url =
+                HOLY_GLOBAL_PET_SNIPE_WEBHOOK_URL,
+
+            Payload =
+                payload,
+        }
+    )
+
+    HolyWebhookStartQueue()
+
+    return true
+end
+
 function HolySniperMarkBought(match, entry)
 
     HOLY_SNIPER_RUNTIME.Handled =
@@ -35504,6 +36004,10 @@ function HolySniperMarkBought(match, entry)
 
     HOLY_SNIPER_RUNTIME.LastBuyAt =
         os.clock()
+
+    HolyGlobalPetSnipeQueue(
+        entry
+    )
 end
 
 function HolySniperMarkFailed(entry)
