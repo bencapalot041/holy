@@ -707,36 +707,18 @@ local function watchMiddle(middle)
         return
     end
 
-    if runtime.WatchedHiddenRoots[middle] ~= true then
-
-        runtime.WatchedHiddenRoots[middle] =
-            true
-
-        addConnection(
-            middle.ChildAdded:Connect(function(child)
-
-                if runtime.Profile.HideMiddle == true then
-
-                    detachInstance(
-                        child,
-                        "MiddleObjectsRemoved"
-                    )
-                end
-            end)
-        )
+    if runtime.Profile.HideMiddle ~= true then
+        return
     end
 
-    if runtime.Profile.HideMiddle == true then
-
-        for _, child in ipairs(middle:GetChildren()) do
-
-            detachInstance(
-                child,
-                "MiddleObjectsRemoved"
-            )
-        end
-    end
+    -- Keep Middle and all its children in the hierarchy because game
+    -- controllers expect objects such as Middle.Grass to exist.
+    -- Only hide their visuals locally.
+    watchHiddenRoot(
+        middle
+    )
 end
+
 
 local function watchMap(map)
 
@@ -2308,312 +2290,12 @@ addConnection(
     end)
 )
 
-local playerScripts =
-    player:WaitForChild(
-        "PlayerScripts",
-        30
-    )
-
-local controllers =
-    playerScripts
-    and playerScripts:WaitForChild(
-        "Controllers",
-        30
-    )
-
-if not controllers then
-
-    addError(
-        "Controllers",
-        "folder missing"
-    )
-
-    return
-end
-
-local function requireController(name)
-
-    local moduleScript =
-        controllers:FindFirstChild(
-            name
-        )
-
-    if not moduleScript then
-
-        addError(
-            name,
-            "ModuleScript missing"
-        )
-
-        return nil
-    end
-
-    local ok,
-        module =
-        pcall(
-            require,
-            moduleScript
-        )
-
-    if ok ~= true
-    or type(module) ~= "table" then
-
-        addError(
-            name,
-            ok and "unexpected module API" or module
-        )
-
-        return nil
-    end
-
-    return module
-end
-
-local controllerWindowOpen =
-    CollectionService:HasTag(
-        player,
-        "ControllersStarted"
-    ) ~= true
+-- Never require or patch game-owned controller ModuleScripts during
+-- the startup window. Requiring them here can change their loading
+-- order and make one of their dependencies fail intermittently.
 
 runtime.ControllerWindowMissed =
-    controllerWindowOpen ~= true
-
-local function patchReleaseController(name)
-
-    if controllerWindowOpen ~= true then
-        return false
-    end
-
-    local module =
-        requireController(
-            name
-        )
-
-    if type(module) ~= "table"
-    or type(module.Init) ~= "function" then
-
-        return false
-    end
-
-    local originalInit =
-        module.Init
-
-    local originalStart =
-        type(module.Start) == "function"
-        and module.Start
-        or nil
-
-    local initRequested =
-        false
-
-    local initFinished =
-        false
-
-    local initSucceeded =
-        false
-
-    local startRequested =
-        false
-
-    local startRunning =
-        false
-
-    local startSelf =
-        nil
-
-    local startArgs =
-        nil
-
-    local function runStart()
-
-        if originalStart == nil
-        or startRequested ~= true
-        or initFinished ~= true
-        or initSucceeded ~= true
-        or startRunning == true then
-
-            return
-        end
-
-        startRunning =
-            true
-
-        task.spawn(function()
-
-            local packed =
-                startArgs
-                or table.pack()
-
-            local ok,
-                message =
-                pcall(
-                    originalStart,
-                    startSelf or module,
-                    table.unpack(
-                        packed,
-                        1,
-                        packed.n
-                    )
-                )
-
-            if ok ~= true then
-
-                addError(
-                    name .. ".Start",
-                    message
-                )
-            end
-        end)
-    end
-
-    module.Init = function(self, ...)
-
-        if initRequested == true then
-            return nil
-        end
-
-        initRequested =
-            true
-
-        local packed =
-            table.pack(...)
-
-        task.spawn(function()
-
-            local ok,
-                message =
-                pcall(
-                    originalInit,
-                    self or module,
-                    table.unpack(
-                        packed,
-                        1,
-                        packed.n
-                    )
-                )
-
-            initSucceeded =
-                ok
-
-            initFinished =
-                true
-
-            if ok ~= true then
-
-                addError(
-                    name .. ".Init",
-                    message
-                )
-            end
-
-            runStart()
-        end)
-
-        return nil
-    end
-
-    if originalStart then
-
-        module.Start = function(self, ...)
-
-            if initRequested ~= true then
-
-                return originalStart(
-                    self,
-                    ...
-                )
-            end
-
-            startRequested =
-                true
-
-            startSelf =
-                self
-
-            startArgs =
-                table.pack(...)
-
-            runStart()
-
-            return nil
-        end
-    end
-
-    runtime.ReleasePatches +=
-        1
-
-    return true
-end
-
-local function patchNPCController()
-
-    if controllerWindowOpen ~= true then
-        return false
-    end
-
-    local module =
-        requireController(
-            "NPCController"
-        )
-
-    if type(module) ~= "table"
-    or type(module.Start) ~= "function" then
-
-        return false
-    end
-
-    local originalStart =
-        module.Start
-
-    local started =
-        false
-
-    module.Start = function(self, ...)
-
-        if started == true then
-            return nil
-        end
-
-        started =
-            true
-
-        local packed =
-            table.pack(...)
-
-        task.spawn(function()
-
-            local ok,
-                message =
-                pcall(
-                    originalStart,
-                    self or module,
-                    table.unpack(
-                        packed,
-                        1,
-                        packed.n
-                    )
-                )
-
-            if ok ~= true then
-
-                addError(
-                    "NPCController.Start",
-                    message
-                )
-            end
-        end)
-
-        return nil
-    end
-
-    runtime.NPCPatchInstalled =
-        true
-
-    return true
-end
-
--- Do not move game-owned controller initialization into bootstrap
--- task threads. Roblox can reject those threads with a capability error.
+    false
 
 runtime.ReleasePatches =
     0
@@ -2621,161 +2303,21 @@ runtime.ReleasePatches =
 runtime.NPCPatchInstalled =
     false
 
+runtime.GardenSyncPatchInstalled =
+    false
+
+runtime.PlantPatchInstalled =
+    false
+
+runtime.PetPatchInstalled =
+    false
+
 runtime.UnrelatedControllerPatchesSkipped =
     true
 
+runtime.ControllerModulePatchesSkipped =
+    true
 
-do
-
-    local module =
-        requireController(
-            "GardenSyncController"
-        )
-
-    if type(module) == "table"
-    and type(module.EnqueueSpawnEntries) == "function" then
-
-        local original =
-            module.EnqueueSpawnEntries
-
-        module.EnqueueSpawnEntries = function(self, entries, total)
-
-            if runtime.Active ~= true then
-
-                return original(
-                    self,
-                    entries,
-                    total
-                )
-            end
-
-            local localEntries =
-                {}
-
-            local localEntityTotal =
-                0
-
-            for _, entry in ipairs(
-                type(entries) == "table"
-                and entries
-                or {}
-            ) do
-
-                if tonumber(entry.userId) == player.UserId then
-
-                    table.insert(
-                        localEntries,
-                        entry
-                    )
-
-                    localEntityTotal +=
-                        tonumber(entry.entityCount)
-                        or 0
-
-                else
-
-                    runtime.GardenEntriesSkipped +=
-                        1
-
-                    runtime.GardenEntitiesSkipped +=
-                        tonumber(entry.entityCount)
-                        or 0
-                end
-            end
-
-            return original(
-                self,
-                localEntries,
-                localEntityTotal
-            )
-        end
-
-        runtime.GardenSyncPatchInstalled =
-            true
-    end
-end
-
-do
-
-    local module =
-        requireController(
-            "PlantVisualizerController"
-        )
-
-    if type(module) == "table"
-    and type(module.SpawnPlantFromData) == "function" then
-
-        local original =
-            module.SpawnPlantFromData
-
-        module.SpawnPlantFromData = function(self, userId, ...)
-
-            if runtime.Active == true
-            and tonumber(userId) ~= player.UserId then
-
-                runtime.DirectPlantSpawnsSkipped +=
-                    1
-
-                return nil
-            end
-
-            return original(
-                self,
-                userId,
-                ...
-            )
-        end
-
-        runtime.PlantPatchInstalled =
-            true
-    end
-end
-
-do
-
-    local module =
-        requireController(
-            "PetVisualController"
-        )
-
-    if controllerWindowOpen == true
-    and type(module) == "table"
-    and type(module.Start) == "function" then
-
-        local original =
-            module.Start
-
-        module.Start = function(self, ...)
-
-            if runtime.Active == true then
-
-                local root =
-                    workspace:FindFirstChild(
-                        "PlayerPetReferences"
-                    )
-                    or workspace:WaitForChild(
-                        "PlayerPetReferences",
-                        30
-                    )
-
-                if root then
-
-                    installPetFilter(
-                        root
-                    )
-                end
-            end
-
-            return original(
-                self,
-                ...
-            )
-        end
-
-        runtime.PetPatchInstalled =
-            true
-    end
-end
 
 runtime.FinishedAt =
     os.clock()
@@ -97286,7 +96828,7 @@ function HolyPerformanceRemoveMiddleChildren(middle)
             middle:GetChildren()
     end)
 
-    local removed =
+    local hidden =
         0
 
     for _, child in ipairs(children) do
@@ -97294,16 +96836,17 @@ function HolyPerformanceRemoveMiddleChildren(middle)
         if typeof(child) == "Instance"
         and child.Parent == middle then
 
-            if HolyPerformanceRemoveChild(child) == true then
-
-                removed =
-                    removed + 1
-            end
+            hidden =
+                hidden
+                + HolyPerformanceHideVisualTree(
+                    child
+                )
         end
     end
 
-    return removed
+    return hidden
 end
+
 
 function HolyPerformanceHideMiddleOnce(reason)
 
@@ -97442,7 +96985,7 @@ function HolyPerformanceConnectMiddleWatcher()
                     and typeof(middle) == "Instance"
                     and child.Parent == middle then
 
-                        HolyPerformanceRemoveChild(
+                        HolyPerformanceHideVisualTree(
                             child
                         )
                     end
