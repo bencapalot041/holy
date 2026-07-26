@@ -129656,6 +129656,632 @@ function HolyGuildCall(packetName, ...)
         third
 end
 
+function HolyGuildCaptureContestData()
+
+    if HOLY_GUILD_RUNTIME.ContestCaptureBusy
+        == true then
+
+        HolyNotify(
+            "HOLY Guild",
+            "A Contest capture is already running.",
+            4
+        )
+
+        return false
+    end
+
+    if HOLY_GUILD_RUNTIME.Busy.All == true
+    or HOLY_GUILD_RUNTIME.Busy.Snapshot == true
+    or HOLY_GUILD_RUNTIME.Busy.Competition == true
+    or HOLY_GUILD_RUNTIME.Busy.Leaderboard == true then
+
+        HolyNotify(
+            "HOLY Guild",
+            "Wait for the current Guild refresh to finish, then press Capture Data again.",
+            5
+        )
+
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.ContestCaptureBusy =
+        true
+
+    HolyGuildSetStatus(
+        "Capturing structured Contest data..."
+    )
+
+    local captureSucceeded,
+        captureResult =
+        pcall(function()
+
+            local captureOptions = {
+                MaxDepth = 14,
+                MaxStringLength = 16000,
+                MaxArrayEntries = 20000,
+                MaxMapEntries = 5000,
+            }
+
+            local report = {
+                Version =
+                    "HOLY_GUILD_CONTEST_INTERNAL_CAPTURE_V4",
+
+                CapturedAt =
+                    os.time(),
+
+                PlaceId =
+                    game.PlaceId,
+
+                JobId =
+                    game.JobId,
+
+                Username =
+                    LocalPlayer.Name,
+
+                UserId =
+                    LocalPlayer.UserId,
+
+                Requests = {},
+                CurrentState = {},
+                CurrentContestGui = {
+                    Found = false,
+
+                    Source =
+                        "ViewGuildProgress.GuildProgress",
+
+                    IgnoredSource =
+                        "ViewGuildProgress.GuildProgressOLD",
+
+                    Elements = {},
+                },
+
+                Errors = {},
+            }
+
+            report.CurrentState.Before =
+                HolyDevSafeValue(
+                    {
+                        Competition =
+                            HOLY_GUILD_STATE.Competition,
+
+                        Leaderboard =
+                            HOLY_GUILD_STATE.Leaderboard,
+
+                        Snapshot =
+                            HOLY_GUILD_STATE.Snapshot,
+
+                        OnlineMembers =
+                            HOLY_GUILD_STATE.OnlineMembers,
+
+                        Page =
+                            HOLY_GUILD_STATE.Page,
+
+                        Status =
+                            HOLY_GUILD_STATE.Status,
+                    },
+                    0,
+                    {},
+                    captureOptions
+                )
+
+            local snapshotStartedAt =
+                os.clock()
+
+            local snapshotOk,
+                snapshotFirst,
+                snapshotSecond,
+                snapshotThird =
+                HolyGuildCall(
+                    "GetMyGuild"
+                )
+
+            report.Requests.GetMyGuild = {
+                CallSucceeded =
+                    snapshotOk == true,
+
+                Duration =
+                    os.clock()
+                    - snapshotStartedAt,
+
+                Returns = {
+                    First =
+                        HolyDevSafeValue(
+                            snapshotFirst,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+
+                    Second =
+                        HolyDevSafeValue(
+                            snapshotSecond,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+
+                    Third =
+                        HolyDevSafeValue(
+                            snapshotThird,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+                },
+
+                ParsedTable =
+                    HolyDevSafeValue(
+                        HolyGuildFirstTable(
+                            snapshotFirst,
+                            snapshotSecond,
+                            snapshotThird
+                        ),
+                        0,
+                        {},
+                        captureOptions
+                    ),
+            }
+
+            task.wait(
+                0.35
+            )
+
+            local competitionStartedAt =
+                os.clock()
+
+            local competitionOk,
+                competitionFirst,
+                competitionSecond,
+                competitionThird =
+                HolyGuildCall(
+                    "GetCompetition"
+                )
+
+            report.Requests.GetCompetition = {
+                CallSucceeded =
+                    competitionOk == true,
+
+                Duration =
+                    os.clock()
+                    - competitionStartedAt,
+
+                Returns = {
+                    First =
+                        HolyDevSafeValue(
+                            competitionFirst,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+
+                    Second =
+                        HolyDevSafeValue(
+                            competitionSecond,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+
+                    Third =
+                        HolyDevSafeValue(
+                            competitionThird,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+                },
+
+                ParsedTable =
+                    HolyDevSafeValue(
+                        HolyGuildFirstTable(
+                            competitionFirst,
+                            competitionSecond,
+                            competitionThird
+                        ),
+                        0,
+                        {},
+                        captureOptions
+                    ),
+            }
+
+            task.wait(
+                0.35
+            )
+
+            local leaderboardStartedAt =
+                os.clock()
+
+            local leaderboardOk,
+                leaderboardFirst,
+                leaderboardSecond,
+                leaderboardThird =
+                HolyGuildCall(
+                    "GetLeaderboard",
+                    "weekly"
+                )
+
+            report.Requests.GetLeaderboardWeekly = {
+                CallSucceeded =
+                    leaderboardOk == true,
+
+                Duration =
+                    os.clock()
+                    - leaderboardStartedAt,
+
+                Arguments = {
+                    "weekly",
+                },
+
+                Returns = {
+                    First =
+                        HolyDevSafeValue(
+                            leaderboardFirst,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+
+                    Second =
+                        HolyDevSafeValue(
+                            leaderboardSecond,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+
+                    Third =
+                        HolyDevSafeValue(
+                            leaderboardThird,
+                            0,
+                            {},
+                            captureOptions
+                        ),
+                },
+
+                ParsedTable =
+                    HolyDevSafeValue(
+                        HolyGuildFirstTable(
+                            leaderboardFirst,
+                            leaderboardSecond,
+                            leaderboardThird
+                        ),
+                        0,
+                        {},
+                        captureOptions
+                    ),
+            }
+
+            local normalizedContest =
+                nil
+
+            pcall(function()
+
+                normalizedContest =
+                    HolyGuildGetContestView()
+            end)
+
+            report.CurrentState.After =
+                HolyDevSafeValue(
+                    {
+                        Competition =
+                            HOLY_GUILD_STATE.Competition,
+
+                        Leaderboard =
+                            HOLY_GUILD_STATE.Leaderboard,
+
+                        Snapshot =
+                            HOLY_GUILD_STATE.Snapshot,
+
+                        OnlineMembers =
+                            HOLY_GUILD_STATE.OnlineMembers,
+
+                        NormalizedContest =
+                            normalizedContest,
+                    },
+                    0,
+                    {},
+                    captureOptions
+                )
+
+            local playerGui =
+                LocalPlayer:FindFirstChildOfClass(
+                    "PlayerGui"
+                )
+
+            local viewGuildProgress =
+                playerGui
+                and playerGui:FindFirstChild(
+                    "ViewGuildProgress",
+                    true
+                )
+                or nil
+
+            local guildProgress =
+                viewGuildProgress
+                and (
+                    viewGuildProgress:FindFirstChild(
+                        "GuildProgress"
+                    )
+                    or viewGuildProgress:FindFirstChild(
+                        "GuildProgress",
+                        true
+                    )
+                )
+                or nil
+
+            if typeof(guildProgress) == "Instance"
+            and guildProgress.Name == "GuildProgress" then
+
+                report.CurrentContestGui.Found =
+                    true
+
+                pcall(function()
+
+                    report.CurrentContestGui.RootPath =
+                        guildProgress:GetFullName()
+
+                    report.CurrentContestGui.RootVisible =
+                        guildProgress.Visible
+
+                    report.CurrentContestGui.RootAttributes =
+                        HolyDevSafeValue(
+                            guildProgress:GetAttributes(),
+                            0,
+                            {},
+                            captureOptions
+                        )
+                end)
+
+                for _, object in ipairs(
+                    guildProgress:GetDescendants()
+                ) do
+
+                    local isText =
+                        object:IsA(
+                            "TextLabel"
+                        )
+                        or object:IsA(
+                            "TextButton"
+                        )
+                        or object:IsA(
+                            "TextBox"
+                        )
+
+                    local isImage =
+                        object:IsA(
+                            "ImageLabel"
+                        )
+                        or object:IsA(
+                            "ImageButton"
+                        )
+
+                    if isText
+                    or isImage then
+
+                        local rawText =
+                            ""
+
+                        local rawImage =
+                            ""
+
+                        if isText then
+
+                            pcall(function()
+
+                                rawText =
+                                    tostring(
+                                        object.Text
+                                        or ""
+                                    )
+                            end)
+                        end
+
+                        if isImage then
+
+                            pcall(function()
+
+                                rawImage =
+                                    tostring(
+                                        object.Image
+                                        or ""
+                                    )
+                            end)
+                        end
+
+                        if rawText ~= ""
+                        or rawImage ~= "" then
+
+                            local visibleInTree =
+                                true
+
+                            local current =
+                                object
+
+                            while current ~= nil
+                            and current
+                                ~= guildProgress.Parent do
+
+                                if current:IsA(
+                                    "GuiObject"
+                                )
+                                and current.Visible
+                                    ~= true then
+
+                                    visibleInTree =
+                                        false
+
+                                    break
+                                end
+
+                                current =
+                                    current.Parent
+                            end
+
+                            local entry = {
+                                Name =
+                                    object.Name,
+
+                                ClassName =
+                                    object.ClassName,
+
+                                Text =
+                                    rawText,
+
+                                Image =
+                                    rawImage,
+
+                                VisibleInCurrentTree =
+                                    visibleInTree,
+                            }
+
+                            pcall(function()
+
+                                entry.Path =
+                                    object:GetFullName()
+
+                                entry.Visible =
+                                    object.Visible
+
+                                entry.LayoutOrder =
+                                    object.LayoutOrder
+
+                                entry.AbsolutePosition =
+                                    tostring(
+                                        object.AbsolutePosition
+                                    )
+
+                                entry.AbsoluteSize =
+                                    tostring(
+                                        object.AbsoluteSize
+                                    )
+
+                                entry.Attributes =
+                                    HolyDevSafeValue(
+                                        object:GetAttributes(),
+                                        0,
+                                        {},
+                                        captureOptions
+                                    )
+                            end)
+
+                            report.CurrentContestGui.Elements[
+                                #report.CurrentContestGui.Elements
+                                + 1
+                            ] =
+                                entry
+
+                            if #report.CurrentContestGui.Elements
+                                >= 700 then
+
+                                report.CurrentContestGui.Truncated =
+                                    true
+
+                                break
+                            end
+                        end
+                    end
+                end
+
+            else
+
+                report.Errors[
+                    #report.Errors
+                    + 1
+                ] = {
+                    Section =
+                        "CurrentContestGui",
+
+                    Message =
+                        "ViewGuildProgress.GuildProgress was not found. Open the real Guild Contest page and run the capture again.",
+                }
+            end
+
+            local encodedSuccessfully,
+                encoded =
+                pcall(function()
+
+                    return HttpService:JSONEncode(
+                        report
+                    )
+                end)
+
+            if encodedSuccessfully ~= true then
+
+                error(
+                    "JSON encoding failed: "
+                    .. tostring(encoded)
+                )
+            end
+
+            local copied =
+                HolyCopyText(
+                    encoded
+                )
+
+            print(
+                encoded
+            )
+
+            print(
+                "[HOLY] Internal Contest capture complete."
+            )
+
+            print(
+                copied == true
+                and "[HOLY] Full Contest report copied to clipboard."
+                or "[HOLY] Clipboard unavailable; copy the JSON printed above."
+            )
+
+            return {
+                Copied =
+                    copied,
+
+                Encoded =
+                    encoded,
+            }
+        end)
+
+    HOLY_GUILD_RUNTIME.ContestCaptureBusy =
+        false
+
+    if captureSucceeded ~= true then
+
+        HolyGuildSetStatus(
+            "Contest capture failed"
+        )
+
+        warn(
+            "[HOLY] Contest capture failed: "
+            .. tostring(captureResult)
+        )
+
+        HolyNotify(
+            "HOLY Guild",
+            "Contest capture failed: "
+                .. tostring(captureResult),
+            7
+        )
+
+        return false
+    end
+
+    HolyGuildSetStatus(
+        captureResult.Copied == true
+        and "Contest report copied to clipboard"
+        or "Contest report printed to the console"
+    )
+
+    HolyNotify(
+        "HOLY Guild",
+        captureResult.Copied == true
+        and "Contest report copied. Send me the JSON."
+        or "Clipboard was unavailable. Copy the JSON from the console.",
+        6
+    )
+
+    return true
+end
+
 function HolyGuildResultAccepted(first, second)
 
     if first == false then
@@ -151544,6 +152170,26 @@ HOLY_GUILD_UI.ContestActions =
                                         "Competition data is up to date"
                                     )
                                 end
+                            end)
+                        end,
+                },
+
+                {
+                    Id =
+                        "Capture",
+
+                    Text =
+                        "Capture Data",
+
+                    Tooltip =
+                        "Copies the current competition, weekly leaderboard, guild snapshot and official event guide data.",
+
+                    Callback =
+                        function()
+
+                            task.spawn(function()
+
+                                HolyGuildCaptureContestData()
                             end)
                         end,
                 },
