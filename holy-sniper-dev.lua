@@ -129367,7 +129367,12 @@ HOLY_GUILD_RUNTIME = {
     GuildDisplayMap = {},
 
     UpdatingUI = false,
+
+    UIRefreshQueued = false,
+    PresenceRefreshQueued = false,
+
     RefreshQueued = false,
+    SnapshotRefreshDueAt = 0,
     LastSnapshotAt = 0,
 
     KickConfirmUserId = nil,
@@ -136168,42 +136173,127 @@ function HolyGuildRefreshAll(notifyUser)
     return snapshotOk
 end
 
+function HolyGuildQueueUIRefresh()
+
+    HOLY_GUILD_RUNTIME.UIRefreshQueued =
+        true
+end
+
+function HolyGuildQueuePresenceRefresh()
+
+    HOLY_GUILD_RUNTIME.PresenceRefreshQueued =
+        true
+end
+
 function HolyGuildQueueSnapshotRefresh(delay)
 
-    if HOLY_GUILD_RUNTIME.RefreshQueued == true then
-        return
+    local now =
+        os.clock()
+
+    local requestedAt =
+        now
+        + math.max(
+            tonumber(delay)
+            or 0.35,
+            0
+        )
+
+    local earliestAllowedAt =
+        (
+            tonumber(
+                HOLY_GUILD_RUNTIME.LastSnapshotAt
+            )
+            or 0
+        )
+        + 2
+
+    local dueAt =
+        math.max(
+            requestedAt,
+            earliestAllowedAt
+        )
+
+    local currentDueAt =
+        tonumber(
+            HOLY_GUILD_RUNTIME.SnapshotRefreshDueAt
+        )
+        or 0
+
+    if HOLY_GUILD_RUNTIME.RefreshQueued ~= true
+    or currentDueAt <= 0
+    or dueAt < currentDueAt then
+
+        HOLY_GUILD_RUNTIME.SnapshotRefreshDueAt =
+            dueAt
     end
 
     HOLY_GUILD_RUNTIME.RefreshQueued =
         true
+end
 
-    task.delay(
-        tonumber(delay)
-        or 0.35,
-        function()
+function HolyGuildProcessRefreshQueue()
 
-            HOLY_GUILD_RUNTIME.RefreshQueued =
-                false
+    if HOLY_GUILD_RUNTIME.Running ~= true then
+        return
+    end
 
-            if HOLY_GUILD_RUNTIME.Running ~= true then
-                return
-            end
+    local uiAlreadyRefreshed =
+        false
 
-            if os.clock()
-                - (
-                    HOLY_GUILD_RUNTIME.LastSnapshotAt
-                    or 0
-                )
-                < 2 then
+    if HOLY_GUILD_RUNTIME.PresenceRefreshQueued
+        == true
+    and HOLY_GUILD_RUNTIME.Busy.Presence
+        ~= true then
 
-                return
-            end
+        HOLY_GUILD_RUNTIME.PresenceRefreshQueued =
+            false
 
-            HolyGuildRefreshSnapshot(
+        if HolyGuildRefreshPresence(
+            true
+        ) == true then
+
+            uiAlreadyRefreshed =
                 true
-            )
         end
-    )
+    end
+
+    local snapshotDueAt =
+        tonumber(
+            HOLY_GUILD_RUNTIME.SnapshotRefreshDueAt
+        )
+        or 0
+
+    if HOLY_GUILD_RUNTIME.RefreshQueued == true
+    and HOLY_GUILD_RUNTIME.Busy.Snapshot
+        ~= true
+    and os.clock() >= snapshotDueAt then
+
+        HOLY_GUILD_RUNTIME.RefreshQueued =
+            false
+
+        HOLY_GUILD_RUNTIME.SnapshotRefreshDueAt =
+            0
+
+        if HolyGuildRefreshSnapshot(
+            true
+        ) == true then
+
+            uiAlreadyRefreshed =
+                true
+        end
+    end
+
+    if HOLY_GUILD_RUNTIME.UIRefreshQueued
+        == true then
+
+        HOLY_GUILD_RUNTIME.UIRefreshQueued =
+            false
+
+        if uiAlreadyRefreshed ~= true then
+
+            HolyGuildRefreshUI()
+        end
+    end
 end
 
 function HolyGuildApplyPresence(value)
@@ -136237,7 +136327,7 @@ function HolyGuildApplyPresence(value)
             0
         )
 
-    HolyGuildRefreshUI()
+    HolyGuildQueueUIRefresh()
 
     return true
 end
@@ -136331,12 +136421,7 @@ function HolyGuildHandleTickUpdate(...)
             payload
         ) ~= true then
 
-            task.spawn(function()
-
-                HolyGuildRefreshPresence(
-                    true
-                )
-            end)
+            HolyGuildQueuePresenceRefresh()
         end
 
     elseif kind:lower():find(
@@ -140374,6 +140459,19 @@ function HolyGuildStart()
 
             HolyGuildRefreshPlayerDropdown()
         end)
+
+    task.spawn(function()
+
+        while HOLY_GUILD_RUNTIME.Running == true
+        and HOLY_GUILD_RUNTIME.Token == token do
+
+            HolyGuildProcessRefreshQueue()
+
+            task.wait(
+                0.10
+            )
+        end
+    end)
 
     task.spawn(function()
 
