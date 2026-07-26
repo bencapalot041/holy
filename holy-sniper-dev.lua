@@ -2719,9 +2719,19 @@ HOLY_SNIPER_STATE = {
     BuilderPriority = "High",
 
     DefendBoughtPets = true,
-    DefendGear = "Auto",
+    DefendGear = "Auto Rotation",
     DefendMovement = "Walk",
     DefendRebuyIfStolen = true,
+
+    DefendThreatRadius = 45,
+    DefendStrawberryRange = 60,
+    DefendStrawberryHitbox = 6,
+    DefendStrawberryBurst = 2,
+    DefendShovelEngageRange = 7,
+    DefendShovelHitRange = 7,
+    DefendToolSwapDelay = 0.6,
+    DefendPredictMovement = true,
+    DefendSmartRange = true,
 
     Watchlist = {},
 
@@ -28488,7 +28498,7 @@ function HolyDefenseNormalizeGear(value)
         return "Strawberry Sniper"
     end
 
-    return "Auto"
+    return "Auto Rotation"
 end
 
 function HolySniperNormalizeBuyMode(value)
@@ -36711,6 +36721,15 @@ function HolyDefenseRunWorker(token)
         )
     end
 end
+
+HOLY_DEFENSE_UPGRADED_ON_TAME_RESULT =
+    HolyDefenseOnTameResult
+
+HOLY_DEFENSE_UPGRADED_TRY_REBUY =
+    HolyDefenseTryRebuy
+
+HOLY_DEFENSE_UPGRADED_RUN_WORKER =
+    HolyDefenseRunWorker
 
 function HolySniperMaybeReturnAfterBatchNoMatches(token)
 
@@ -54133,6 +54152,1966 @@ function HolySniperExecuteBatchMatch(match, token, index, total)
         finalCode
 end
 
+--==================================================
+-- [2.44C] SMART DEFENSE ROTATION + CUSTOM RANGES
+--==================================================
+
+function HolyDefenseReadConfigNumber(key, defaultValue, minimum, maximum)
+
+    local value =
+        tonumber(
+            HOLY_SNIPER_STATE[key]
+        )
+        or tonumber(defaultValue)
+        or 0
+
+    return math.clamp(
+        value,
+        tonumber(minimum)
+            or value,
+        tonumber(maximum)
+            or value
+    )
+end
+
+function HolyDefenseSetConfigNumber(
+    key,
+    value,
+    defaultValue,
+    minimum,
+    maximum
+)
+
+    HOLY_SNIPER_STATE[key] =
+        math.clamp(
+            tonumber(value)
+                or tonumber(defaultValue)
+                or 0,
+            tonumber(minimum)
+                or 0,
+            tonumber(maximum)
+                or math.huge
+        )
+
+    HolySaveSniperSettings()
+
+    local runtime =
+        HolyDefenseEnsureRuntime()
+
+    runtime.LastGearSwitchAt =
+        0
+
+    if runtime.Active == true then
+
+        HolyDefenseQueueReequip(
+            "defense setting changed"
+        )
+    end
+
+    return HOLY_SNIPER_STATE[key]
+end
+
+function HolyDefenseSetConfigToggle(key, value)
+
+    HOLY_SNIPER_STATE[key] =
+        value == true
+
+    HolySaveSniperSettings()
+
+    return HOLY_SNIPER_STATE[key]
+end
+
+function HolyDefenseRotationRuntime()
+
+    local runtime =
+        type(HolyDefenseUpgradeRuntime) == "function"
+        and HolyDefenseUpgradeRuntime()
+        or HolyDefenseEnsureRuntime()
+
+    local targetKey =
+        HolyDefenseNormalizeId(
+            runtime.CurrentRecordKey
+        )
+
+    if targetKey == ""
+    and typeof(runtime.Target) == "Instance" then
+
+        targetKey =
+            HolyDefenseRefKey(
+                runtime.Target
+            )
+    end
+
+    if runtime.RotationTargetKey ~= targetKey then
+
+        runtime.RotationTargetKey =
+            targetKey
+
+        runtime.CurrentGear =
+            ""
+
+        runtime.DesiredGear =
+            ""
+
+        runtime.LastGearSwitchAt =
+            0
+
+        runtime.LockedThreatUserId =
+            0
+
+        runtime.LockedThreatUntil =
+            0
+
+        runtime.LockedThreatExact =
+            false
+
+        runtime.LastAttackThreatUserId =
+            0
+
+        runtime.LastContestedOwnerId =
+            0
+
+        runtime.NoGearNotified =
+            false
+
+        runtime.RebuyPending =
+            false
+
+        runtime.RebuyPendingAt =
+            0
+
+        runtime.RebuyPendingKey =
+            ""
+
+        runtime.LastRebuyNoticeAt =
+            0
+    end
+
+    runtime.RebuyResultTimeout =
+        math.clamp(
+            tonumber(
+                runtime.RebuyResultTimeout
+            )
+            or 1.35,
+            0.75,
+            3
+        )
+
+    return runtime
+end
+
+function HolyDefenseToolMatches(tool, gearName)
+
+    if typeof(tool) ~= "Instance"
+    or tool:IsA("Tool") ~= true then
+
+        return false
+    end
+
+    gearName =
+        HolyDefenseNormalizeGear(
+            gearName
+        )
+
+    if gearName == "Auto Rotation" then
+
+        return HolyDefenseToolMatches(
+            tool,
+            "Strawberry Sniper"
+        )
+        or HolyDefenseToolMatches(
+            tool,
+            "Shovel"
+        )
+    end
+
+    local lowerName =
+        tostring(
+            tool.Name
+            or ""
+        )
+        :lower()
+
+    local attrs =
+        ""
+
+    pcall(function()
+
+        for key, value in pairs(
+            tool:GetAttributes()
+        ) do
+
+            attrs =
+                attrs
+                .. " "
+                .. tostring(key)
+                .. "="
+                .. tostring(value)
+        end
+    end)
+
+    attrs =
+        attrs:lower()
+
+    if gearName == "Shovel" then
+
+        return lowerName == "shovel"
+            or attrs:find(
+                "shovel",
+                1,
+                true
+            ) ~= nil
+    end
+
+    return lowerName == "strawberry sniper"
+        or (
+            lowerName:find(
+                "strawberry",
+                1,
+                true
+            ) ~= nil
+            and lowerName:find(
+                "sniper",
+                1,
+                true
+            ) ~= nil
+        )
+        or attrs:find(
+            "strawberrysniper",
+            1,
+            true
+        ) ~= nil
+        or attrs:find(
+            "strawberry sniper",
+            1,
+            true
+        ) ~= nil
+end
+
+function HolyDefenseGearAvailable(gearName)
+
+    return HolyDefenseFindTool(
+        gearName
+    ) ~= nil
+end
+
+function HolyDefenseGetExactThreatUserId()
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    local ownerUserId =
+        tonumber(
+            HolyDefenseReadAnyAttr(
+                runtime.Target,
+                {
+                    "OwnerUserId",
+                    "OwnerUserID",
+                    "Owner",
+                    "UserId",
+                    "UserID",
+                }
+            )
+        )
+        or 0
+
+    if ownerUserId <= 0 then
+
+        local record =
+            HolyDefenseGetQueuedRecordForRef(
+                runtime.Target
+            )
+
+        ownerUserId =
+            type(record) == "table"
+            and tonumber(
+                record.LastResultOwnerUserId
+            )
+            or 0
+    end
+
+    if ownerUserId == tonumber(
+        LocalPlayer.UserId
+    ) then
+
+        return 0
+    end
+
+    return ownerUserId
+end
+
+function HolyDefenseBuildThreat(player, targetPos, exactOwner)
+
+    local playerRoot =
+        HolyDefenseGetPlayerRoot(
+            player
+        )
+
+    if typeof(playerRoot) ~= "Instance"
+    or playerRoot:IsA("BasePart") ~= true
+    or typeof(targetPos) ~= "Vector3" then
+
+        return nil
+    end
+
+    local localRoot =
+        HolyDefenseGetRoot()
+
+    local petDistance =
+        (
+            playerRoot.Position
+            - targetPos
+        ).Magnitude
+
+    local attackDistance =
+        typeof(localRoot) == "Instance"
+        and localRoot:IsA("BasePart")
+        and (
+            playerRoot.Position
+            - localRoot.Position
+        ).Magnitude
+        or math.huge
+
+    local velocity =
+        HolyDefenseGetVelocity(
+            playerRoot
+        )
+
+    local towardPet =
+        targetPos
+        - playerRoot.Position
+
+    towardPet =
+        Vector3.new(
+            towardPet.X,
+            0,
+            towardPet.Z
+        )
+
+    local flatVelocity =
+        Vector3.new(
+            velocity.X,
+            0,
+            velocity.Z
+        )
+
+    local approachSpeed =
+        towardPet.Magnitude > 0.1
+        and flatVelocity:Dot(
+            towardPet.Unit
+        )
+        or 0
+
+    return {
+        Player =
+            player,
+
+        Root =
+            playerRoot,
+
+        Distance =
+            petDistance,
+
+        PetDistance =
+            petDistance,
+
+        AttackDistance =
+            attackDistance,
+
+        ApproachSpeed =
+            approachSpeed,
+
+        ExactOwner =
+            exactOwner == true,
+    }
+end
+
+function HolyDefenseFindThreat(targetPos)
+
+    if typeof(targetPos) ~= "Vector3" then
+        return nil
+    end
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    local now =
+        os.clock()
+
+    local threatRadius =
+        HolyDefenseReadConfigNumber(
+            "DefendThreatRadius",
+            45,
+            10,
+            150
+        )
+
+    local exactOwnerId =
+        HolyDefenseGetExactThreatUserId()
+
+    if exactOwnerId > 0 then
+
+        local exactPlayer =
+            Players:GetPlayerByUserId(
+                exactOwnerId
+            )
+
+        local exactThreat =
+            HolyDefenseBuildThreat(
+                exactPlayer,
+                targetPos,
+                true
+            )
+
+        if exactThreat ~= nil then
+
+            runtime.LockedThreatUserId =
+                exactOwnerId
+
+            runtime.LockedThreatUntil =
+                now + 2
+
+            runtime.LockedThreatExact =
+                true
+
+            return exactThreat
+        end
+    end
+
+    local lockedUserId =
+        tonumber(
+            runtime.LockedThreatUserId
+        )
+        or 0
+
+    if lockedUserId > 0
+    and now < (
+        tonumber(
+            runtime.LockedThreatUntil
+        )
+        or 0
+    ) then
+
+        local lockedPlayer =
+            Players:GetPlayerByUserId(
+                lockedUserId
+            )
+
+        local lockedThreat =
+            HolyDefenseBuildThreat(
+                lockedPlayer,
+                targetPos,
+                false
+            )
+
+        if lockedThreat ~= nil
+        and lockedThreat.PetDistance
+            <= threatRadius + 8 then
+
+            return lockedThreat
+        end
+    end
+
+    local best =
+        nil
+
+    local bestScore =
+        math.huge
+
+    for _, player in ipairs(
+        Players:GetPlayers()
+    ) do
+
+        if player ~= LocalPlayer then
+
+            local threat =
+                HolyDefenseBuildThreat(
+                    player,
+                    targetPos,
+                    false
+                )
+
+            if threat ~= nil
+            and threat.PetDistance <= threatRadius then
+
+                local approachBonus =
+                    math.clamp(
+                        threat.ApproachSpeed,
+                        0,
+                        18
+                    )
+                    * 0.55
+
+                local score =
+                    threat.PetDistance
+                    - approachBonus
+
+                if score < bestScore then
+
+                    best =
+                        threat
+
+                    bestScore =
+                        score
+                end
+            end
+        end
+    end
+
+    if best ~= nil then
+
+        runtime.LockedThreatUserId =
+            tonumber(
+                best.Player.UserId
+            )
+            or 0
+
+        runtime.LockedThreatUntil =
+            now + 1.25
+
+        runtime.LockedThreatExact =
+            false
+
+    else
+
+        runtime.LockedThreatUserId =
+            0
+
+        runtime.LockedThreatUntil =
+            0
+
+        runtime.LockedThreatExact =
+            false
+    end
+
+    return best
+end
+
+function HolyDefenseResolveGear(threat)
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    local selected =
+        HolyDefenseNormalizeGear(
+            HOLY_SNIPER_STATE.DefendGear
+        )
+
+    local current =
+        HolyCleanText(
+            runtime.CurrentGear
+        )
+
+    if current ~= "Strawberry Sniper"
+    and current ~= "Shovel" then
+
+        current =
+            ""
+    end
+
+    local strawberryAvailable =
+        HolyDefenseGearAvailable(
+            "Strawberry Sniper"
+        )
+
+    local shovelAvailable =
+        HolyDefenseGearAvailable(
+            "Shovel"
+        )
+
+    local candidate =
+        ""
+
+    if selected == "Strawberry Sniper" then
+
+        candidate =
+            strawberryAvailable
+            and "Strawberry Sniper"
+            or ""
+
+    elseif selected == "Shovel" then
+
+        candidate =
+            shovelAvailable
+            and "Shovel"
+            or ""
+
+    else
+
+        local attackDistance =
+            threat ~= nil
+            and tonumber(
+                threat.AttackDistance
+            )
+            or math.huge
+
+        local engageRange =
+            math.max(
+                HolyDefenseReadConfigNumber(
+                    "DefendShovelEngageRange",
+                    7,
+                    3.6,
+                    30
+                ),
+                HolyDefenseReadConfigNumber(
+                    "DefendShovelHitRange",
+                    7,
+                    3.6,
+                    20
+                )
+            )
+
+        local exitRange =
+            engageRange + 2
+
+        if strawberryAvailable == true
+        and shovelAvailable == true then
+
+            if current == "Shovel"
+            and attackDistance <= exitRange then
+
+                candidate =
+                    "Shovel"
+
+            elseif attackDistance <= engageRange then
+
+                candidate =
+                    "Shovel"
+
+            else
+
+                candidate =
+                    "Strawberry Sniper"
+            end
+
+        elseif strawberryAvailable == true then
+
+            candidate =
+                "Strawberry Sniper"
+
+        elseif shovelAvailable == true then
+
+            candidate =
+                "Shovel"
+        end
+    end
+
+    if current ~= ""
+    and HolyDefenseGearAvailable(
+        current
+    ) ~= true then
+
+        current =
+            ""
+    end
+
+    if candidate ~= current then
+
+        local now =
+            os.clock()
+
+        local attackDistance =
+            threat ~= nil
+            and tonumber(
+                threat.AttackDistance
+            )
+            or math.huge
+
+        local emergencyShovel =
+            candidate == "Shovel"
+            and attackDistance <= HolyDefenseReadConfigNumber(
+                "DefendShovelHitRange",
+                7,
+                3.6,
+                20
+            )
+
+        local swapDelay =
+            HolyDefenseReadConfigNumber(
+                "DefendToolSwapDelay",
+                0.6,
+                0.1,
+                2
+            )
+
+        local canSwitch =
+            current == ""
+            or candidate == ""
+            or emergencyShovel == true
+            or now - (
+                tonumber(
+                    runtime.LastGearSwitchAt
+                )
+                or 0
+            ) >= swapDelay
+
+        if canSwitch ~= true then
+
+            candidate =
+                current
+
+        else
+
+            local previous =
+                current
+
+            current =
+                candidate
+
+            runtime.LastGearSwitchAt =
+                now
+
+            if previous ~= ""
+            and current ~= ""
+            and previous ~= current then
+
+                if current == "Shovel" then
+
+                    HolyDefenseNotify(
+                        "rotation shovel "
+                        .. tostring(
+                            runtime.LockedThreatUserId
+                            or 0
+                        ),
+                        "Threat entered close range • switching to Shovel.",
+                        4,
+                        0
+                    )
+
+                else
+
+                    HolyDefenseNotify(
+                        "rotation strawberry "
+                        .. tostring(
+                            runtime.LockedThreatUserId
+                            or 0
+                        ),
+                        "Threat backed away • switching to Strawberry Sniper.",
+                        4,
+                        0
+                    )
+                end
+            end
+        end
+    end
+
+    runtime.CurrentGear =
+        candidate
+
+    runtime.DesiredGear =
+        candidate
+
+    if candidate == "" then
+
+        if runtime.NoGearNotified ~= true then
+
+            runtime.NoGearNotified =
+                true
+
+            HolyDefenseNotify(
+                "rotation no gear",
+                "No defense gear found • following and rebuying will continue.",
+                6,
+                2
+            )
+        end
+
+    else
+
+        runtime.NoGearNotified =
+            false
+    end
+
+    return candidate
+end
+
+function HolyDefenseSelectedGearEquipped(requestedGear)
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    local gear =
+        HolyCleanText(
+            requestedGear
+            or runtime.DesiredGear
+            or runtime.CurrentGear
+        )
+
+    if gear == "" then
+
+        gear =
+            HolyDefenseResolveGear(
+                nil
+            )
+    end
+
+    if gear == "" then
+        return false
+    end
+
+    return HolyDefenseToolMatches(
+        HolyDefenseGetEquippedTool(),
+        gear
+    ) == true
+end
+
+function HolyDefenseEquipSelectedGear(reason, requestedGear)
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or runtime.Active ~= true
+    or runtime.GearLockActive ~= true
+    or runtime.InventoryConfirmed == true then
+
+        return false
+    end
+
+    local gear =
+        HolyCleanText(
+            requestedGear
+            or runtime.DesiredGear
+            or runtime.CurrentGear
+        )
+
+    if gear == "" then
+
+        gear =
+            HolyDefenseResolveGear(
+                nil
+            )
+    end
+
+    if gear == "" then
+        return false
+    end
+
+    if HolyDefenseSelectedGearEquipped(
+        gear
+    ) == true then
+
+        runtime.DefenseTool =
+            HolyDefenseGetEquippedTool()
+
+        return true
+    end
+
+    if runtime.EquipPending == true then
+        return false
+    end
+
+    local now =
+        os.clock()
+
+    if now - (
+        tonumber(
+            runtime.LastEquipAt
+        )
+        or 0
+    ) < runtime.ReequipCooldown then
+
+        return false
+    end
+
+    local tool =
+        HolyDefenseFindTool(
+            gear
+        )
+
+    local humanoid =
+        HolyDefenseGetHumanoid()
+
+    if typeof(tool) ~= "Instance"
+    or typeof(humanoid) ~= "Instance" then
+
+        return false
+    end
+
+    runtime.EquipPending =
+        true
+
+    local ok =
+        pcall(function()
+
+            humanoid:EquipTool(
+                tool
+            )
+        end)
+
+    runtime.EquipPending =
+        false
+
+    if ok == true then
+
+        runtime.DefenseTool =
+            tool
+
+        runtime.LastEquipAt =
+            os.clock()
+
+        runtime.LastEquipReason =
+            tostring(
+                reason
+                or "defense"
+            )
+    end
+
+    return ok == true
+end
+
+function HolyDefenseQueueReequip(reason)
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or runtime.Active ~= true
+    or runtime.GearLockActive ~= true
+    or runtime.InventoryConfirmed == true then
+
+        return false
+    end
+
+    runtime.ReequipToken =
+        (
+            tonumber(
+                runtime.ReequipToken
+            )
+            or 0
+        )
+        + 1
+
+    local token =
+        runtime.ReequipToken
+
+    task.delay(0.12, function()
+
+        local liveRuntime =
+            HolyDefenseRotationRuntime()
+
+        if liveRuntime.ReequipToken ~= token
+        or HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+        or liveRuntime.Active ~= true
+        or liveRuntime.GearLockActive ~= true
+        or liveRuntime.InventoryConfirmed == true then
+
+            return
+        end
+
+        local gear =
+            HolyCleanText(
+                liveRuntime.DesiredGear
+                or liveRuntime.CurrentGear
+            )
+
+        if gear == "" then
+
+            gear =
+                HolyDefenseResolveGear(
+                    nil
+                )
+        end
+
+        if gear ~= ""
+        and HolyDefenseSelectedGearEquipped(
+            gear
+        ) ~= true then
+
+            HolyDefenseEquipSelectedGear(
+                reason
+                or "defense tool unequipped",
+                gear
+            )
+        end
+    end)
+
+    return true
+end
+
+function HolyDefenseStartGearLock()
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    HolyDefenseDisconnectGearLock()
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or runtime.Active ~= true then
+
+        return false
+    end
+
+    runtime.GearLockActive =
+        true
+
+    runtime.InventoryConfirmed =
+        false
+
+    runtime.InventoryConfirmationItem =
+        nil
+
+    runtime.LastEquipAt =
+        0
+
+    runtime.CurrentGear =
+        ""
+
+    runtime.DesiredGear =
+        ""
+
+    runtime.LastGearSwitchAt =
+        0
+
+    HolyDefenseCaptureInventoryBaseline()
+
+    HolyDefenseAddGearConnection(
+        LocalPlayer.CharacterAdded:Connect(function()
+
+            task.delay(0.35, function()
+
+                local liveRuntime =
+                    HolyDefenseRotationRuntime()
+
+                if liveRuntime.Active == true
+                and HOLY_SNIPER_STATE.DefendBoughtPets == true then
+
+                    HolyDefenseStartGearLock()
+                end
+            end)
+        end)
+    )
+
+    local character =
+        HolyDefenseGetCharacter()
+
+    if typeof(character) == "Instance" then
+
+        HolyDefenseAddGearConnection(
+            character.ChildRemoved:Connect(function(child)
+
+                if child == runtime.DefenseTool
+                or HolyDefenseToolMatches(
+                    child,
+                    "Auto Rotation"
+                ) == true then
+
+                    HolyDefenseQueueReequip(
+                        "defense tool unequipped"
+                    )
+                end
+            end)
+        )
+
+        HolyDefenseAddGearConnection(
+            character.ChildAdded:Connect(function(child)
+
+                if child:IsA("Tool")
+                and HolyDefenseToolMatches(
+                    child,
+                    runtime.DesiredGear
+                ) ~= true then
+
+                    HolyDefenseQueueReequip(
+                        "another tool equipped"
+                    )
+                end
+            end)
+        )
+    end
+
+    local backpack =
+        LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+
+    if typeof(backpack) == "Instance" then
+
+        HolyDefenseAddGearConnection(
+            backpack.ChildAdded:Connect(function(child)
+
+                if HolyDefenseToolMatches(
+                    child,
+                    "Auto Rotation"
+                ) == true then
+
+                    HolyDefenseQueueReequip(
+                        "defense gear available"
+                    )
+                end
+            end)
+        )
+    end
+
+    local gear =
+        HolyDefenseResolveGear(
+            nil
+        )
+
+    if gear ~= "" then
+
+        HolyDefenseEquipSelectedGear(
+            "defense start",
+            gear
+        )
+    end
+
+    if type(HolyDefenseEnsureStartNotice) == "function" then
+
+        HolyDefenseEnsureStartNotice()
+    end
+
+    return true
+end
+
+function HolyDefenseChooseGoal(targetPos, threat)
+
+    local root =
+        HolyDefenseGetRoot()
+
+    if typeof(root) ~= "Instance"
+    or root:IsA("BasePart") ~= true
+    or typeof(targetPos) ~= "Vector3" then
+
+        return nil
+    end
+
+    local gear =
+        HolyDefenseResolveGear(
+            threat
+        )
+
+    if gear == "Shovel"
+    and threat ~= nil
+    and typeof(threat.Root) == "Instance"
+    and threat.Root:IsA("BasePart") then
+
+        local predicted =
+            threat.Root.Position
+
+        if HOLY_SNIPER_STATE.DefendPredictMovement ~= false then
+
+            predicted +=
+                HolyDefenseGetVelocity(
+                    threat.Root
+                )
+                * 0.18
+        end
+
+        local away =
+            root.Position
+            - predicted
+
+        away =
+            Vector3.new(
+                away.X,
+                0,
+                away.Z
+            )
+
+        if away.Magnitude <= 0.1 then
+
+            away =
+                targetPos
+                - predicted
+
+            away =
+                Vector3.new(
+                    away.X,
+                    0,
+                    away.Z
+                )
+        end
+
+        if away.Magnitude <= 0.1 then
+
+            away =
+                Vector3.new(
+                    0,
+                    0,
+                    1
+                )
+        end
+
+        local desiredGap =
+            2.9
+
+        if HOLY_SNIPER_STATE.DefendSmartRange == false then
+
+            desiredGap =
+                math.max(
+                    2.9,
+                    HolyDefenseReadConfigNumber(
+                        "DefendShovelHitRange",
+                        7,
+                        3.6,
+                        20
+                    )
+                    - 0.4
+                )
+        end
+
+        return Vector3.new(
+            predicted.X,
+            root.Position.Y,
+            predicted.Z
+        )
+        + away.Unit * desiredGap
+    end
+
+    if threat ~= nil
+    and typeof(threat.Root) == "Instance"
+    and threat.Root:IsA("BasePart")
+    and threat.PetDistance <= HolyDefenseReadConfigNumber(
+        "DefendThreatRadius",
+        45,
+        10,
+        150
+    ) then
+
+        local fromPet =
+            threat.Root.Position
+            - targetPos
+
+        fromPet =
+            Vector3.new(
+                fromPet.X,
+                0,
+                fromPet.Z
+            )
+
+        if fromPet.Magnitude > 0.1 then
+
+            local guardDistance =
+                math.clamp(
+                    fromPet.Magnitude * 0.35,
+                    3.8,
+                    6
+                )
+
+            return Vector3.new(
+                targetPos.X,
+                root.Position.Y,
+                targetPos.Z
+            )
+            + fromPet.Unit * guardDistance
+        end
+    end
+
+    local stableDirection =
+        HolyDefenseUpdatePetDirection(
+            targetPos
+        )
+
+    local rawGoal =
+        targetPos
+        - stableDirection * 5.75
+
+    rawGoal =
+        Vector3.new(
+            rawGoal.X,
+            root.Position.Y,
+            rawGoal.Z
+        )
+
+    return HolyDefenseSmoothGoal(
+        rawGoal
+    )
+end
+
+function HolyDefenseChooseAim(threat)
+
+    local parts =
+        HolyDefenseGetThreatParts(
+            threat
+        )
+
+    if parts == nil
+    or typeof(parts.Root) ~= "Instance"
+    or parts.Root:IsA("BasePart") ~= true then
+
+        return nil
+    end
+
+    local root =
+        HolyDefenseGetRoot()
+
+    if typeof(root) ~= "Instance"
+    or root:IsA("BasePart") ~= true then
+
+        return nil
+    end
+
+    local attackDistance =
+        tonumber(
+            threat.AttackDistance
+        )
+        or (
+            parts.Root.Position
+            - root.Position
+        ).Magnitude
+
+    local velocity =
+        HOLY_SNIPER_STATE.DefendPredictMovement ~= false
+        and HolyDefenseGetVelocity(
+            parts.Root
+        )
+        or Vector3.zero
+
+    local lead =
+        HOLY_SNIPER_STATE.DefendPredictMovement ~= false
+        and math.clamp(
+            attackDistance / 280,
+            0.02,
+            0.22
+        )
+        or 0
+
+    local virtualRadius =
+        HolyDefenseReadConfigNumber(
+            "DefendStrawberryHitbox",
+            6,
+            1,
+            20
+        )
+        * 0.18
+
+    local center =
+        parts.Root.Position
+        + Vector3.new(
+            0,
+            1.45,
+            0
+        )
+        + velocity * lead
+
+    local head =
+        typeof(parts.Head) == "Instance"
+        and parts.Head:IsA("BasePart")
+        and parts.Head.Position
+            + velocity * lead
+        or center
+
+    local right =
+        parts.Root.CFrame.RightVector
+        * virtualRadius
+
+    local up =
+        Vector3.new(
+            0,
+            math.min(
+                virtualRadius,
+                1.8
+            ),
+            0
+        )
+
+    local candidates = {
+        center,
+        head,
+        center + right,
+        center - right,
+        center + up,
+        center - up * 0.55,
+    }
+
+    local camera =
+        workspace.CurrentCamera
+
+    local rootFrom =
+        root.Position
+        + Vector3.new(
+            0,
+            1.5,
+            0
+        )
+
+    local cameraFrom =
+        camera
+        and camera.CFrame.Position
+        or rootFrom
+
+    for _, aim in ipairs(
+        candidates
+    ) do
+
+        if HolyDefenseRayClear(
+            rootFrom,
+            aim,
+            parts.Character
+        ) == true
+        and HolyDefenseRayClear(
+            cameraFrom,
+            aim,
+            parts.Character
+        ) == true then
+
+            return aim
+        end
+    end
+
+    return nil
+end
+
+function HolyDefenseStrawberryBurstAim(
+    threat,
+    baseAim,
+    burstIndex
+)
+
+    if typeof(baseAim) ~= "Vector3"
+    or burstIndex <= 1
+    or threat == nil
+    or typeof(threat.Root) ~= "Instance"
+    or threat.Root:IsA("BasePart") ~= true then
+
+        return baseAim
+    end
+
+    local radius =
+        HolyDefenseReadConfigNumber(
+            "DefendStrawberryHitbox",
+            6,
+            1,
+            20
+        )
+        * 0.12
+
+    if burstIndex % 2 == 0 then
+
+        return baseAim
+            + threat.Root.CFrame.RightVector
+            * radius
+    end
+
+    return baseAim
+        - threat.Root.CFrame.RightVector
+        * radius
+end
+
+function HolyDefenseNotifyThreat(threat, gear)
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    local userId =
+        threat ~= nil
+        and threat.Player ~= nil
+        and tonumber(
+            threat.Player.UserId
+        )
+        or 0
+
+    if userId <= 0
+    or runtime.LastAttackThreatUserId == userId then
+
+        return false
+    end
+
+    runtime.LastAttackThreatUserId =
+        userId
+
+    local distance =
+        math.floor(
+            (
+                tonumber(
+                    threat.AttackDistance
+                )
+                or 0
+            )
+            + 0.5
+        )
+
+    return HolyDefenseNotify(
+        "threat "
+        .. tostring(userId),
+        (
+            threat.ExactOwner == true
+            and "Exact thief locked"
+            or "Threat detected"
+        )
+        .. " • "
+        .. tostring(gear)
+        .. " at "
+        .. tostring(distance)
+        .. " studs.",
+        5,
+        0
+    )
+end
+
+function HolyDefenseUseStrawberry(threat)
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    if threat == nil
+    or threat.Player == nil
+    or typeof(threat.Root) ~= "Instance" then
+
+        return false
+    end
+
+    local attackDistance =
+        tonumber(
+            threat.AttackDistance
+        )
+        or math.huge
+
+    if attackDistance > HolyDefenseReadConfigNumber(
+        "DefendStrawberryRange",
+        60,
+        10,
+        200
+    ) then
+
+        return false
+    end
+
+    local cooldown =
+        attackDistance <= 8
+        and 2.78
+        or 3
+
+    if os.clock() - (
+        tonumber(
+            runtime.LastShotAt
+        )
+        or 0
+    ) < cooldown then
+
+        return false
+    end
+
+    HolyDefenseResolvePackets()
+
+    if type(runtime.StrawberryPacket) ~= "table" then
+        return false
+    end
+
+    if HolyDefenseSelectedGearEquipped(
+        "Strawberry Sniper"
+    ) ~= true then
+
+        HolyDefenseEquipSelectedGear(
+            "strawberry attack",
+            "Strawberry Sniper"
+        )
+
+        return false
+    end
+
+    local tool =
+        HolyDefenseGetEquippedTool()
+
+    local aim =
+        HolyDefenseChooseAim(
+            threat
+        )
+
+    if typeof(aim) ~= "Vector3" then
+        return false
+    end
+
+    HolyDefenseNotifyThreat(
+        threat,
+        "Strawberry Sniper"
+    )
+
+    HolyDefensePreAim(
+        aim
+    )
+
+    HolyDefenseFaceShot(
+        aim
+    )
+
+    task.wait()
+
+    local burstCount =
+        math.floor(
+            HolyDefenseReadConfigNumber(
+                "DefendStrawberryBurst",
+                2,
+                1,
+                3
+            )
+        )
+
+    local ok =
+        false
+
+    for burstIndex = 1, burstCount do
+
+        local burstAim =
+            HolyDefenseStrawberryBurstAim(
+                threat,
+                aim,
+                burstIndex
+            )
+
+        ok =
+            HolyDefenseFirePacket(
+                runtime.StrawberryPacket,
+                burstAim,
+                tool,
+                threat.Player
+            )
+            or ok
+
+        if burstIndex < burstCount then
+
+            task.wait(
+                0.035
+            )
+        end
+    end
+
+    if ok == true then
+
+        runtime.LastShotAt =
+            os.clock()
+    end
+
+    return ok
+end
+
+function HolyDefenseUseShovel(threat)
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    if threat == nil
+    or threat.Player == nil
+    or typeof(threat.Root) ~= "Instance" then
+
+        return false
+    end
+
+    local attackDistance =
+        tonumber(
+            threat.AttackDistance
+        )
+        or math.huge
+
+    if attackDistance > HolyDefenseReadConfigNumber(
+        "DefendShovelHitRange",
+        7,
+        3.6,
+        20
+    ) then
+
+        return false
+    end
+
+    if os.clock() - (
+        tonumber(
+            runtime.LastShovelAt
+        )
+        or 0
+    ) < 0.22 then
+
+        return false
+    end
+
+    HolyDefenseResolvePackets()
+
+    if HolyDefenseSelectedGearEquipped(
+        "Shovel"
+    ) ~= true then
+
+        HolyDefenseEquipSelectedGear(
+            "shovel attack",
+            "Shovel"
+        )
+
+        return false
+    end
+
+    local aim =
+        threat.Root.Position
+
+    if HOLY_SNIPER_STATE.DefendPredictMovement ~= false then
+
+        aim +=
+            HolyDefenseGetVelocity(
+                threat.Root
+            )
+            * 0.10
+    end
+
+    HolyDefenseFaceShot(
+        aim
+    )
+
+    HolyDefenseNotifyThreat(
+        threat,
+        "Shovel"
+    )
+
+    runtime.LastShovelAt =
+        os.clock()
+
+    local ok =
+        false
+
+    if type(runtime.ShovelSwingPacket) == "table" then
+
+        ok =
+            HolyDefenseFirePacket(
+                runtime.ShovelSwingPacket
+            )
+            or ok
+    end
+
+    task.wait(
+        0.03
+    )
+
+    if type(runtime.ShovelHitPacket) == "table" then
+
+        ok =
+            HolyDefenseFirePacket(
+                runtime.ShovelHitPacket,
+                threat.Player.UserId
+            )
+            or ok
+    end
+
+    local petId =
+        HolyDefenseReadTargetPetId()
+
+    if petId ~= ""
+    and type(runtime.PetScarePacket) == "table" then
+
+        ok =
+            HolyDefenseFirePacket(
+                runtime.PetScarePacket,
+                threat.Player.UserId,
+                petId
+            )
+            or ok
+    end
+
+    return ok
+end
+
+function HolyDefenseUseGear(threat)
+
+    local gear =
+        HolyDefenseResolveGear(
+            threat
+        )
+
+    if gear == "" then
+        return false
+    end
+
+    if HolyDefenseSelectedGearEquipped(
+        gear
+    ) ~= true then
+
+        HolyDefenseEquipSelectedGear(
+            "automatic rotation",
+            gear
+        )
+
+        return false
+    end
+
+    if gear == "Shovel" then
+
+        return HolyDefenseUseShovel(
+            threat
+        )
+    end
+
+    return HolyDefenseUseStrawberry(
+        threat
+    )
+end
+
+function HolyDefenseRecordPriority(record)
+
+    if type(record) ~= "table"
+    or typeof(record.Ref) ~= "Instance"
+    or record.Ref.Parent == nil then
+
+        return math.huge,
+            nil
+    end
+
+    local state =
+        HolyCleanText(
+            HolyDefenseReadAnyAttr(
+                record.Ref,
+                {
+                    "State",
+                    "PetState",
+                }
+            )
+            or ""
+        )
+
+    if HolySniperPetBuyStateLooksPending(
+        state
+    ) ~= true then
+
+        return math.huge,
+            nil
+    end
+
+    local owner =
+        tonumber(
+            HolyDefenseReadAnyAttr(
+                record.Ref,
+                {
+                    "OwnerUserId",
+                    "OwnerUserID",
+                    "Owner",
+                    "UserId",
+                    "UserID",
+                }
+            )
+        )
+        or 0
+
+    local resultOwner =
+        tonumber(
+            record.LastResultOwnerUserId
+        )
+        or 0
+
+    local ownedByLocal =
+        owner == tonumber(
+            LocalPlayer.UserId
+        )
+        or (
+            owner <= 0
+            and resultOwner == tonumber(
+                LocalPlayer.UserId
+            )
+        )
+
+    if owner > 0
+    and owner ~= tonumber(
+        LocalPlayer.UserId
+    ) then
+
+        return 1,
+            nil
+    end
+
+    if owner <= 0
+    and resultOwner > 0
+    and resultOwner ~= tonumber(
+        LocalPlayer.UserId
+    ) then
+
+        return 1,
+            nil
+    end
+
+    if ownedByLocal == true then
+
+        local targetPos =
+            HolyDefenseGetPosition(
+                record.Ref
+            )
+
+        local threat =
+            typeof(targetPos) == "Vector3"
+            and HolyDefenseFindThreat(
+                targetPos
+            )
+            or nil
+
+        return threat ~= nil
+            and 2
+            or 3,
+            threat
+    end
+
+    return 4,
+        nil
+end
+
+function HolyDefenseImmediatePriorityActive()
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HolyDefenseRotationRuntime()
+
+    if runtime.Active == true
+    and typeof(runtime.Target) == "Instance"
+    and runtime.Target.Parent ~= nil then
+
+        local owner =
+            tonumber(
+                HolyDefenseReadAnyAttr(
+                    runtime.Target,
+                    {
+                        "OwnerUserId",
+                        "OwnerUserID",
+                        "Owner",
+                        "UserId",
+                        "UserID",
+                    }
+                )
+            )
+            or 0
+
+        if owner > 0
+        and owner ~= tonumber(
+            LocalPlayer.UserId
+        ) then
+
+            return true
+        end
+
+        local targetPos =
+            HolyDefenseGetPosition(
+                runtime.Target
+            )
+
+        if typeof(targetPos) == "Vector3"
+        and HolyDefenseFindThreat(
+            targetPos
+        ) ~= nil then
+
+            return true
+        end
+    end
+
+    local best,
+        priority =
+        HolyDefenseBestQueuedRecord()
+
+    if type(best) == "table"
+    and priority <= 2 then
+
+        if runtime.Active ~= true then
+
+            HolyDefenseMonitorScan()
+        end
+
+        return true
+    end
+
+    return false
+end
+
+HolyDefenseOnTameResult =
+    HOLY_DEFENSE_UPGRADED_ON_TAME_RESULT
+
+HolyDefenseTryRebuy =
+    HOLY_DEFENSE_UPGRADED_TRY_REBUY
+
+HolyDefenseRunWorker =
+    HOLY_DEFENSE_UPGRADED_RUN_WORKER
+
+
 function HolySniperMaybeReturnAfterBatchNoMatches(token)
 
     HolySniperBatchEnsureRuntime()
@@ -54662,7 +56641,7 @@ function HolySaveSniperSettings()
             HOLY_SNIPER_STATE.DefendBoughtPets == true,
 
         DefenseGearVersion =
-            2,
+            3,
 
         DefendGear =
             HolyDefenseNormalizeGear(
@@ -54676,6 +56655,70 @@ function HolySaveSniperSettings()
 
         DefendRebuyIfStolen =
             HOLY_SNIPER_STATE.DefendRebuyIfStolen == true,
+
+        DefendThreatRadius =
+            HolyDefenseReadConfigNumber(
+                "DefendThreatRadius",
+                45,
+                10,
+                150
+            ),
+
+        DefendStrawberryRange =
+            HolyDefenseReadConfigNumber(
+                "DefendStrawberryRange",
+                60,
+                10,
+                200
+            ),
+
+        DefendStrawberryHitbox =
+            HolyDefenseReadConfigNumber(
+                "DefendStrawberryHitbox",
+                6,
+                1,
+                20
+            ),
+
+        DefendStrawberryBurst =
+            math.floor(
+                HolyDefenseReadConfigNumber(
+                    "DefendStrawberryBurst",
+                    2,
+                    1,
+                    3
+                )
+            ),
+
+        DefendShovelEngageRange =
+            HolyDefenseReadConfigNumber(
+                "DefendShovelEngageRange",
+                7,
+                3.6,
+                30
+            ),
+
+        DefendShovelHitRange =
+            HolyDefenseReadConfigNumber(
+                "DefendShovelHitRange",
+                7,
+                3.6,
+                20
+            ),
+
+        DefendToolSwapDelay =
+            HolyDefenseReadConfigNumber(
+                "DefendToolSwapDelay",
+                0.6,
+                0.1,
+                2
+            ),
+
+        DefendPredictMovement =
+            HOLY_SNIPER_STATE.DefendPredictMovement ~= false,
+
+        DefendSmartRange =
+            HOLY_SNIPER_STATE.DefendSmartRange ~= false,
 
         BuilderPet =
             HolySniperResolvePetDisplay(
@@ -54869,16 +56912,16 @@ function HolyLoadSniperSettings()
             data.DefenseGearVersion
         )
         or 0
-    ) < 2 then
+    ) < 3 then
 
         savedDefenseGear =
-            "Auto"
+            "Auto Rotation"
     end
 
     HOLY_SNIPER_STATE.DefendGear =
         HolyDefenseNormalizeGear(
             savedDefenseGear
-            or "Auto"
+            or "Auto Rotation"
         )
 
     HOLY_SNIPER_STATE.DefendMovement =
@@ -54890,6 +56933,84 @@ function HolyLoadSniperSettings()
 
     HOLY_SNIPER_STATE.DefendRebuyIfStolen =
         data.DefendRebuyIfStolen ~= false
+
+    HOLY_SNIPER_STATE.DefendThreatRadius =
+        math.clamp(
+            tonumber(
+                data.DefendThreatRadius
+            )
+            or 45,
+            10,
+            150
+        )
+
+    HOLY_SNIPER_STATE.DefendStrawberryRange =
+        math.clamp(
+            tonumber(
+                data.DefendStrawberryRange
+            )
+            or 60,
+            10,
+            200
+        )
+
+    HOLY_SNIPER_STATE.DefendStrawberryHitbox =
+        math.clamp(
+            tonumber(
+                data.DefendStrawberryHitbox
+            )
+            or 6,
+            1,
+            20
+        )
+
+    HOLY_SNIPER_STATE.DefendStrawberryBurst =
+        math.floor(
+            math.clamp(
+                tonumber(
+                    data.DefendStrawberryBurst
+                )
+                or 2,
+                1,
+                3
+            )
+        )
+
+    HOLY_SNIPER_STATE.DefendShovelEngageRange =
+        math.clamp(
+            tonumber(
+                data.DefendShovelEngageRange
+            )
+            or 7,
+            3.6,
+            30
+        )
+
+    HOLY_SNIPER_STATE.DefendShovelHitRange =
+        math.clamp(
+            tonumber(
+                data.DefendShovelHitRange
+            )
+            or 7,
+            3.6,
+            20
+        )
+
+    HOLY_SNIPER_STATE.DefendToolSwapDelay =
+        math.clamp(
+            tonumber(
+                data.DefendToolSwapDelay
+            )
+            or 0.6,
+            0.1,
+            2
+        )
+
+    HOLY_SNIPER_STATE.DefendPredictMovement =
+        data.DefendPredictMovement ~= false
+
+    HOLY_SNIPER_STATE.DefendSmartRange =
+        data.DefendSmartRange ~= false
 
     HOLY_SNIPER_STATE.BuilderPet =
         HolySniperResolvePetDisplay(
@@ -150912,6 +153033,15 @@ local SniperDefenseBox =
         "shield"
     )
 
+local SniperAdvancedDefenseBox =
+    HolyAddLeftGroupbox(
+        Tabs.Sniper,
+        "Sniper.AdvancedPetDefense",
+        "Advanced Defense",
+        "sliders-horizontal"
+    )
+ 
+
 local SniperExecutionBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
@@ -162223,9 +164353,10 @@ HOLY_SNIPER_UI.DefenseGearDropdown =
         "HolySniperDefendGear",
         {
             Text =
-                "Defend Gear",
+                "Defense Gear",
 
             Values = {
+                "Auto Rotation",
                 "Strawberry Sniper",
                 "Shovel",
             },
@@ -162242,10 +164373,10 @@ HOLY_SNIPER_UI.DefenseGearDropdown =
                 false,
 
             MaxVisibleDropdownItems =
-                2,
+                3,
 
             Tooltip =
-                "Auto-equips only while defense is active.",
+                "Auto Rotation uses Strawberry at range and switches to Shovel when the threat gets close.",
         }
     )
 
@@ -162253,6 +164384,342 @@ HOLY_SNIPER_UI.DefenseGearDropdown:OnChanged(function(value)
 
     HolyDefenseSetGear(
         value
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseThreatRadiusSlider =
+    SniperAdvancedDefenseBox:AddSlider(
+        "HolySniperDefenseThreatRadius",
+        {
+            Text =
+                "Threat Radius",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendThreatRadius,
+
+            Min =
+                10,
+
+            Max =
+                150,
+
+            Rounding =
+                0,
+
+            Suffix =
+                " studs",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "How far from the bought pet a nearby player can be before defense considers them a threat. The exact thief is always targeted.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseThreatRadiusSlider:OnChanged(function(value)
+
+    HolyDefenseSetConfigNumber(
+        "DefendThreatRadius",
+        value,
+        45,
+        10,
+        150
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseStrawberryRangeSlider =
+    SniperAdvancedDefenseBox:AddSlider(
+        "HolySniperDefenseStrawberryRange",
+        {
+            Text =
+                "Strawberry Range",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendStrawberryRange,
+
+            Min =
+                10,
+
+            Max =
+                200,
+
+            Rounding =
+                0,
+
+            Suffix =
+                " studs",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Maximum client-side distance where Strawberry shots are attempted. The server may still enforce its own range.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseStrawberryRangeSlider:OnChanged(function(value)
+
+    HolyDefenseSetConfigNumber(
+        "DefendStrawberryRange",
+        value,
+        60,
+        10,
+        200
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseStrawberryHitboxSlider =
+    SniperAdvancedDefenseBox:AddSlider(
+        "HolySniperDefenseStrawberryHitbox",
+        {
+            Text =
+                "Strawberry Hitbox",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendStrawberryHitbox,
+
+            Min =
+                1,
+
+            Max =
+                20,
+
+            Rounding =
+                1,
+
+            Suffix =
+                " studs",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Virtual aim radius used for predicted Strawberry shots. It does not visibly resize player parts.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseStrawberryHitboxSlider:OnChanged(function(value)
+
+    HolyDefenseSetConfigNumber(
+        "DefendStrawberryHitbox",
+        value,
+        6,
+        1,
+        20
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseStrawberryBurstSlider =
+    SniperAdvancedDefenseBox:AddSlider(
+        "HolySniperDefenseStrawberryBurst",
+        {
+            Text =
+                "Strawberry Burst",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendStrawberryBurst,
+
+            Min =
+                1,
+
+            Max =
+                3,
+
+            Rounding =
+                0,
+
+            Suffix =
+                " shots",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Number of aim points fired per Strawberry attack cycle.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseStrawberryBurstSlider:OnChanged(function(value)
+
+    HolyDefenseSetConfigNumber(
+        "DefendStrawberryBurst",
+        math.floor(
+            tonumber(value)
+            or 2
+        ),
+        2,
+        1,
+        3
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseShovelEngageRangeSlider =
+    SniperAdvancedDefenseBox:AddSlider(
+        "HolySniperDefenseShovelEngageRange",
+        {
+            Text =
+                "Shovel Engage Range",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendShovelEngageRange,
+
+            Min =
+                3.6,
+
+            Max =
+                30,
+
+            Rounding =
+                1,
+
+            Suffix =
+                " studs",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Auto Rotation switches to Shovel inside this distance. It switches back two studs beyond it to prevent flickering.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseShovelEngageRangeSlider:OnChanged(function(value)
+
+    HolyDefenseSetConfigNumber(
+        "DefendShovelEngageRange",
+        value,
+        7,
+        3.6,
+        30
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseShovelHitRangeSlider =
+    SniperAdvancedDefenseBox:AddSlider(
+        "HolySniperDefenseShovelHitRange",
+        {
+            Text =
+                "Shovel Hit Range",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendShovelHitRange,
+
+            Min =
+                3.6,
+
+            Max =
+                20,
+
+            Rounding =
+                1,
+
+            Suffix =
+                " studs",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Distance where Shovel packets are attempted. Smart Range keeps closing toward the confirmed reliable distance.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseShovelHitRangeSlider:OnChanged(function(value)
+
+    HolyDefenseSetConfigNumber(
+        "DefendShovelHitRange",
+        value,
+        7,
+        3.6,
+        20
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseToolSwapDelaySlider =
+    SniperAdvancedDefenseBox:AddSlider(
+        "HolySniperDefenseToolSwapDelay",
+        {
+            Text =
+                "Tool Swap Delay",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendToolSwapDelay,
+
+            Min =
+                0.1,
+
+            Max =
+                2,
+
+            Rounding =
+                2,
+
+            Suffix =
+                "s",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Minimum normal delay between Strawberry and Shovel. Emergency close-range Shovel switches can bypass it.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseToolSwapDelaySlider:OnChanged(function(value)
+
+    HolyDefenseSetConfigNumber(
+        "DefendToolSwapDelay",
+        value,
+        0.6,
+        0.1,
+        2
+    )
+end)
+
+HOLY_SNIPER_UI.DefensePredictMovementToggle =
+    SniperAdvancedDefenseBox:AddToggle(
+        "HolySniperDefensePredictMovement",
+        {
+            Text =
+                "Predict Movement",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendPredictMovement ~= false,
+
+            Tooltip =
+                "Leads Strawberry aim and Shovel interception using the threat's current movement.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefensePredictMovementToggle:OnChanged(function(value)
+
+    HolyDefenseSetConfigToggle(
+        "DefendPredictMovement",
+        value == true
+    )
+end)
+
+HOLY_SNIPER_UI.DefenseSmartRangeToggle =
+    SniperAdvancedDefenseBox:AddToggle(
+        "HolySniperDefenseSmartRange",
+        {
+            Text =
+                "Smart Range",
+
+            Default =
+                HOLY_SNIPER_STATE.DefendSmartRange ~= false,
+
+            Tooltip =
+                "Attempts your custom Shovel range while still closing to about 2.9 studs so range checks cannot leave defense standing too far away.",
+        }
+    )
+
+HOLY_SNIPER_UI.DefenseSmartRangeToggle:OnChanged(function(value)
+
+    HolyDefenseSetConfigToggle(
+        "DefendSmartRange",
+        value == true
     )
 end)
 
