@@ -3134,6 +3134,15 @@ if type(HOLY_SHOP_STATE) == "table" then
     end
 end
 
+if type(HOLY_PET_SELL_RUNTIME) == "table" then
+
+    HOLY_PET_SELL_RUNTIME.Token =
+        nil
+
+    HOLY_PET_SELL_RUNTIME.Busy =
+        false
+end
+
 HOLY_SHOP_STATE = {
     Mode = "Buy",
 
@@ -3213,6 +3222,9 @@ HOLY_SHOP_STATE = {
 
     AutoSellFruits = false,
     SellMethod = "Sell All",
+
+    PetSellSelectedKey = "",
+    PetSellKeepAmount = 1,
 
     AutoDoubleOrNothing = false,
     DoubleTargetWins = "1",
@@ -11761,6 +11773,23 @@ function HolySaveShopSettings()
         AutoSellFruits =
             HOLY_SHOP_STATE.AutoSellFruits == true,
 
+        PetSellSelectedKey =
+            tostring(
+                HOLY_SHOP_STATE.PetSellSelectedKey
+                or ""
+            ),
+
+        PetSellKeepAmount =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(
+                        HOLY_SHOP_STATE.PetSellKeepAmount
+                    )
+                    or 1
+                )
+            ),
+
         AutoDoubleOrNothing =
             HOLY_SHOP_STATE.AutoDoubleOrNothing == true,
 
@@ -12099,6 +12128,34 @@ function HolyLoadShopSettings()
 
     HOLY_SHOP_STATE.AutoSellFruits =
         data.AutoSellFruits == true
+
+    HOLY_SHOP_STATE.PetSellSelectedKey =
+        tostring(
+            data.PetSellSelectedKey
+            or ""
+        )
+
+    local loadedPetSellKeepAmount =
+        tonumber(
+            data.PetSellKeepAmount
+        )
+
+    if type(loadedPetSellKeepAmount) ~= "number"
+    or loadedPetSellKeepAmount ~= loadedPetSellKeepAmount
+    or loadedPetSellKeepAmount == math.huge
+    or loadedPetSellKeepAmount == -math.huge then
+
+        loadedPetSellKeepAmount =
+            1
+    end
+
+    HOLY_SHOP_STATE.PetSellKeepAmount =
+        math.max(
+            0,
+            math.floor(
+                loadedPetSellKeepAmount
+            )
+        )
 
     HOLY_SHOP_STATE.AutoDoubleOrNothing =
         data.AutoDoubleOrNothing == true
@@ -45042,6 +45099,14 @@ function HolyPetInventoryRefreshUI(force)
     HOLY_PET_INVENTORY_RUNTIME.RefreshQueued =
         false
 
+    if type(HolyPetSellRefreshDropdown) == "function" then
+
+        HolyPetSellRefreshDropdown(
+            false,
+            rows
+        )
+    end
+
     local list =
         HOLY_PET_INVENTORY_UI.List
 
@@ -45378,6 +45443,1629 @@ function HolyPetInventoryStart()
     return true
 end
 
+--==================================================
+-- PET SELLER
+--==================================================
+
+HOLY_PET_SELL_RUNTIME = {
+    Busy = false,
+    Token = nil,
+    Status = "Ready",
+    UpdatingUI = false,
+    DisplayToKey = {},
+    KeyToDisplay = {},
+    LastDropdownSignature = "",
+}
+
+function HolyPetSellReadKeepAmount(value)
+
+    local amount =
+        tonumber(
+            value
+        )
+
+    if type(amount) ~= "number"
+    or amount ~= amount
+    or amount == math.huge
+    or amount == -math.huge then
+
+        amount =
+            tonumber(
+                HOLY_SHOP_STATE
+                and HOLY_SHOP_STATE.PetSellKeepAmount
+            )
+            or 1
+    end
+
+    return math.max(
+        0,
+        math.floor(
+            amount
+        )
+    )
+end
+
+function HolyPetSellPrettyName(value)
+
+    return HolyCleanText(
+        tostring(
+            value
+            or ""
+        )
+            :gsub("_", " ")
+            :gsub("(%l)(%u)", "%1 %2")
+            :gsub("(%u)(%u%l)", "%1 %2")
+    )
+end
+
+function HolyPetSellReadSize(tool)
+
+    local sizeName =
+        HolySniperNormalizeSizeName(
+            HolySniperReadLiveSize(
+                tool,
+                nil
+            )
+        )
+
+    if sizeName == ""
+    or sizeName == "Any"
+    or sizeName == "Normal" then
+
+        local lowerName =
+            tostring(
+                tool.Name
+                or ""
+            ):lower()
+
+        if lowerName:match("^huge%s+")
+        or lowerName:match("^mega%s+") then
+
+            sizeName =
+                "Huge"
+
+        elseif lowerName:match("^big%s+") then
+
+            sizeName =
+                "Big"
+
+        else
+
+            sizeName =
+                "Normal"
+        end
+    end
+
+    return sizeName
+end
+
+function HolyPetSellReadVariant(tool)
+
+    local variantName =
+        HolySniperNormalizeVariantName(
+            HolySniperReadLiveVariant(
+                tool,
+                nil
+            )
+        )
+
+    if variantName == ""
+    or variantName == "Any" then
+
+        variantName =
+            "Normal"
+    end
+
+    return variantName
+end
+
+function HolyPetSellGroupKey(
+    petName,
+    sizeName,
+    variantName
+)
+
+    return HolySniperPetAliasKey(
+        petName
+    )
+        .. "|"
+        .. HolySniperPetAliasKey(
+            sizeName
+        )
+        .. "|"
+        .. HolySniperPetAliasKey(
+            variantName
+        )
+end
+
+function HolyPetSellScan()
+
+    local snapshot = {
+        Pets = {},
+        ById = {},
+        Groups = {},
+        Total = 0,
+        Ambiguous = {},
+        DuplicateIds = {},
+    }
+
+    local backpack =
+        LocalPlayer
+        and LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+        or nil
+
+    local roots = {
+        {
+            Name = "Backpack",
+            Instance = backpack,
+        },
+
+        {
+            Name = "Character",
+
+            Instance =
+                LocalPlayer
+                and LocalPlayer.Character
+                or nil,
+        },
+    }
+
+    for _, rootData in ipairs(
+        roots
+    ) do
+
+        local root =
+            rootData.Instance
+
+        if typeof(root) == "Instance" then
+
+            for _, tool in ipairs(
+                root:GetChildren()
+            ) do
+
+                if tool:IsA("Tool") then
+
+                    local attributes =
+                        {}
+
+                    pcall(function()
+
+                        attributes =
+                            tool:GetAttributes()
+                    end)
+
+                    local rawPetId =
+                        attributes.PetId
+
+                    if rawPetId == nil then
+
+                        rawPetId =
+                            attributes.PetID
+                    end
+
+                    local petId =
+                        HolyCleanText(
+                            rawPetId
+                        )
+
+                    local rawPetName =
+                        HolyCleanText(
+                            attributes.Pet
+                            or attributes.PetName
+                            or ""
+                        )
+
+                    local looksLikePet =
+                        petId ~= ""
+                        or rawPetName ~= ""
+
+                    if looksLikePet == true then
+
+                        if petId == ""
+                        or rawPetName == ""
+                        or (
+                            typeof(rawPetId) ~= "string"
+                            and typeof(rawPetId) ~= "number"
+                        ) then
+
+                            table.insert(
+                                snapshot.Ambiguous,
+                                tostring(
+                                    tool.Name
+                                )
+                            )
+
+                        elseif snapshot.ById[
+                            petId
+                        ] ~= nil then
+
+                            table.insert(
+                                snapshot.DuplicateIds,
+                                petId
+                            )
+
+                        else
+
+                            local petName =
+                                HolyPetSellPrettyName(
+                                    rawPetName
+                                )
+
+                            local sizeName =
+                                HolyPetSellReadSize(
+                                    tool
+                                )
+
+                            local variantName =
+                                HolyPetSellReadVariant(
+                                    tool
+                                )
+
+                            local groupKey =
+                                HolyPetSellGroupKey(
+                                    petName,
+                                    sizeName,
+                                    variantName
+                                )
+
+                            local equipped =
+                                rootData.Name
+                                == "Character"
+
+                            local record = {
+                                PetId = petId,
+                                RawPetId = rawPetId,
+                                PetName = petName,
+                                Size = sizeName,
+                                Variant = variantName,
+                                GroupKey = groupKey,
+                                Equipped = equipped,
+                                Source = rootData.Name,
+                                Ref = tool,
+                            }
+
+                            snapshot.ById[
+                                petId
+                            ] =
+                                record
+
+                            table.insert(
+                                snapshot.Pets,
+                                record
+                            )
+
+                            snapshot.Total =
+                                snapshot.Total
+                                + 1
+
+                            local group =
+                                snapshot.Groups[
+                                    groupKey
+                                ]
+
+                            if type(group) ~= "table" then
+
+                                group = {
+                                    Key = groupKey,
+                                    Name = petName,
+                                    Size = sizeName,
+                                    Variant = variantName,
+                                    Count = 0,
+                                    Sellable = 0,
+                                    Equipped = 0,
+                                }
+
+                                snapshot.Groups[
+                                    groupKey
+                                ] =
+                                    group
+                            end
+
+                            group.Count =
+                                group.Count
+                                + 1
+
+                            if equipped == true then
+
+                                group.Equipped =
+                                    group.Equipped
+                                    + 1
+                            end
+
+                            if equipped ~= true
+                            and rootData.Name == "Backpack" then
+
+                                group.Sellable =
+                                    group.Sellable
+                                    + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(
+        snapshot.Pets,
+        function(left, right)
+
+            return tostring(
+                left.PetId
+            ) < tostring(
+                right.PetId
+            )
+        end
+    )
+
+    return snapshot
+end
+
+function HolyPetSellSnapshotsMatch(
+    left,
+    right
+)
+
+    if type(left) ~= "table"
+    or type(right) ~= "table"
+    or left.Total ~= right.Total
+    or #left.Ambiguous ~= #right.Ambiguous
+    or #left.DuplicateIds ~= #right.DuplicateIds then
+
+        return false
+    end
+
+    for petId, leftPet in pairs(
+        left.ById
+    ) do
+
+        local rightPet =
+            right.ById[
+                petId
+            ]
+
+        if type(rightPet) ~= "table"
+        or rightPet.GroupKey ~= leftPet.GroupKey
+        or rightPet.Equipped ~= leftPet.Equipped
+        or rightPet.Source ~= leftPet.Source then
+
+            return false
+        end
+    end
+
+    for petId in pairs(
+        right.ById
+    ) do
+
+        if left.ById[
+            petId
+        ] == nil then
+
+            return false
+        end
+    end
+
+    return true
+end
+
+function HolyPetSellWaitForStableInventory(
+    runtime,
+    token
+)
+
+    local previous =
+        HolyPetSellScan()
+
+    local matchingPasses =
+        0
+
+    local deadline =
+        os.clock()
+        + 5
+
+    repeat
+
+        task.wait(
+            0.35
+        )
+
+        if runtime.Token
+            ~= token then
+
+            return previous,
+                false
+        end
+
+        local current =
+            HolyPetSellScan()
+
+        local clean =
+            #previous.Ambiguous == 0
+            and #previous.DuplicateIds == 0
+            and #current.Ambiguous == 0
+            and #current.DuplicateIds == 0
+
+        if clean == true
+        and HolyPetSellSnapshotsMatch(
+            previous,
+            current
+        ) == true then
+
+            matchingPasses =
+                matchingPasses
+                + 1
+
+        else
+
+            matchingPasses =
+                0
+        end
+
+        previous =
+            current
+
+    until matchingPasses >= 2
+    or os.clock() >= deadline
+
+    return previous,
+        matchingPasses >= 2
+end
+
+function HolyPetSellFormatGroup(group)
+
+    if type(group) ~= "table" then
+        return ""
+    end
+
+    return tostring(
+        group.Name
+        or "Pet"
+    )
+        .. " · "
+        .. tostring(
+            group.Size
+            or "Normal"
+        )
+        .. " · "
+        .. tostring(
+            group.Variant
+            or "Normal"
+        )
+        .. "  ×"
+        .. tostring(
+            group.Count
+            or 0
+        )
+end
+
+function HolyPetSellBuildDropdownData(
+    inventoryRows
+)
+
+    inventoryRows =
+        type(inventoryRows) == "table"
+        and inventoryRows
+        or HolyPetInventoryScanRows()
+
+    local groups =
+        {}
+
+    for _, row in ipairs(
+        inventoryRows
+    ) do
+
+        table.insert(
+            groups,
+            {
+                Key =
+                    row.Key,
+
+                Name =
+                    row.Name,
+
+                Size =
+                    row.Size,
+
+                Variant =
+                    row.Variant,
+
+                Count =
+                    tonumber(
+                        row.Amount
+                    )
+                    or 0,
+            }
+        )
+    end
+
+    table.sort(groups, function(left, right)
+
+        local leftName =
+            tostring(
+                left.Name
+                or ""
+            ):lower()
+
+        local rightName =
+            tostring(
+                right.Name
+                or ""
+            ):lower()
+
+        if leftName ~= rightName then
+
+            return leftName
+                < rightName
+        end
+
+        local sizeOrder = {
+            Normal = 1,
+            Big = 2,
+            Huge = 3,
+        }
+
+        local leftSize =
+            sizeOrder[
+                left.Size
+            ]
+            or 50
+
+        local rightSize =
+            sizeOrder[
+                right.Size
+            ]
+            or 50
+
+        if leftSize ~= rightSize then
+
+            return leftSize
+                < rightSize
+        end
+
+        return tostring(
+            left.Variant
+            or ""
+        ) < tostring(
+            right.Variant
+            or ""
+        )
+    end)
+
+    local values = {
+        "Select a pet group",
+    }
+
+    local displayToKey =
+        {}
+
+    local keyToDisplay =
+        {}
+
+    local signatureParts =
+        {}
+
+    for _, group in ipairs(
+        groups
+    ) do
+
+        local display =
+            HolyPetSellFormatGroup(
+                group
+            )
+
+        table.insert(
+            values,
+            display
+        )
+
+        displayToKey[
+            display
+        ] =
+            group.Key
+
+        keyToDisplay[
+            group.Key
+        ] =
+            display
+
+        table.insert(
+            signatureParts,
+            tostring(
+                group.Key
+            )
+                .. ":"
+                .. tostring(
+                    group.Count
+                )
+        )
+    end
+
+    HOLY_PET_SELL_RUNTIME.DisplayToKey =
+        displayToKey
+
+    HOLY_PET_SELL_RUNTIME.KeyToDisplay =
+        keyToDisplay
+
+    return values,
+        table.concat(
+            signatureParts,
+            "|"
+        )
+end
+
+function HolyPetSellReadDropdownValue(value)
+
+    if type(value) ~= "table" then
+
+        return HolyCleanText(
+            value
+        )
+    end
+
+    for key, enabled in pairs(
+        value
+    ) do
+
+        if enabled == true then
+
+            return HolyCleanText(
+                key
+            )
+        end
+    end
+
+    return HolyCleanText(
+        value[1]
+    )
+end
+
+function HolyPetSellGetDropdownValues()
+
+    local values =
+        HolyPetSellBuildDropdownData()
+
+    return values
+end
+
+function HolyPetSellBuildReadyStatus()
+
+    local snapshot =
+        HolyPetSellScan()
+
+    local selectedKey =
+        tostring(
+            HOLY_SHOP_STATE.PetSellSelectedKey
+            or ""
+        )
+
+    local group =
+        snapshot.Groups[
+            selectedKey
+        ]
+
+    if type(group) ~= "table" then
+
+        return "Status: Select a pet group."
+    end
+
+    local keepAmount =
+        HolyPetSellReadKeepAmount(
+            HOLY_SHOP_STATE.PetSellKeepAmount
+        )
+
+    local planned =
+        math.min(
+            math.max(
+                0,
+                group.Count
+                    - keepAmount
+            ),
+            group.Sellable
+        )
+
+    return "Ready: "
+        .. tostring(
+            group.Count
+        )
+        .. " owned · "
+        .. tostring(
+            planned
+        )
+        .. " to sell · keep "
+        .. tostring(
+            keepAmount
+        )
+end
+
+function HolyPetSellSetStatus(text)
+
+    if type(HOLY_PET_SELL_RUNTIME) ~= "table" then
+        return false
+    end
+
+    HOLY_PET_SELL_RUNTIME.Status =
+        tostring(
+            text
+            or "Ready"
+        )
+
+    if type(HolySniperSetLabel) == "function" then
+
+        HolySniperSetLabel(
+            HOLY_SHOP_UI
+            and HOLY_SHOP_UI.PetSellStatusLabel
+            or nil,
+            HOLY_PET_SELL_RUNTIME.Status
+        )
+    end
+
+    return true
+end
+
+function HolyPetSellRefreshDropdown(
+    force,
+    inventoryRows
+)
+
+    local runtime =
+        HOLY_PET_SELL_RUNTIME
+
+    if type(runtime) ~= "table"
+    or runtime.Busy == true then
+
+        return false
+    end
+
+    local values,
+        signature =
+        HolyPetSellBuildDropdownData(
+            inventoryRows
+        )
+
+    local dropdown =
+        HOLY_SHOP_UI
+        and HOLY_SHOP_UI.PetSellDropdown
+        or nil
+
+    if type(dropdown) ~= "table" then
+        return false
+    end
+
+    if force ~= true
+    and signature
+        == runtime.LastDropdownSignature then
+
+        return false
+    end
+
+    runtime.LastDropdownSignature =
+        signature
+
+    local selectedKey =
+        tostring(
+            HOLY_SHOP_STATE.PetSellSelectedKey
+            or ""
+        )
+
+    if runtime.KeyToDisplay[
+        selectedKey
+    ] == nil then
+
+        selectedKey =
+            ""
+
+        HOLY_SHOP_STATE.PetSellSelectedKey =
+            ""
+    end
+
+    local selectedDisplay =
+        runtime.KeyToDisplay[
+            selectedKey
+        ]
+        or values[1]
+
+    runtime.UpdatingUI =
+        true
+
+    pcall(function()
+
+        if type(dropdown.SetValues) == "function" then
+
+            dropdown:SetValues(
+                values
+            )
+
+        elseif type(dropdown.SetItems) == "function" then
+
+            dropdown:SetItems(
+                values
+            )
+        end
+    end)
+
+    pcall(function()
+
+        if type(dropdown.SetValue) == "function" then
+
+            dropdown:SetValue(
+                selectedDisplay,
+                true
+            )
+        end
+    end)
+
+    task.defer(function()
+
+        if HOLY_PET_SELL_RUNTIME
+            == runtime then
+
+            runtime.UpdatingUI =
+                false
+        end
+    end)
+
+    return true
+end
+
+function HolyPetSellGetPacket()
+
+    local networking =
+        HolyShopRequireModule(
+            "SharedModules.Networking"
+        )
+
+    local sellPacket =
+        type(networking) == "table"
+        and type(networking.NPCS) == "table"
+        and networking.NPCS.SellPet
+        or nil
+
+    if type(sellPacket) ~= "table"
+    or type(sellPacket.Fire) ~= "function" then
+
+        return nil,
+            "Networking.NPCS.SellPet.Fire was not found."
+    end
+
+    if type(sellPacket.Writes) ~= "table"
+    or #sellPacket.Writes ~= 1 then
+
+        return nil,
+            "SellPet no longer accepts exactly one argument."
+    end
+
+    return sellPacket,
+        "ready"
+end
+
+function HolyPetSellStop(
+    reason,
+    notifyUser
+)
+
+    local runtime =
+        HOLY_PET_SELL_RUNTIME
+
+    if type(runtime) ~= "table" then
+        return false
+    end
+
+    local wasBusy =
+        runtime.Busy == true
+
+    runtime.Token =
+        nil
+
+    if wasBusy == true then
+
+        HolyPetSellSetStatus(
+            "Stopping after the current batch..."
+        )
+    end
+
+    if notifyUser == true
+    and wasBusy == true
+    and type(HolyNotify) == "function" then
+
+        HolyNotify(
+            "HOLY Pet Seller",
+            tostring(
+                reason
+                or "Stopping after the current batch."
+            ),
+            3
+        )
+    end
+
+    return wasBusy
+end
+
+function HolyPetSellStart()
+
+    local runtime =
+        HOLY_PET_SELL_RUNTIME
+
+    if type(runtime) ~= "table" then
+        return false
+    end
+
+    if runtime.Busy == true then
+
+        HolyNotify(
+            "HOLY Pet Seller",
+            "A pet-selling job is already running.",
+            3
+        )
+
+        return false
+    end
+
+    local selectedKey =
+        tostring(
+            HOLY_SHOP_STATE.PetSellSelectedKey
+            or ""
+        )
+
+    if selectedKey == "" then
+
+        HolyNotify(
+            "HOLY Pet Seller",
+            "Select a pet group first.",
+            4
+        )
+
+        return false
+    end
+
+    local keepAmount =
+        HolyPetSellReadKeepAmount(
+            HOLY_SHOP_STATE.PetSellKeepAmount
+        )
+
+    HOLY_SHOP_STATE.PetSellKeepAmount =
+        keepAmount
+
+    HolySaveShopSettings()
+
+    local token =
+        {}
+
+    runtime.Token =
+        token
+
+    runtime.Busy =
+        true
+
+    HolyPetSellSetStatus(
+        "Checking inventory..."
+    )
+
+    task.spawn(function()
+
+        local soldTotal =
+            0
+
+        local sellValueTotal =
+            0
+
+        local plannedTotal =
+            0
+
+        local finishedNormally =
+            false
+
+        local failureReason =
+            nil
+
+        local runOk,
+            runError =
+            pcall(function()
+
+                local sellPacket,
+                    packetReason =
+                    HolyPetSellGetPacket()
+
+                if type(sellPacket) ~= "table" then
+
+                    failureReason =
+                        packetReason
+
+                    return
+                end
+
+                local initial,
+                    stable =
+                    HolyPetSellWaitForStableInventory(
+                        runtime,
+                        token
+                    )
+
+                if runtime.Token
+                    ~= token then
+
+                    return
+                end
+
+                if stable ~= true then
+
+                    failureReason =
+                        "Inventory did not stay stable. Nothing was sold."
+
+                    return
+                end
+
+                if #initial.Ambiguous > 0
+                or #initial.DuplicateIds > 0 then
+
+                    failureReason =
+                        "Ambiguous or duplicate PetIds were detected. Nothing was sold."
+
+                    return
+                end
+
+                local initialGroup =
+                    initial.Groups[
+                        selectedKey
+                    ]
+
+                if type(initialGroup) ~= "table" then
+
+                    failureReason =
+                        "The selected pet group is no longer in your inventory."
+
+                    return
+                end
+
+                plannedTotal =
+                    math.min(
+                        math.max(
+                            0,
+                            initialGroup.Count
+                                - keepAmount
+                        ),
+                        initialGroup.Sellable
+                    )
+
+                if plannedTotal <= 0 then
+
+                    finishedNormally =
+                        true
+
+                    return
+                end
+
+                local allowedPetIds =
+                    {}
+
+                for _, pet in ipairs(
+                    initial.Pets
+                ) do
+
+                    if pet.GroupKey == selectedKey
+                    and pet.Equipped ~= true
+                    and pet.Source == "Backpack"
+                    and typeof(pet.Ref) == "Instance"
+                    and pet.Ref.Parent ~= nil then
+
+                        allowedPetIds[
+                            pet.PetId
+                        ] =
+                            true
+                    end
+                end
+
+                local batchNumber =
+                    0
+
+                while soldTotal < plannedTotal
+                and runtime.Token == token do
+
+                    local beforeBatch =
+                        HolyPetSellScan()
+
+                    if #beforeBatch.Ambiguous > 0
+                    or #beforeBatch.DuplicateIds > 0 then
+
+                        failureReason =
+                            "Inventory became ambiguous. Selling stopped."
+
+                        return
+                    end
+
+                    local currentGroup =
+                        beforeBatch.Groups[
+                            selectedKey
+                        ]
+
+                    if type(currentGroup) ~= "table" then
+
+                        finishedNormally =
+                            true
+
+                        return
+                    end
+
+                    local currentlyAllowed =
+                        math.max(
+                            0,
+                            currentGroup.Count
+                                - keepAmount
+                        )
+
+                    local wanted =
+                        math.min(
+                            5,
+                            plannedTotal
+                                - soldTotal,
+                            currentlyAllowed
+                        )
+
+                    if wanted <= 0 then
+
+                        finishedNormally =
+                            true
+
+                        return
+                    end
+
+                    local candidates =
+                        {}
+
+                    for _, pet in ipairs(
+                        beforeBatch.Pets
+                    ) do
+
+                        if #candidates >= wanted then
+                            break
+                        end
+
+                        if allowedPetIds[
+                            pet.PetId
+                        ] == true
+                        and pet.GroupKey == selectedKey
+                        and pet.Equipped ~= true
+                        and pet.Source == "Backpack"
+                        and typeof(pet.Ref) == "Instance"
+                        and pet.Ref.Parent ~= nil then
+
+                            table.insert(
+                                candidates,
+                                pet
+                            )
+                        end
+                    end
+
+                    if #candidates <= 0 then
+
+                        finishedNormally =
+                            true
+
+                        return
+                    end
+
+                    local immediate =
+                        HolyPetSellScan()
+
+                    if HolyPetSellSnapshotsMatch(
+                        beforeBatch,
+                        immediate
+                    ) ~= true then
+
+                        failureReason =
+                            "Inventory changed immediately before a batch. Selling stopped."
+
+                        return
+                    end
+
+                    local verified =
+                        {}
+
+                    local selectedSet =
+                        {}
+
+                    for _, candidate in ipairs(
+                        candidates
+                    ) do
+
+                        local livePet =
+                            immediate.ById[
+                                candidate.PetId
+                            ]
+
+                        if type(livePet) ~= "table"
+                        or livePet.GroupKey ~= selectedKey
+                        or livePet.Equipped == true
+                        or livePet.Source ~= "Backpack"
+                        or typeof(livePet.Ref) ~= "Instance"
+                        or livePet.Ref.Parent == nil then
+
+                            failureReason =
+                                "A selected pet failed final verification. Selling stopped."
+
+                            return
+                        end
+
+                        table.insert(
+                            verified,
+                            livePet
+                        )
+
+                        selectedSet[
+                            livePet.PetId
+                        ] =
+                            true
+                    end
+
+                    batchNumber =
+                        batchNumber
+                        + 1
+
+                    HolyPetSellSetStatus(
+                        "Selling batch "
+                            .. tostring(
+                                batchNumber
+                            )
+                            .. " · "
+                            .. tostring(
+                                soldTotal
+                            )
+                            .. "/"
+                            .. tostring(
+                                plannedTotal
+                            )
+                            .. " sold"
+                    )
+
+                    local responses =
+                        {}
+
+                    local completedCalls =
+                        0
+
+                    for index, pet in ipairs(
+                        verified
+                    ) do
+
+                        local batchPet =
+                            pet
+
+                        task.spawn(function()
+
+                            local callOk,
+                                response =
+                                pcall(function()
+
+                                    return sellPacket:Fire(
+                                        batchPet.RawPetId
+                                    )
+                                end)
+
+                            responses[
+                                index
+                            ] = {
+                                CallOk = callOk,
+                                Response = response,
+                            }
+
+                            completedCalls =
+                                completedCalls
+                                + 1
+                        end)
+                    end
+
+                    local packetDeadline =
+                        os.clock()
+                        + 10
+
+                    while completedCalls < #verified
+                    and os.clock() < packetDeadline do
+
+                        task.wait()
+                    end
+
+                    local afterBatch =
+                        HolyPetSellScan()
+
+                    local confirmationDeadline =
+                        os.clock()
+                        + 15
+
+                    local allTargetsRemoved =
+                        false
+
+                    repeat
+
+                        allTargetsRemoved =
+                            true
+
+                        for petId in pairs(
+                            selectedSet
+                        ) do
+
+                            if afterBatch.ById[
+                                petId
+                            ] ~= nil then
+
+                                allTargetsRemoved =
+                                    false
+
+                                break
+                            end
+                        end
+
+                        if allTargetsRemoved ~= true then
+
+                            task.wait(
+                                0.15
+                            )
+
+                            afterBatch =
+                                HolyPetSellScan()
+                        end
+
+                    until allTargetsRemoved == true
+                    or os.clock() >= confirmationDeadline
+
+                    local removedThisBatch =
+                        0
+
+                    for petId in pairs(
+                        selectedSet
+                    ) do
+
+                        if afterBatch.ById[
+                            petId
+                        ] == nil then
+
+                            removedThisBatch =
+                                removedThisBatch
+                                + 1
+
+                            allowedPetIds[
+                                petId
+                            ] =
+                                nil
+                        end
+                    end
+
+                    local untargetedRemoved =
+                        false
+
+                    for petId in pairs(
+                        immediate.ById
+                    ) do
+
+                        if afterBatch.ById[
+                            petId
+                        ] == nil
+                        and selectedSet[
+                            petId
+                        ] ~= true then
+
+                            untargetedRemoved =
+                                true
+
+                            break
+                        end
+                    end
+
+                    soldTotal =
+                        soldTotal
+                        + removedThisBatch
+
+                    for _, responseData in pairs(
+                        responses
+                    ) do
+
+                        local response =
+                            responseData.Response
+
+                        if responseData.CallOk == true
+                        and type(response) == "table"
+                        and response.Success == true then
+
+                            sellValueTotal =
+                                sellValueTotal
+                                + (
+                                    tonumber(
+                                        response.SellPrice
+                                    )
+                                    or 0
+                                )
+                        end
+                    end
+
+                    HolyPetInventoryScheduleRefresh()
+
+                    if completedCalls ~= #verified then
+
+                        failureReason =
+                            "A SellPet call timed out. Selling stopped after confirmation."
+
+                        return
+                    end
+
+                    if untargetedRemoved == true then
+
+                        failureReason =
+                            "An untargeted PetId disappeared. Selling stopped."
+
+                        return
+                    end
+
+                    if removedThisBatch ~= #verified then
+
+                        failureReason =
+                            "A targeted pet was not confirmed removed. Selling stopped."
+
+                        return
+                    end
+
+                    for index = 1, #verified do
+
+                        local responseData =
+                            responses[
+                                index
+                            ]
+
+                        local response =
+                            responseData
+                            and responseData.Response
+                            or nil
+
+                        if type(responseData) ~= "table"
+                        or responseData.CallOk ~= true
+                        or type(response) ~= "table"
+                        or response.Success ~= true then
+
+                            failureReason =
+                                "A SellPet response failed. Selling stopped."
+
+                            return
+                        end
+                    end
+
+                    task.wait(
+                        0.10
+                    )
+                end
+
+                if soldTotal >= plannedTotal then
+
+                    finishedNormally =
+                        true
+                end
+            end)
+
+        if runOk ~= true then
+
+            failureReason =
+                "Unexpected error: "
+                .. tostring(
+                    runError
+                )
+        end
+
+        local cancelled =
+            runtime.Token
+            ~= token
+
+        if runtime.Token
+            == token then
+
+            runtime.Token =
+                nil
+        end
+
+        runtime.Busy =
+            false
+
+        if HOLY_PET_SELL_RUNTIME
+            ~= runtime then
+
+            return
+        end
+
+        HolyPetInventoryScheduleRefresh()
+
+        HolyPetSellRefreshDropdown(
+            true
+        )
+
+        local finalSnapshot =
+            HolyPetSellScan()
+
+        local finalGroup =
+            finalSnapshot.Groups[
+                selectedKey
+            ]
+
+        local finalCount =
+            type(finalGroup) == "table"
+            and finalGroup.Count
+            or 0
+
+        if failureReason ~= nil then
+
+            HolyPetSellSetStatus(
+                "Stopped: "
+                    .. tostring(
+                        failureReason
+                    )
+                    .. " · sold "
+                    .. tostring(
+                        soldTotal
+                    )
+            )
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                tostring(
+                    failureReason
+                )
+                    .. " Sold "
+                    .. tostring(
+                        soldTotal
+                    )
+                    .. " pet(s) before stopping.",
+                6
+            )
+
+        elseif cancelled == true
+        and finishedNormally ~= true then
+
+            HolyPetSellSetStatus(
+                "Stopped: sold "
+                    .. tostring(
+                        soldTotal
+                    )
+                    .. " · "
+                    .. tostring(
+                        finalCount
+                    )
+                    .. " remain"
+            )
+
+        else
+
+            local finishText =
+                "Finished: sold "
+                .. tostring(
+                    soldTotal
+                )
+                .. " · "
+                .. tostring(
+                    finalCount
+                )
+                .. " remain · "
+                .. HolySellFormatValue(
+                    sellValueTotal
+                )
+
+            HolyPetSellSetStatus(
+                finishText
+            )
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                "Finished selling "
+                    .. tostring(
+                        soldTotal
+                    )
+                    .. " pet(s). "
+                    .. tostring(
+                        finalCount
+                    )
+                    .. " remain in that group.",
+                5
+            )
+        end
+    end)
+
+    return true
+end
 
 --==================================================
 -- FARM DETAILS
@@ -102689,6 +104377,17 @@ if type(Library.OnUnload) == "function" then
                 "unload"
             )
 
+            if type(HolyPetSellStop) == "function" then
+
+                pcall(function()
+
+                    HolyPetSellStop(
+                        "UI unloaded.",
+                        false
+                    )
+                end)
+            end
+
             if type(HOLY_MAIL_RUNTIME) == "table"
             and type(HOLY_MAIL_RUNTIME.Stop) == "function" then
 
@@ -153163,6 +154862,14 @@ local ShopFiltersBox =
         "filter"
     )
 
+local ShopPetSellerBox =
+    HolyAddLeftGroupbox(
+        Tabs.Shop,
+        "Shop.PetSeller",
+        "Pet Seller",
+        "paw-print"
+    )
+
 local ShopDoubleBox =
     HolyAddRightGroupbox(
         Tabs.Shop,
@@ -168522,6 +170229,11 @@ function HolyShopRefreshMode()
     )
 
     HolySetGroupboxVisible(
+        ShopPetSellerBox,
+        not isBuy
+    )
+
+    HolySetGroupboxVisible(
         ShopDoubleBox,
         not isBuy
     )
@@ -171618,6 +173330,182 @@ ShopFiltersBox:AddInput(
     end
 end)
 
+HOLY_SHOP_UI =
+    type(HOLY_SHOP_UI) == "table"
+    and HOLY_SHOP_UI
+    or {}
+
+HOLY_PET_SELL_RUNTIME.InitialValues =
+    HolyPetSellGetDropdownValues()
+
+HOLY_PET_SELL_RUNTIME.InitialKey =
+    tostring(
+        HOLY_SHOP_STATE.PetSellSelectedKey
+        or ""
+    )
+
+if HOLY_PET_SELL_RUNTIME.KeyToDisplay[
+    HOLY_PET_SELL_RUNTIME.InitialKey
+] == nil then
+
+    HOLY_PET_SELL_RUNTIME.InitialKey =
+        ""
+
+    HOLY_SHOP_STATE.PetSellSelectedKey =
+        ""
+end
+
+HOLY_SHOP_UI.PetSellDropdown =
+    ShopPetSellerBox:AddDropdown(
+        "HolyShopPetSellGroup",
+        {
+            Text =
+                "Pet Group",
+
+            Values =
+                HOLY_PET_SELL_RUNTIME.InitialValues,
+
+            Default =
+                HOLY_PET_SELL_RUNTIME.KeyToDisplay[
+                    HOLY_PET_SELL_RUNTIME.InitialKey
+                ]
+                or HOLY_PET_SELL_RUNTIME.InitialValues[
+                    1
+                ],
+
+            Multi =
+                false,
+
+            Searchable =
+                true,
+
+            MaxVisibleDropdownItems =
+                10,
+
+            Tooltip =
+                "Select one exact pet, size, and variant group. Normal, Big, Huge, and different variants remain separated.",
+        }
+    )
+
+HOLY_SHOP_UI.PetSellDropdown:OnChanged(function(value)
+
+    if HOLY_PET_SELL_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local display =
+        HolyPetSellReadDropdownValue(
+            value
+        )
+
+    local selectedKey =
+        HOLY_PET_SELL_RUNTIME.DisplayToKey[
+            display
+        ]
+
+    if selectedKey == nil then
+        return
+    end
+
+    HOLY_SHOP_STATE.PetSellSelectedKey =
+        selectedKey
+
+    HolySaveShopSettings()
+
+    HolyPetSellSetStatus(
+        HolyPetSellBuildReadyStatus()
+    )
+end)
+
+HOLY_SHOP_UI.PetSellKeepInput =
+    ShopPetSellerBox:AddInput(
+        "HolyShopPetSellKeepAmount",
+        {
+            Text =
+                "Keep Amount",
+
+            Default =
+                tostring(
+                    HolyPetSellReadKeepAmount(
+                        HOLY_SHOP_STATE.PetSellKeepAmount
+                    )
+                ),
+
+            Placeholder =
+                "1",
+
+            Numeric =
+                true,
+
+            Finished =
+                true,
+
+            ClearTextOnFocus =
+                false,
+
+            Tooltip =
+                "How many pets from the selected exact group to keep. The value commits after Enter or clicking away.",
+        }
+    )
+
+HOLY_SHOP_UI.PetSellKeepInput:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellKeepAmount =
+        HolyPetSellReadKeepAmount(
+            value
+        )
+
+    HolySaveShopSettings()
+
+    if HOLY_PET_SELL_RUNTIME.Busy ~= true then
+
+        HolyPetSellSetStatus(
+            HolyPetSellBuildReadyStatus()
+        )
+    end
+end)
+
+HOLY_SHOP_UI.PetSellStartButton =
+    ShopPetSellerBox:AddButton({
+        Text =
+            "Sell Extras",
+
+        Tooltip =
+            "Sells the selected exact pet group down to Keep Amount using confirmed batches of five.",
+
+        Func =
+            function()
+
+                HolyPetSellStart()
+            end,
+    })
+
+HOLY_SHOP_UI.PetSellStartButton:AddButton({
+    Text =
+        "Stop",
+
+    Tooltip =
+        "Stops before the next batch. Any batch already sent finishes confirmation first.",
+
+    Func =
+        function()
+
+            HolyPetSellStop(
+                "Stopped by user.",
+                true
+            )
+        end,
+})
+
+HOLY_SHOP_UI.PetSellStatusLabel =
+    HolySniperAddLabel(
+        ShopPetSellerBox,
+        HolyPetSellBuildReadyStatus()
+    )
+
+HolyPetSellRefreshDropdown(
+    true
+)
 
 HolyShopConnectStockSignals()
 
