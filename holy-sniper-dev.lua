@@ -35594,6 +35594,419 @@ function HolyGlobalPetSnipeFormatPrice(value)
     )
 end
 
+HOLY_GLOBAL_PET_SNIPE_ICON_CACHE =
+    type(HOLY_GLOBAL_PET_SNIPE_ICON_CACHE) == "table"
+    and HOLY_GLOBAL_PET_SNIPE_ICON_CACHE
+    or {}
+
+function HolyGlobalPetSnipeExtractAssetId(value)
+
+    local text =
+        HolyCleanText(
+            value
+        )
+
+    if text == "" then
+        return ""
+    end
+
+    local lower =
+        text:lower()
+
+    local assetId =
+        lower:match(
+            "^rbxassetid://(%d+)$"
+        )
+        or lower:match(
+            "^%d+$"
+        )
+        or lower:match(
+            "[?&]assetid=(%d+)"
+        )
+
+    if assetId == nil
+    and (
+        lower:find(
+            "rbxthumb://",
+            1,
+            true
+        ) ~= nil
+        or lower:find(
+            "roblox.com",
+            1,
+            true
+        ) ~= nil
+    ) then
+
+        assetId =
+            lower:match(
+                "[?&]id=(%d+)"
+            )
+    end
+
+    assetId =
+        tostring(
+            assetId
+            or ""
+        )
+
+    if assetId == ""
+    or assetId:match(
+        "^0+$"
+    ) then
+
+        return ""
+    end
+
+    return assetId
+end
+
+function HolyGlobalPetSnipeMakeThumbnailUrl(value)
+
+    local normalized =
+        ""
+
+    if type(
+        HolyAccountInventoryCoerceIcon
+    ) == "function" then
+
+        local ok,
+            result =
+            pcall(
+                HolyAccountInventoryCoerceIcon,
+                value
+            )
+
+        if ok == true then
+
+            normalized =
+                HolyCleanText(
+                    result
+                )
+        end
+    end
+
+    if normalized == "" then
+
+        normalized =
+            HolyCleanText(
+                value
+            )
+    end
+
+    if normalized == "" then
+        return ""
+    end
+
+    local assetId =
+        HolyGlobalPetSnipeExtractAssetId(
+            normalized
+        )
+
+    if assetId ~= "" then
+
+        return "https://www.roblox.com/asset-thumbnail/image?assetId="
+            .. assetId
+            .. "&width=420&height=420&format=png"
+    end
+
+    local lower =
+        normalized:lower()
+
+    if lower:match(
+        "^https://"
+    ) then
+
+        return normalized
+    end
+
+    if lower:match(
+        "^http://"
+    ) then
+
+        return "https://"
+            .. normalized:sub(
+                8
+            )
+    end
+
+    return ""
+end
+
+function HolyGlobalPetSnipeFirstThumbnail(
+    catalogs,
+    ...
+)
+
+    for index = 1, select(
+        "#",
+        ...
+    ) do
+
+        local candidate =
+            select(
+                index,
+                ...
+            )
+
+        if candidate ~= nil then
+
+            local resolved =
+                candidate
+
+            if type(
+                HolyAccountInventoryReadIconCandidate
+            ) == "function" then
+
+                local ok,
+                    result =
+                    pcall(
+                        HolyAccountInventoryReadIconCandidate,
+                        candidate,
+                        catalogs
+                    )
+
+                if ok == true then
+
+                    resolved =
+                        result
+                end
+            end
+
+            local thumbnailUrl =
+                HolyGlobalPetSnipeMakeThumbnailUrl(
+                    resolved
+                )
+
+            if thumbnailUrl ~= "" then
+
+                return thumbnailUrl
+            end
+        end
+    end
+
+    return ""
+end
+
+function HolyGlobalPetSnipeResolveThumbnail(
+    entry,
+    live,
+    data,
+    petName,
+    petKey,
+    mutation,
+    size,
+    variant
+)
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    live =
+        type(live) == "table"
+        and live
+        or {}
+
+    data =
+        type(data) == "table"
+        and data
+        or {}
+
+    local cacheKey =
+        table.concat(
+            {
+                HolySniperPetAliasKey(
+                    petKey ~= ""
+                    and petKey
+                    or petName
+                ),
+
+                HolySniperPetAliasKey(
+                    mutation
+                ),
+
+                HolySniperPetAliasKey(
+                    size
+                ),
+
+                HolySniperPetAliasKey(
+                    variant
+                ),
+            },
+            "|"
+        )
+
+    local cached =
+        HOLY_GLOBAL_PET_SNIPE_ICON_CACHE[
+            cacheKey
+        ]
+
+    if type(cached) == "string"
+    and cached ~= "" then
+
+        return cached
+    end
+
+    local catalogs =
+        {}
+
+    if type(
+        HolyAccountInventoryLoadCatalogs
+    ) == "function" then
+
+        local ok,
+            result =
+            pcall(
+                HolyAccountInventoryLoadCatalogs
+            )
+
+        if ok == true
+        and type(result) == "table" then
+
+            catalogs =
+                result
+        end
+    end
+
+    local catalogRow =
+        {}
+
+    if type(catalogs.Pets) == "table" then
+
+        local nameKey =
+            type(
+                HolyAccountInventoryKey
+            ) == "function"
+            and HolyAccountInventoryKey(
+                petName
+            )
+            or HolySniperPetAliasKey(
+                petName
+            )
+
+        local internalKey =
+            type(
+                HolyAccountInventoryKey
+            ) == "function"
+            and HolyAccountInventoryKey(
+                petKey
+            )
+            or HolySniperPetAliasKey(
+                petKey
+            )
+
+        catalogRow =
+            type(
+                catalogs.Pets[nameKey]
+            ) == "table"
+            and catalogs.Pets[nameKey]
+            or (
+                type(
+                    catalogs.Pets[internalKey]
+                ) == "table"
+                and catalogs.Pets[internalKey]
+                or {}
+            )
+    end
+
+    local thumbnailUrl =
+        HolyGlobalPetSnipeFirstThumbnail(
+            catalogs,
+
+            entry.IMG,
+            entry.PetImage,
+            entry.PetIcon,
+            entry.DisplayImage,
+            entry.DisplayIcon,
+            entry.ShopImage,
+            entry.Thumbnail,
+            entry.ThumbnailImage,
+            entry.Icon,
+            entry.Image,
+            entry.ImageId,
+            entry.ImageID,
+            entry.IconId,
+            entry.IconID,
+            entry.IconAssetId,
+            entry.ImageAssetId,
+            entry.AssetId,
+
+            live.IMG,
+            live.PetImage,
+            live.PetIcon,
+            live.DisplayImage,
+            live.DisplayIcon,
+            live.ShopImage,
+            live.Thumbnail,
+            live.ThumbnailImage,
+            live.Icon,
+            live.Image,
+            live.ImageId,
+            live.ImageID,
+            live.IconId,
+            live.IconID,
+            live.IconAssetId,
+            live.ImageAssetId,
+            live.AssetId,
+
+            data.IMG,
+            data.PetImage,
+            data.PetIcon,
+            data.DisplayImage,
+            data.DisplayIcon,
+            data.ShopImage,
+            data.Thumbnail,
+            data.ThumbnailImage,
+            data.Icon,
+            data.Image,
+            data.ImageId,
+            data.ImageID,
+            data.IconId,
+            data.IconID,
+            data.IconAssetId,
+            data.ImageAssetId,
+            data.AssetId,
+
+            catalogRow.IMG,
+            catalogRow.PetImage,
+            catalogRow.PetIcon,
+            catalogRow.DisplayImage,
+            catalogRow.DisplayIcon,
+            catalogRow.ShopImage,
+            catalogRow.Thumbnail,
+            catalogRow.ThumbnailImage,
+            catalogRow.Icon,
+            catalogRow.Image,
+            catalogRow.ImageId,
+            catalogRow.ImageID,
+            catalogRow.IconId,
+            catalogRow.IconID,
+            catalogRow.IconAssetId,
+            catalogRow.ImageAssetId,
+            catalogRow.AssetId,
+
+            entry.Ref,
+            entry.Model,
+
+            data,
+            catalogRow,
+            live,
+            entry
+        )
+
+    if thumbnailUrl ~= "" then
+
+        HOLY_GLOBAL_PET_SNIPE_ICON_CACHE[
+            cacheKey
+        ] =
+            thumbnailUrl
+    end
+
+    return thumbnailUrl
+end
+
 function HolyGlobalPetSnipeQueue(entry)
 
     if type(entry) ~= "table" then
@@ -35814,6 +36227,18 @@ function HolyGlobalPetSnipeQueue(entry)
         )
         or 0
 
+    local thumbnailUrl =
+        HolyGlobalPetSnipeResolveThumbnail(
+            entry,
+            live,
+            data,
+            petName,
+            petKey,
+            mutation,
+            size,
+            variant
+        )
+
     local boughtAt =
         os.time()
 
@@ -35850,6 +36275,14 @@ function HolyGlobalPetSnipeQueue(entry)
 
                 color =
                     5793266,
+
+                thumbnail =
+                    thumbnailUrl ~= ""
+                    and {
+                        url =
+                            thumbnailUrl,
+                    }
+                    or nil,
 
                 fields = {
                     {
