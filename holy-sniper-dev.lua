@@ -35599,11 +35599,72 @@ HOLY_GLOBAL_PET_SNIPE_ICON_CACHE =
     and HOLY_GLOBAL_PET_SNIPE_ICON_CACHE
     or {}
 
+HOLY_GLOBAL_PET_SNIPE_ASSET_CACHE =
+    type(HOLY_GLOBAL_PET_SNIPE_ASSET_CACHE) == "table"
+    and HOLY_GLOBAL_PET_SNIPE_ASSET_CACHE
+    or {}
+
+HOLY_GLOBAL_PET_SNIPE_REGISTRY =
+    type(HOLY_GLOBAL_PET_SNIPE_REGISTRY) == "table"
+    and HOLY_GLOBAL_PET_SNIPE_REGISTRY
+    or nil
+
+function HolyGlobalPetSnipeNameKey(value)
+
+    if type(
+        HolySniperPetAliasKey
+    ) == "function" then
+
+        local ok,
+            result =
+            pcall(
+                HolySniperPetAliasKey,
+                value
+            )
+
+        if ok == true
+        and type(result) == "string"
+        and result ~= "" then
+
+            return result
+        end
+    end
+
+    return HolyCleanText(
+        value
+    ):lower():gsub(
+        "[^%w]",
+        ""
+    )
+end
+
 function HolyGlobalPetSnipeExtractAssetId(value)
+
+    local normalized =
+        value
+
+    if type(
+        HolyAccountInventoryCoerceIcon
+    ) == "function" then
+
+        local ok,
+            result =
+            pcall(
+                HolyAccountInventoryCoerceIcon,
+                value
+            )
+
+        if ok == true
+        and result ~= nil then
+
+            normalized =
+                result
+        end
+    end
 
     local text =
         HolyCleanText(
-            value
+            normalized
         )
 
     if text == "" then
@@ -35621,28 +35682,11 @@ function HolyGlobalPetSnipeExtractAssetId(value)
             "^%d+$"
         )
         or lower:match(
-            "[?&]assetid=(%d+)"
+            "[?&]assetids?=(%d+)"
         )
-
-    if assetId == nil
-    and (
-        lower:find(
-            "rbxthumb://",
-            1,
-            true
-        ) ~= nil
-        or lower:find(
-            "roblox.com",
-            1,
-            true
-        ) ~= nil
-    ) then
-
-        assetId =
-            lower:match(
-                "[?&]id=(%d+)"
-            )
-    end
+        or lower:match(
+            "[?&]id=(%d+)"
+        )
 
     assetId =
         tostring(
@@ -35661,7 +35705,361 @@ function HolyGlobalPetSnipeExtractAssetId(value)
     return assetId
 end
 
-function HolyGlobalPetSnipeMakeThumbnailUrl(value)
+function HolyGlobalPetSnipeGetRegistry()
+
+    if type(
+        HOLY_GLOBAL_PET_SNIPE_REGISTRY
+    ) == "table" then
+
+        return HOLY_GLOBAL_PET_SNIPE_REGISTRY
+    end
+
+    local dataFolder =
+        ReplicatedStorage:FindFirstChild(
+            "Data"
+        )
+
+    local registryModule =
+        dataFolder
+        and dataFolder:FindFirstChild(
+            "PetRegistry"
+        )
+        or ReplicatedStorage:FindFirstChild(
+            "PetRegistry",
+            true
+        )
+
+    if not registryModule
+    or not registryModule:IsA(
+        "ModuleScript"
+    ) then
+
+        return nil
+    end
+
+    local ok,
+        result =
+        pcall(
+            require,
+            registryModule
+        )
+
+    if ok ~= true
+    or type(result) ~= "table" then
+
+        return nil
+    end
+
+    HOLY_GLOBAL_PET_SNIPE_REGISTRY =
+        result
+
+    return result
+end
+
+function HolyGlobalPetSnipeGetRegistryRow(
+    petName,
+    petKey
+)
+
+    local registry =
+        HolyGlobalPetSnipeGetRegistry()
+
+    if type(registry) ~= "table" then
+        return {}
+    end
+
+    local petList =
+        rawget(
+            registry,
+            "PetList"
+        )
+
+    if type(petList) ~= "table" then
+        return {}
+    end
+
+    local exactRow =
+        petList[
+            tostring(
+                petName
+                or ""
+            )
+        ]
+        or petList[
+            tostring(
+                petKey
+                or ""
+            )
+        ]
+
+    if type(exactRow) == "table" then
+        return exactRow
+    end
+
+    local wantedName =
+        HolyGlobalPetSnipeNameKey(
+            petName
+        )
+
+    local wantedKey =
+        HolyGlobalPetSnipeNameKey(
+            petKey
+        )
+
+    for registryKey, row in pairs(
+        petList
+    ) do
+
+        if type(row) == "table" then
+
+            local registryKeyName =
+                HolyGlobalPetSnipeNameKey(
+                    registryKey
+                )
+
+            local displayName =
+                HolyGlobalPetSnipeNameKey(
+                    row.DisplayName
+                    or row.PetName
+                    or row.Name
+                    or ""
+                )
+
+            if registryKeyName ~= ""
+            and (
+                registryKeyName == wantedName
+                or registryKeyName == wantedKey
+            ) then
+
+                return row
+            end
+
+            if displayName ~= ""
+            and (
+                displayName == wantedName
+                or displayName == wantedKey
+            ) then
+
+                return row
+            end
+        end
+    end
+
+    return {}
+end
+
+function HolyGlobalPetSnipeFetchAssetThumbnail(
+    assetId
+)
+
+    assetId =
+        tostring(
+            assetId
+            or ""
+        )
+
+    if assetId == ""
+    or not assetId:match(
+        "^%d+$"
+    ) then
+
+        return ""
+    end
+
+    local cached =
+        HOLY_GLOBAL_PET_SNIPE_ASSET_CACHE[
+            assetId
+        ]
+
+    if type(cached) == "string"
+    and cached ~= "" then
+
+        return cached
+    end
+
+    local requestUrl =
+        "https://thumbnails.roblox.com/v1/assets?assetIds="
+        .. assetId
+        .. "&returnPolicy=PlaceHolder"
+        .. "&size=420x420"
+        .. "&format=Png"
+        .. "&isCircular=false"
+
+    for attempt = 1, 3 do
+
+        local body =
+            ""
+
+        if type(
+            HolyHttpGet
+        ) == "function" then
+
+            local ok,
+                result =
+                pcall(
+                    HolyHttpGet,
+                    requestUrl
+                )
+
+            if ok == true
+            and type(result) == "string" then
+
+                body =
+                    result
+            end
+        end
+
+        if body == "" then
+
+            local requestFunction =
+                type(
+                    HolyGetRequestFunction
+                ) == "function"
+                and HolyGetRequestFunction()
+                or nil
+
+            if type(requestFunction) == "function" then
+
+                local requestOk,
+                    response =
+                    pcall(function()
+
+                        return requestFunction({
+                            Url =
+                                requestUrl,
+
+                            Method =
+                                "GET",
+
+                            Headers = {
+                                ["Accept"] =
+                                    "application/json",
+
+                                ["Cache-Control"] =
+                                    "no-cache",
+                            },
+                        })
+                    end)
+
+                if requestOk == true then
+
+                    if type(response) == "string" then
+
+                        body =
+                            response
+
+                    elseif type(response) == "table" then
+
+                        body =
+                            tostring(
+                                response.Body
+                                or response.body
+                                or response.ResponseBody
+                                or response.responseBody
+                                or ""
+                            )
+                    end
+                end
+            end
+        end
+
+        local decoded =
+            nil
+
+        if body ~= "" then
+
+            pcall(function()
+
+                decoded =
+                    HttpService:JSONDecode(
+                        body
+                    )
+            end)
+        end
+
+        local row =
+            type(decoded) == "table"
+            and type(decoded.data) == "table"
+            and decoded.data[1]
+            or nil
+
+        if type(row) == "table" then
+
+            local imageUrl =
+                HolyCleanText(
+                    row.imageUrl
+                    or row.imageURL
+                    or row.ImageUrl
+                    or row.ImageURL
+                    or ""
+                )
+
+            local state =
+                HolyCleanText(
+                    row.state
+                    or row.State
+                    or ""
+                ):lower()
+
+            if imageUrl:lower():match(
+                "^https://"
+            )
+            and (
+                state == ""
+                or state == "completed"
+            ) then
+
+                HOLY_GLOBAL_PET_SNIPE_ASSET_CACHE[
+                    assetId
+                ] =
+                    imageUrl
+
+                return imageUrl
+            end
+
+            if state ~= "pending" then
+                break
+            end
+        end
+
+        if attempt < 3 then
+
+            task.wait(
+                0.35
+            )
+        end
+    end
+
+    return ""
+end
+
+function HolyGlobalPetSnipeMakeThumbnailUrl(
+    value,
+    catalogs
+)
+
+    local resolved =
+        value
+
+    if type(
+        HolyAccountInventoryReadIconCandidate
+    ) == "function" then
+
+        local ok,
+            result =
+            pcall(
+                HolyAccountInventoryReadIconCandidate,
+                value,
+                catalogs
+            )
+
+        if ok == true
+        and result ~= nil then
+
+            resolved =
+                result
+        end
+    end
 
     local normalized =
         ""
@@ -35674,7 +36072,7 @@ function HolyGlobalPetSnipeMakeThumbnailUrl(value)
             result =
             pcall(
                 HolyAccountInventoryCoerceIcon,
-                value
+                resolved
             )
 
         if ok == true then
@@ -35690,7 +36088,7 @@ function HolyGlobalPetSnipeMakeThumbnailUrl(value)
 
         normalized =
             HolyCleanText(
-                value
+                resolved
             )
     end
 
@@ -35705,9 +36103,9 @@ function HolyGlobalPetSnipeMakeThumbnailUrl(value)
 
     if assetId ~= "" then
 
-        return "https://www.roblox.com/asset-thumbnail/image?assetId="
-            .. assetId
-            .. "&width=420&height=420&format=png"
+        return HolyGlobalPetSnipeFetchAssetThumbnail(
+            assetId
+        )
     end
 
     local lower =
@@ -35751,31 +36149,10 @@ function HolyGlobalPetSnipeFirstThumbnail(
 
         if candidate ~= nil then
 
-            local resolved =
-                candidate
-
-            if type(
-                HolyAccountInventoryReadIconCandidate
-            ) == "function" then
-
-                local ok,
-                    result =
-                    pcall(
-                        HolyAccountInventoryReadIconCandidate,
-                        candidate,
-                        catalogs
-                    )
-
-                if ok == true then
-
-                    resolved =
-                        result
-                end
-            end
-
             local thumbnailUrl =
                 HolyGlobalPetSnipeMakeThumbnailUrl(
-                    resolved
+                    candidate,
+                    catalogs
                 )
 
             if thumbnailUrl ~= "" then
@@ -35817,21 +36194,21 @@ function HolyGlobalPetSnipeResolveThumbnail(
     local cacheKey =
         table.concat(
             {
-                HolySniperPetAliasKey(
+                HolyGlobalPetSnipeNameKey(
                     petKey ~= ""
                     and petKey
                     or petName
                 ),
 
-                HolySniperPetAliasKey(
+                HolyGlobalPetSnipeNameKey(
                     mutation
                 ),
 
-                HolySniperPetAliasKey(
+                HolyGlobalPetSnipeNameKey(
                     size
                 ),
 
-                HolySniperPetAliasKey(
+                HolyGlobalPetSnipeNameKey(
                     variant
                 ),
             },
@@ -35882,7 +36259,7 @@ function HolyGlobalPetSnipeResolveThumbnail(
             and HolyAccountInventoryKey(
                 petName
             )
-            or HolySniperPetAliasKey(
+            or HolyGlobalPetSnipeNameKey(
                 petName
             )
 
@@ -35893,7 +36270,7 @@ function HolyGlobalPetSnipeResolveThumbnail(
             and HolyAccountInventoryKey(
                 petKey
             )
-            or HolySniperPetAliasKey(
+            or HolyGlobalPetSnipeNameKey(
                 petKey
             )
 
@@ -35911,9 +36288,32 @@ function HolyGlobalPetSnipeResolveThumbnail(
             )
     end
 
+    local registryRow =
+        HolyGlobalPetSnipeGetRegistryRow(
+            petName,
+            petKey
+        )
+
     local thumbnailUrl =
         HolyGlobalPetSnipeFirstThumbnail(
             catalogs,
+
+            registryRow.Icon,
+            registryRow.IconId,
+            registryRow.IconID,
+            registryRow.Image,
+            registryRow.ImageId,
+            registryRow.ImageID,
+            registryRow.Thumbnail,
+            registryRow.ThumbnailId,
+            registryRow.ThumbnailID,
+            registryRow.Asset,
+            registryRow.AssetId,
+            registryRow.AssetID,
+            registryRow.Texture,
+            registryRow.TextureId,
+            registryRow.TextureID,
+            registryRow,
 
             entry.IMG,
             entry.PetImage,
@@ -35993,7 +36393,10 @@ function HolyGlobalPetSnipeResolveThumbnail(
             data,
             catalogRow,
             live,
-            entry
+            entry,
+
+            petName,
+            petKey
         )
 
     if thumbnailUrl ~= "" then
@@ -171083,4 +171486,4 @@ HolyNotify(
 -- [9] END MARKER
 --==================================================
 
--- HOLY_PREMIUM_END_MARKERR
+-- HOLY_PREMIUM_END_MARKER
