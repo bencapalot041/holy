@@ -3223,7 +3223,18 @@ HOLY_SHOP_STATE = {
     AutoSellFruits = false,
     SellMethod = "Sell All",
 
-    PetSellSelectedKey = "",
+    AutoSellPets = false,
+
+    PetSellNames = {},
+
+    PetSellSizes = {
+        "Normal",
+    },
+
+    PetSellVariants = {
+        "Normal",
+    },
+
     PetSellKeepAmount = 1,
     PetSellBatchAmount = 5,
 
@@ -11774,32 +11785,34 @@ function HolySaveShopSettings()
         AutoSellFruits =
             HOLY_SHOP_STATE.AutoSellFruits == true,
 
-        PetSellSelectedKey =
-            tostring(
-                HOLY_SHOP_STATE.PetSellSelectedKey
-                or ""
+        AutoSellPets =
+            HOLY_SHOP_STATE.AutoSellPets == true,
+
+        PetSellNames =
+            HolyPetSellNormalizePetSelection(
+                HOLY_SHOP_STATE.PetSellNames
+            ),
+
+        PetSellSizes =
+            HolyPetSellNormalizeSizeSelection(
+                HOLY_SHOP_STATE.PetSellSizes,
+                false
+            ),
+
+        PetSellVariants =
+            HolyPetSellNormalizeVariantSelection(
+                HOLY_SHOP_STATE.PetSellVariants,
+                false
             ),
 
         PetSellKeepAmount =
-            math.max(
-                0,
-                math.floor(
-                    tonumber(
-                        HOLY_SHOP_STATE.PetSellKeepAmount
-                    )
-                    or 1
-                )
+            HolyPetSellReadKeepAmount(
+                HOLY_SHOP_STATE.PetSellKeepAmount
             ),
 
         PetSellBatchAmount =
-            math.max(
-                1,
-                math.floor(
-                    tonumber(
-                        HOLY_SHOP_STATE.PetSellBatchAmount
-                    )
-                    or 5
-                )
+            HolyPetSellReadBatchAmount(
+                HOLY_SHOP_STATE.PetSellBatchAmount
             ),
 
         AutoDoubleOrNothing =
@@ -12141,10 +12154,24 @@ function HolyLoadShopSettings()
     HOLY_SHOP_STATE.AutoSellFruits =
         data.AutoSellFruits == true
 
-    HOLY_SHOP_STATE.PetSellSelectedKey =
-        tostring(
-            data.PetSellSelectedKey
-            or ""
+    HOLY_SHOP_STATE.AutoSellPets =
+        data.AutoSellPets == true
+
+    HOLY_SHOP_STATE.PetSellNames =
+        HolyPetSellNormalizePetSelection(
+            data.PetSellNames
+        )
+
+    HOLY_SHOP_STATE.PetSellSizes =
+        HolyPetSellNormalizeSizeSelection(
+            data.PetSellSizes,
+            data.PetSellSizes == nil
+        )
+
+    HOLY_SHOP_STATE.PetSellVariants =
+        HolyPetSellNormalizeVariantSelection(
+            data.PetSellVariants,
+            data.PetSellVariants == nil
         )
 
     local loadedPetSellKeepAmount =
@@ -45133,12 +45160,9 @@ function HolyPetInventoryRefreshUI(force)
     HOLY_PET_INVENTORY_RUNTIME.RefreshQueued =
         false
 
-    if type(HolyPetSellRefreshDropdown) == "function" then
+    if type(HolyPetSellHandleInventoryChanged) == "function" then
 
-        HolyPetSellRefreshDropdown(
-            false,
-            rows
-        )
+        HolyPetSellHandleInventoryChanged()
     end
 
     local list =
@@ -45486,9 +45510,14 @@ HOLY_PET_SELL_RUNTIME = {
     Token = nil,
     Status = "Ready",
     UpdatingUI = false,
-    DisplayToKey = {},
-    KeyToDisplay = {},
-    LastDropdownSignature = "",
+    UpdatingToggle = false,
+    AutoGeneration = 0,
+    AutoQueued = false,
+    RerunAfterBusy = false,
+    LastPreviewSignature = "",
+    LastPreviewRows = {},
+    LastPreviewTotals = {},
+    IconCache = {},
 }
 
 function HolyPetSellReadKeepAmount(value)
@@ -45630,6 +45659,59 @@ function HolyPetSellReadVariant(tool)
     return variantName
 end
 
+function HolyPetSellFlagIsTrue(value)
+
+    if value == true
+    or value == 1 then
+
+        return true
+    end
+
+    local text =
+        tostring(
+            value
+            or ""
+        ):lower()
+
+    return text == "true"
+        or text == "yes"
+        or text == "locked"
+end
+
+function HolyPetSellReadProtection(
+    tool,
+    attributes
+)
+
+    attributes =
+        type(attributes) == "table"
+        and attributes
+        or {}
+
+    local favorite =
+        type(HolyAccountInventoryReadFavorite) == "function"
+        and HolyAccountInventoryReadFavorite(
+            tool
+        ) == true
+
+    local locked =
+        HolyPetSellFlagIsTrue(
+            attributes.IsLocked
+        )
+        or HolyPetSellFlagIsTrue(
+            attributes.Locked
+        )
+        or HolyPetSellFlagIsTrue(
+            attributes.PetLocked
+        )
+        or HolyPetSellFlagIsTrue(
+            attributes.IsPetLocked
+        )
+
+    return favorite == true,
+        locked == true
+end
+
 function HolyPetSellGroupKey(
     petName,
     sizeName,
@@ -45647,6 +45729,405 @@ function HolyPetSellGroupKey(
         .. HolySniperPetAliasKey(
             variantName
         )
+end
+
+function HolyPetSellNormalizePetSelection(value)
+
+    local output =
+        {}
+
+    local seen =
+        {}
+
+    for _, petName in ipairs(
+        HolyShopSelectionArray(
+            value
+        )
+    ) do
+
+        local prettyName =
+            HolyPetSellPrettyName(
+                petName
+            )
+
+        local key =
+            HolySniperPetAliasKey(
+                prettyName
+            )
+
+        if key ~= ""
+        and key ~= "any"
+        and key ~= "all"
+        and key ~= "anypet"
+        and key ~= "allpets"
+        and seen[key] ~= true then
+
+            seen[key] =
+                true
+
+            table.insert(
+                output,
+                prettyName
+            )
+        end
+    end
+
+    table.sort(output, function(left, right)
+
+        return tostring(
+            left
+        ):lower()
+            < tostring(
+                right
+            ):lower()
+    end)
+
+    return output
+end
+
+function HolyPetSellNormalizeSizeSelection(
+    value,
+    useDefault
+)
+
+    local output =
+        {}
+
+    local seen =
+        {}
+
+    for _, sizeName in ipairs(
+        HolyShopSelectionArray(
+            value
+        )
+    ) do
+
+        local normalized =
+            HolySniperNormalizeSizeName(
+                sizeName
+            )
+
+        local key =
+            HolySniperPetAliasKey(
+                normalized
+            )
+
+        if normalized ~= ""
+        and normalized ~= "Any"
+        and key ~= ""
+        and seen[key] ~= true then
+
+            seen[key] =
+                true
+
+            table.insert(
+                output,
+                normalized
+            )
+        end
+    end
+
+    if #output <= 0
+    and useDefault == true then
+
+        output = {
+            "Normal",
+        }
+    end
+
+    HolySniperSortSizeValues(
+        output
+    )
+
+    return output
+end
+
+function HolyPetSellNormalizeVariantSelection(
+    value,
+    useDefault
+)
+
+    local output =
+        {}
+
+    local seen =
+        {}
+
+    for _, variantName in ipairs(
+        HolyShopSelectionArray(
+            value
+        )
+    ) do
+
+        local normalized =
+            HolySniperNormalizeVariantName(
+                variantName
+            )
+
+        local key =
+            HolySniperPetAliasKey(
+                normalized
+            )
+
+        if normalized ~= ""
+        and normalized ~= "Any"
+        and key ~= ""
+        and seen[key] ~= true then
+
+            seen[key] =
+                true
+
+            table.insert(
+                output,
+                normalized
+            )
+        end
+    end
+
+    if #output <= 0
+    and useDefault == true then
+
+        output = {
+            "Normal",
+        }
+    end
+
+    HolySniperSortVariantValues(
+        output
+    )
+
+    return output
+end
+
+function HolyPetSellGetPetNameValues()
+
+    local values =
+        {}
+
+    local seen =
+        {}
+
+    local function add(value)
+
+        local display =
+            HolyPetSellPrettyName(
+                value
+            )
+
+        local key =
+            HolySniperPetAliasKey(
+                display
+            )
+
+        if key == ""
+        or key == "anypet"
+        or key == "allpets"
+        or seen[key] == true then
+
+            return
+        end
+
+        seen[key] =
+            true
+
+        table.insert(
+            values,
+            display
+        )
+    end
+
+    for _, petName in ipairs(
+        HolySniperGetPetValues()
+    ) do
+
+        add(
+            petName
+        )
+    end
+
+    for _, petName in ipairs(
+        HOLY_SHOP_STATE.PetSellNames
+        or {}
+    ) do
+
+        add(
+            petName
+        )
+    end
+
+    for _, row in ipairs(
+        HolyPetInventoryScanRows()
+    ) do
+
+        add(
+            row.Name
+        )
+    end
+
+    table.sort(values, function(left, right)
+
+        return tostring(
+            left
+        ):lower()
+            < tostring(
+                right
+            ):lower()
+    end)
+
+    return values
+end
+
+function HolyPetSellGetSizeValues()
+
+    local values =
+        {}
+
+    for _, sizeName in ipairs(
+        HolySniperGetSizeValues()
+    ) do
+
+        if sizeName ~= "Any" then
+
+            table.insert(
+                values,
+                sizeName
+            )
+        end
+    end
+
+    return values
+end
+
+function HolyPetSellGetVariantValues()
+
+    local values =
+        {}
+
+    for _, variantName in ipairs(
+        HolySniperGetVariantValues()
+    ) do
+
+        if variantName ~= "Any" then
+
+            table.insert(
+                values,
+                variantName
+            )
+        end
+    end
+
+    return values
+end
+
+function HolyPetSellSelectionMap(value)
+
+    local map =
+        {}
+
+    for _, itemName in ipairs(
+        value
+        or {}
+    ) do
+
+        local key =
+            HolySniperPetAliasKey(
+                itemName
+            )
+
+        if key ~= "" then
+
+            map[key] =
+                true
+        end
+    end
+
+    return map
+end
+
+function HolyPetSellCaptureFilters()
+
+    local names =
+        HolyPetSellNormalizePetSelection(
+            HOLY_SHOP_STATE.PetSellNames
+        )
+
+    local sizes =
+        HolyPetSellNormalizeSizeSelection(
+            HOLY_SHOP_STATE.PetSellSizes,
+            false
+        )
+
+    local variants =
+        HolyPetSellNormalizeVariantSelection(
+            HOLY_SHOP_STATE.PetSellVariants,
+            false
+        )
+
+    return {
+        Names = names,
+        Sizes = sizes,
+        Variants = variants,
+        NameMap =
+            HolyPetSellSelectionMap(
+                names
+            ),
+        SizeMap =
+            HolyPetSellSelectionMap(
+                sizes
+            ),
+        VariantMap =
+            HolyPetSellSelectionMap(
+                variants
+            ),
+        Keep =
+            HolyPetSellReadKeepAmount(
+                HOLY_SHOP_STATE.PetSellKeepAmount
+            ),
+        Batch =
+            HolyPetSellReadBatchAmount(
+                HOLY_SHOP_STATE.PetSellBatchAmount
+            ),
+    }
+end
+
+function HolyPetSellGroupMatches(
+    group,
+    filters
+)
+
+    if type(group) ~= "table"
+    or type(filters) ~= "table"
+    or #(
+        filters.Names
+        or {}
+    ) <= 0
+    or #(
+        filters.Sizes
+        or {}
+    ) <= 0
+    or #(
+        filters.Variants
+        or {}
+    ) <= 0 then
+
+        return false
+    end
+
+    return filters.NameMap[
+        HolySniperPetAliasKey(
+            group.Name
+        )
+    ] == true
+        and filters.SizeMap[
+            HolySniperPetAliasKey(
+                group.Size
+            )
+        ] == true
+        and filters.VariantMap[
+            HolySniperPetAliasKey(
+                group.Variant
+            )
+        ] == true
 end
 
 function HolyPetSellScan()
@@ -45785,6 +46266,18 @@ function HolyPetSellScan()
                                 rootData.Name
                                 == "Character"
 
+                            local favorite,
+                                locked =
+                                HolyPetSellReadProtection(
+                                    tool,
+                                    attributes
+                                )
+
+                            local protected =
+                                equipped == true
+                                or favorite == true
+                                or locked == true
+
                             local record = {
                                 PetId = petId,
                                 RawPetId = rawPetId,
@@ -45793,6 +46286,9 @@ function HolyPetSellScan()
                                 Variant = variantName,
                                 GroupKey = groupKey,
                                 Equipped = equipped,
+                                Favorite = favorite,
+                                Locked = locked,
+                                Protected = protected,
                                 Source = rootData.Name,
                                 Ref = tool,
                             }
@@ -45825,7 +46321,11 @@ function HolyPetSellScan()
                                     Variant = variantName,
                                     Count = 0,
                                     Sellable = 0,
+                                    Protected = 0,
                                     Equipped = 0,
+                                    Favorited = 0,
+                                    Locked = 0,
+                                    IconRef = tool,
                                 }
 
                                 snapshot.Groups[
@@ -45845,7 +46345,28 @@ function HolyPetSellScan()
                                     + 1
                             end
 
-                            if equipped ~= true
+                            if favorite == true then
+
+                                group.Favorited =
+                                    group.Favorited
+                                    + 1
+                            end
+
+                            if locked == true then
+
+                                group.Locked =
+                                    group.Locked
+                                    + 1
+                            end
+
+                            if protected == true then
+
+                                group.Protected =
+                                    group.Protected
+                                    + 1
+                            end
+
+                            if protected ~= true
                             and rootData.Name == "Backpack" then
 
                                 group.Sellable =
@@ -45874,6 +46395,21 @@ function HolyPetSellScan()
     return snapshot
 end
 
+function HolyPetSellPetRecordsMatch(
+    leftPet,
+    rightPet
+)
+
+    return type(leftPet) == "table"
+        and type(rightPet) == "table"
+        and rightPet.GroupKey == leftPet.GroupKey
+        and rightPet.Equipped == leftPet.Equipped
+        and rightPet.Favorite == leftPet.Favorite
+        and rightPet.Locked == leftPet.Locked
+        and rightPet.Protected == leftPet.Protected
+        and rightPet.Source == leftPet.Source
+end
+
 function HolyPetSellSnapshotsMatch(
     left,
     right
@@ -45892,15 +46428,12 @@ function HolyPetSellSnapshotsMatch(
         left.ById
     ) do
 
-        local rightPet =
+        if HolyPetSellPetRecordsMatch(
+            leftPet,
             right.ById[
                 petId
             ]
-
-        if type(rightPet) ~= "table"
-        or rightPet.GroupKey ~= leftPet.GroupKey
-        or rightPet.Equipped ~= leftPet.Equipped
-        or rightPet.Source ~= leftPet.Source then
+        ) ~= true then
 
             return false
         end
@@ -45913,6 +46446,39 @@ function HolyPetSellSnapshotsMatch(
         if left.ById[
             petId
         ] == nil then
+
+            return false
+        end
+    end
+
+    return true
+end
+
+function HolyPetSellSnapshotIsSafeExpansion(
+    left,
+    right
+)
+
+    if type(left) ~= "table"
+    or type(right) ~= "table"
+    or #left.Ambiguous > 0
+    or #left.DuplicateIds > 0
+    or #right.Ambiguous > 0
+    or #right.DuplicateIds > 0 then
+
+        return false
+    end
+
+    for petId, leftPet in pairs(
+        left.ById
+    ) do
+
+        if HolyPetSellPetRecordsMatch(
+            leftPet,
+            right.ById[
+                petId
+            ]
+        ) ~= true then
 
             return false
         end
@@ -45984,74 +46550,15 @@ function HolyPetSellWaitForStableInventory(
         matchingPasses >= 2
 end
 
-function HolyPetSellFormatGroup(group)
+function HolyPetSellSortGroups(rows)
 
-    if type(group) ~= "table" then
-        return ""
-    end
+    local sizeOrder = {
+        Normal = 1,
+        Big = 2,
+        Huge = 3,
+    }
 
-    return tostring(
-        group.Name
-        or "Pet"
-    )
-        .. " · "
-        .. tostring(
-            group.Size
-            or "Normal"
-        )
-        .. " · "
-        .. tostring(
-            group.Variant
-            or "Normal"
-        )
-        .. "  ×"
-        .. tostring(
-            group.Count
-            or 0
-        )
-end
-
-function HolyPetSellBuildDropdownData(
-    inventoryRows
-)
-
-    inventoryRows =
-        type(inventoryRows) == "table"
-        and inventoryRows
-        or HolyPetInventoryScanRows()
-
-    local groups =
-        {}
-
-    for _, row in ipairs(
-        inventoryRows
-    ) do
-
-        table.insert(
-            groups,
-            {
-                Key =
-                    row.Key,
-
-                Name =
-                    row.Name,
-
-                Size =
-                    row.Size,
-
-                Variant =
-                    row.Variant,
-
-                Count =
-                    tonumber(
-                        row.Amount
-                    )
-                    or 0,
-            }
-        )
-    end
-
-    table.sort(groups, function(left, right)
+    table.sort(rows, function(left, right)
 
         local leftName =
             tostring(
@@ -46070,12 +46577,6 @@ function HolyPetSellBuildDropdownData(
             return leftName
                 < rightName
         end
-
-        local sizeOrder = {
-            Normal = 1,
-            Big = 2,
-            Huge = 3,
-        }
 
         local leftSize =
             sizeOrder[
@@ -46103,151 +46604,923 @@ function HolyPetSellBuildDropdownData(
             or ""
         )
     end)
-
-    local values = {
-        "Select a pet group",
-    }
-
-    local displayToKey =
-        {}
-
-    local keyToDisplay =
-        {}
-
-    local signatureParts =
-        {}
-
-    for _, group in ipairs(
-        groups
-    ) do
-
-        local display =
-            HolyPetSellFormatGroup(
-                group
-            )
-
-        table.insert(
-            values,
-            display
-        )
-
-        displayToKey[
-            display
-        ] =
-            group.Key
-
-        keyToDisplay[
-            group.Key
-        ] =
-            display
-
-        table.insert(
-            signatureParts,
-            tostring(
-                group.Key
-            )
-                .. ":"
-                .. tostring(
-                    group.Count
-                )
-        )
-    end
-
-    HOLY_PET_SELL_RUNTIME.DisplayToKey =
-        displayToKey
-
-    HOLY_PET_SELL_RUNTIME.KeyToDisplay =
-        keyToDisplay
-
-    return values,
-        table.concat(
-            signatureParts,
-            "|"
-        )
 end
 
-function HolyPetSellReadDropdownValue(value)
+function HolyPetSellBuildPreviewRows(
+    snapshot,
+    filters
+)
 
-    if type(value) ~= "table" then
+    snapshot =
+        type(snapshot) == "table"
+        and snapshot
+        or HolyPetSellScan()
 
-        return HolyCleanText(
-            value
-        )
-    end
+    filters =
+        type(filters) == "table"
+        and filters
+        or HolyPetSellCaptureFilters()
 
-    for key, enabled in pairs(
-        value
+    local rows =
+        {}
+
+    local totals = {
+        Groups = 0,
+        Owned = 0,
+        Protected = 0,
+        WillSell = 0,
+    }
+
+    for _, group in pairs(
+        snapshot.Groups
+        or {}
     ) do
 
-        if enabled == true then
+        if HolyPetSellGroupMatches(
+            group,
+            filters
+        ) == true then
 
-            return HolyCleanText(
-                key
+            local willSell =
+                math.min(
+                    math.max(
+                        0,
+                        (
+                            tonumber(
+                                group.Count
+                            )
+                            or 0
+                        )
+                            - filters.Keep
+                    ),
+                    tonumber(
+                        group.Sellable
+                    )
+                    or 0
+                )
+
+            local row = {
+                Key = group.Key,
+                Name = group.Name,
+                Size = group.Size,
+                Variant = group.Variant,
+                Owned = group.Count,
+                Protected = group.Protected,
+                Keep = filters.Keep,
+                WillSell = willSell,
+                Group = group,
+            }
+
+            table.insert(
+                rows,
+                row
             )
+
+            totals.Groups =
+                totals.Groups
+                + 1
+
+            totals.Owned =
+                totals.Owned
+                + row.Owned
+
+            totals.Protected =
+                totals.Protected
+                + row.Protected
+
+            totals.WillSell =
+                totals.WillSell
+                + row.WillSell
         end
     end
 
-    return HolyCleanText(
-        value[1]
+    HolyPetSellSortGroups(
+        rows
     )
+
+    return rows,
+        totals
 end
 
-function HolyPetSellGetDropdownValues()
+function HolyPetSellResolveGroupIcon(group)
 
-    local values =
-        HolyPetSellBuildDropdownData()
+    if type(group) ~= "table" then
+        return ""
+    end
 
-    return values
-end
+    local cacheKey =
+        HolySniperPetAliasKey(
+            group.Name
+        )
 
-function HolyPetSellBuildReadyStatus()
+    local cached =
+        HOLY_PET_SELL_RUNTIME.IconCache[
+            cacheKey
+        ]
 
-    local snapshot =
-        HolyPetSellScan()
+    if type(cached) == "string" then
+        return cached
+    end
 
-    local selectedKey =
+    local icon =
+        ""
+
+    if typeof(group.IconRef) == "Instance"
+    and type(HolyAccountInventoryLoadCatalogs) == "function"
+    and type(HolyAccountInventoryClassify) == "function"
+    and type(HolyAccountInventoryReadIcon) == "function" then
+
+        pcall(function()
+
+            local catalogs =
+                HolyAccountInventoryLoadCatalogs()
+
+            local record =
+                HolyAccountInventoryClassify(
+                    group.IconRef,
+                    catalogs
+                )
+
+            if type(record) == "table" then
+
+                icon =
+                    HolyAccountInventoryReadIcon(
+                        group.IconRef,
+                        record,
+                        catalogs
+                    )
+            end
+        end)
+    end
+
+    HOLY_PET_SELL_RUNTIME.IconCache[
+        cacheKey
+    ] =
         tostring(
-            HOLY_SHOP_STATE.PetSellSelectedKey
+            icon
             or ""
         )
 
-    local group =
-        snapshot.Groups[
-            selectedKey
-        ]
+    return HOLY_PET_SELL_RUNTIME.IconCache[
+        cacheKey
+    ]
+end
 
-    if type(group) ~= "table" then
+function HolyPetSellCreateTextLabel(
+    parent,
+    name,
+    position,
+    size,
+    text,
+    textSize,
+    alignment,
+    color
+)
 
-        return "Status: Select a pet group."
+    local label =
+        Instance.new(
+            "TextLabel"
+        )
+
+    label.Name =
+        name
+
+    label.BackgroundTransparency =
+        1
+
+    label.Position =
+        position
+
+    label.Size =
+        size
+
+    label.FontFace =
+        Library.Scheme.Font
+
+    label.Text =
+        tostring(
+            text
+            or ""
+        )
+
+    label.TextColor3 =
+        color
+        or Library.Scheme.FontColor
+
+    label.TextSize =
+        textSize
+        or 10
+
+    label.TextTruncate =
+        Enum.TextTruncate.AtEnd
+
+    label.TextXAlignment =
+        alignment
+        or Enum.TextXAlignment.Left
+
+    label.TextYAlignment =
+        Enum.TextYAlignment.Center
+
+    label.Parent =
+        parent
+
+    return label
+end
+
+function HolyPetSellCreatePreviewSurface()
+
+    local surface =
+        Instance.new(
+            "Frame"
+        )
+
+    surface.Name =
+        "HolyPetSellPreviewSurface"
+
+    surface.BackgroundTransparency =
+        1
+
+    surface.BorderSizePixel =
+        0
+
+    surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            266
+        )
+
+    local summary =
+        HolyPetSellCreateTextLabel(
+            surface,
+            "Summary",
+            UDim2.fromOffset(
+                1,
+                0
+            ),
+            UDim2.new(
+                1,
+                -2,
+                0,
+                21
+            ),
+            "Loading preview...",
+            10,
+            Enum.TextXAlignment.Left,
+            Library.Scheme.FontColor
+        )
+
+    local header =
+        Instance.new(
+            "Frame"
+        )
+
+    header.Name =
+        "Header"
+
+    header.BackgroundColor3 =
+        Library.Scheme.MainColor
+
+    header.BackgroundTransparency =
+        0.28
+
+    header.BorderSizePixel =
+        0
+
+    header.Position =
+        UDim2.fromOffset(
+            0,
+            24
+        )
+
+    header.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            19
+        )
+
+    header.Parent =
+        surface
+
+    local headerCorner =
+        Instance.new(
+            "UICorner"
+        )
+
+    headerCorner.CornerRadius =
+        UDim.new(
+            0,
+            3
+        )
+
+    headerCorner.Parent =
+        header
+
+    local muted =
+        Color3.fromRGB(
+            148,
+            163,
+            184
+        )
+
+    HolyPetSellCreateTextLabel(
+        header,
+        "Pet",
+        UDim2.fromOffset(
+            6,
+            0
+        ),
+        UDim2.new(
+            0.46,
+            -6,
+            1,
+            0
+        ),
+        "Pet",
+        9,
+        Enum.TextXAlignment.Left,
+        muted
+    )
+
+    HolyPetSellCreateTextLabel(
+        header,
+        "Owned",
+        UDim2.new(
+            0.46,
+            0,
+            0,
+            0
+        ),
+        UDim2.new(
+            0.13,
+            0,
+            1,
+            0
+        ),
+        "Own",
+        9,
+        Enum.TextXAlignment.Center,
+        muted
+    )
+
+    HolyPetSellCreateTextLabel(
+        header,
+        "Safe",
+        UDim2.new(
+            0.59,
+            0,
+            0,
+            0
+        ),
+        UDim2.new(
+            0.13,
+            0,
+            1,
+            0
+        ),
+        "Safe",
+        9,
+        Enum.TextXAlignment.Center,
+        muted
+    )
+
+    HolyPetSellCreateTextLabel(
+        header,
+        "Keep",
+        UDim2.new(
+            0.72,
+            0,
+            0,
+            0
+        ),
+        UDim2.new(
+            0.12,
+            0,
+            1,
+            0
+        ),
+        "Keep",
+        9,
+        Enum.TextXAlignment.Center,
+        muted
+    )
+
+    HolyPetSellCreateTextLabel(
+        header,
+        "Sell",
+        UDim2.new(
+            0.84,
+            0,
+            0,
+            0
+        ),
+        UDim2.new(
+            0.16,
+            -5,
+            1,
+            0
+        ),
+        "Sell",
+        9,
+        Enum.TextXAlignment.Right,
+        muted
+    )
+
+    local scroll =
+        Instance.new(
+            "ScrollingFrame"
+        )
+
+    scroll.Name =
+        "Rows"
+
+    scroll.Active =
+        true
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            0
+        )
+
+    scroll.Position =
+        UDim2.fromOffset(
+            0,
+            47
+        )
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.ScrollBarThickness =
+        3
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            219
+        )
+
+    scroll.Parent =
+        surface
+
+    local layout =
+        Instance.new(
+            "UIListLayout"
+        )
+
+    layout.Name =
+        "Layout"
+
+    layout.Padding =
+        UDim.new(
+            0,
+            3
+        )
+
+    layout.SortOrder =
+        Enum.SortOrder.LayoutOrder
+
+    layout.Parent =
+        scroll
+
+    HOLY_PET_SELL_RUNTIME.PreviewSurface =
+        surface
+
+    HOLY_PET_SELL_RUNTIME.PreviewSummary =
+        summary
+
+    HOLY_PET_SELL_RUNTIME.PreviewScroll =
+        scroll
+
+    return surface
+end
+
+function HolyPetSellRenderPreview(
+    rows,
+    totals,
+    filters
+)
+
+    local runtime =
+        HOLY_PET_SELL_RUNTIME
+
+    local summary =
+        runtime.PreviewSummary
+
+    local scroll =
+        runtime.PreviewScroll
+
+    if typeof(summary) ~= "Instance"
+    or typeof(scroll) ~= "Instance" then
+
+        return false
     end
 
-    local keepAmount =
-        HolyPetSellReadKeepAmount(
-            HOLY_SHOP_STATE.PetSellKeepAmount
+    for _, child in ipairs(
+        scroll:GetChildren()
+    ) do
+
+        if child.Name ~= "Layout" then
+
+            child:Destroy()
+        end
+    end
+
+    if #(
+        filters.Names
+        or {}
+    ) <= 0 then
+
+        summary.Text =
+            "Select at least one pet name. Nothing matches while empty."
+
+    elseif #(
+        filters.Sizes
+        or {}
+    ) <= 0
+    or #(
+        filters.Variants
+        or {}
+    ) <= 0 then
+
+        summary.Text =
+            "Select at least one size and variant."
+
+    else
+
+        summary.Text =
+            tostring(
+                totals.Groups
+            )
+            .. " groups · "
+            .. tostring(
+                totals.Owned
+            )
+            .. " owned · "
+            .. tostring(
+                totals.Protected
+            )
+            .. " safe · "
+            .. tostring(
+                totals.WillSell
+            )
+            .. " will sell"
+    end
+
+    if #rows <= 0 then
+
+        local emptyRow =
+            Instance.new(
+                "Frame"
+            )
+
+        emptyRow.Name =
+            "Empty"
+
+        emptyRow.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        emptyRow.BackgroundTransparency =
+            0.35
+
+        emptyRow.BorderSizePixel =
+            0
+
+        emptyRow.LayoutOrder =
+            1
+
+        emptyRow.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                34
+            )
+
+        emptyRow.Parent =
+            scroll
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                3
+            )
+
+        corner.Parent =
+            emptyRow
+
+        HolyPetSellCreateTextLabel(
+            emptyRow,
+            "Message",
+            UDim2.fromOffset(
+                7,
+                0
+            ),
+            UDim2.new(
+                1,
+                -14,
+                1,
+                0
+            ),
+            #(
+                filters.Names
+                or {}
+            ) <= 0
+                and "No pet names selected."
+                or "No matching pet groups in inventory.",
+            10,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
         )
 
-    local planned =
-        math.min(
+        scroll.CanvasSize =
+            UDim2.fromOffset(
+                0,
+                34
+            )
+
+        return true
+    end
+
+    for index, rowData in ipairs(
+        rows
+    ) do
+
+        local row =
+            Instance.new(
+                "Frame"
+            )
+
+        row.Name =
+            "PetRow"
+            .. tostring(
+                index
+            )
+
+        row.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        row.BackgroundTransparency =
+            index % 2 == 0
+            and 0.36
+            or 0.26
+
+        row.BorderSizePixel =
+            0
+
+        row.LayoutOrder =
+            index
+
+        row.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                34
+            )
+
+        row.Parent =
+            scroll
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                3
+            )
+
+        corner.Parent =
+            row
+
+        local icon =
+            Instance.new(
+                "ImageLabel"
+            )
+
+        icon.Name =
+            "Icon"
+
+        icon.BackgroundTransparency =
+            1
+
+        icon.Position =
+            UDim2.fromOffset(
+                4,
+                5
+            )
+
+        icon.ScaleType =
+            Enum.ScaleType.Fit
+
+        icon.Size =
+            UDim2.fromOffset(
+                24,
+                24
+            )
+
+        icon.Image =
+            HolyPetSellResolveGroupIcon(
+                rowData.Group
+            )
+
+        icon.Visible =
+            icon.Image ~= ""
+
+        icon.Parent =
+            row
+
+        local nameOffset =
+            icon.Visible == true
+            and 32
+            or 7
+
+        local name =
+            HolyPetSellCreateTextLabel(
+                row,
+                "Name",
+                UDim2.fromOffset(
+                    nameOffset,
+                    2
+                ),
+                UDim2.new(
+                    0.46,
+                    -nameOffset,
+                    0,
+                    17
+                ),
+                rowData.Name,
+                10,
+                Enum.TextXAlignment.Left,
+                Library.Scheme.FontColor
+            )
+
+        name.Font =
+            Enum.Font.GothamBold
+
+        HolyPetSellCreateTextLabel(
+            row,
+            "Details",
+            UDim2.fromOffset(
+                nameOffset,
+                17
+            ),
+            UDim2.new(
+                0.46,
+                -nameOffset,
+                0,
+                14
+            ),
+            tostring(
+                rowData.Size
+            )
+                .. " · "
+                .. tostring(
+                    rowData.Variant
+                ),
+            9,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+        HolyPetSellCreateTextLabel(
+            row,
+            "Owned",
+            UDim2.new(
+                0.46,
+                0,
+                0,
+                0
+            ),
+            UDim2.new(
+                0.13,
+                0,
+                1,
+                0
+            ),
+            rowData.Owned,
+            10,
+            Enum.TextXAlignment.Center,
+            Library.Scheme.FontColor
+        )
+
+        HolyPetSellCreateTextLabel(
+            row,
+            "Safe",
+            UDim2.new(
+                0.59,
+                0,
+                0,
+                0
+            ),
+            UDim2.new(
+                0.13,
+                0,
+                1,
+                0
+            ),
+            rowData.Protected,
+            10,
+            Enum.TextXAlignment.Center,
+            Color3.fromRGB(
+                74,
+                222,
+                128
+            )
+        )
+
+        HolyPetSellCreateTextLabel(
+            row,
+            "Keep",
+            UDim2.new(
+                0.72,
+                0,
+                0,
+                0
+            ),
+            UDim2.new(
+                0.12,
+                0,
+                1,
+                0
+            ),
+            rowData.Keep,
+            10,
+            Enum.TextXAlignment.Center,
+            Library.Scheme.FontColor
+        )
+
+        local sellLabel =
+            HolyPetSellCreateTextLabel(
+                row,
+                "Sell",
+                UDim2.new(
+                    0.84,
+                    0,
+                    0,
+                    0
+                ),
+                UDim2.new(
+                    0.16,
+                    -7,
+                    1,
+                    0
+                ),
+                rowData.WillSell,
+                10,
+                Enum.TextXAlignment.Right,
+                rowData.WillSell > 0
+                    and Library.Scheme.AccentColor
+                    or Color3.fromRGB(
+                        148,
+                        163,
+                        184
+                    )
+            )
+
+        sellLabel.Font =
+            Enum.Font.GothamBold
+    end
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
             math.max(
                 0,
-                group.Count
-                    - keepAmount
-            ),
-            group.Sellable
+                #rows * 37
+                    - 3
+            )
         )
 
-    return "Ready: "
-        .. tostring(
-            group.Count
-        )
-        .. " owned · "
-        .. tostring(
-            planned
-        )
-        .. " to sell · keep "
-        .. tostring(
-            keepAmount
-        )
+    return true
 end
 
 function HolyPetSellSetStatus(text)
@@ -46275,96 +47548,184 @@ function HolyPetSellSetStatus(text)
     return true
 end
 
-function HolyPetSellRefreshDropdown(
+function HolyPetSellRefreshPreview(
     force,
-    inventoryRows
+    snapshot
 )
 
     local runtime =
         HOLY_PET_SELL_RUNTIME
 
-    if type(runtime) ~= "table"
-    or runtime.Busy == true then
-
+    if type(runtime) ~= "table" then
         return false
     end
 
-    local values,
-        signature =
-        HolyPetSellBuildDropdownData(
-            inventoryRows
+    snapshot =
+        type(snapshot) == "table"
+        and snapshot
+        or HolyPetSellScan()
+
+    local filters =
+        HolyPetSellCaptureFilters()
+
+    local rows,
+        totals =
+        HolyPetSellBuildPreviewRows(
+            snapshot,
+            filters
         )
 
-    local dropdown =
+    local signatureParts = {
+        table.concat(
+            filters.Names,
+            ","
+        ),
+        table.concat(
+            filters.Sizes,
+            ","
+        ),
+        table.concat(
+            filters.Variants,
+            ","
+        ),
+        tostring(
+            filters.Keep
+        ),
+    }
+
+    for _, row in ipairs(
+        rows
+    ) do
+
+        table.insert(
+            signatureParts,
+            tostring(
+                row.Key
+            )
+                .. ":"
+                .. tostring(
+                    row.Owned
+                )
+                .. ":"
+                .. tostring(
+                    row.Protected
+                )
+                .. ":"
+                .. tostring(
+                    row.WillSell
+                )
+        )
+    end
+
+    local signature =
+        table.concat(
+            signatureParts,
+            "|"
+        )
+
+    local changed =
+        force == true
+        or signature
+            ~= runtime.LastPreviewSignature
+
+    runtime.LastPreviewRows =
+        rows
+
+    runtime.LastPreviewTotals =
+        totals
+
+    if changed == true then
+
+        runtime.LastPreviewSignature =
+            signature
+
+        HolyPetSellRenderPreview(
+            rows,
+            totals,
+            filters
+        )
+    end
+
+    if runtime.Busy ~= true then
+
+        if #filters.Names <= 0 then
+
+            HolyPetSellSetStatus(
+                "Status: Select at least one pet name."
+            )
+
+        elseif #filters.Sizes <= 0
+        or #filters.Variants <= 0 then
+
+            HolyPetSellSetStatus(
+                "Status: Select at least one size and variant."
+            )
+
+        elseif HOLY_SHOP_STATE.AutoSellPets == true then
+
+            if totals.WillSell > 0 then
+
+                HolyPetSellSetStatus(
+                    "Queued: "
+                        .. tostring(
+                            totals.WillSell
+                        )
+                        .. " matching pet(s)."
+                )
+
+            else
+
+                HolyPetSellSetStatus(
+                    "Watching for matching pets..."
+                )
+            end
+
+        else
+
+            HolyPetSellSetStatus(
+                "Ready: "
+                    .. tostring(
+                        totals.WillSell
+                    )
+                    .. " pet(s) will sell across "
+                    .. tostring(
+                        totals.Groups
+                    )
+                    .. " group(s)."
+            )
+        end
+    end
+
+    return changed,
+        snapshot,
+        rows,
+        totals
+end
+
+function HolyPetSellSetToggleValue(value)
+
+    local runtime =
+        HOLY_PET_SELL_RUNTIME
+
+    local toggle =
         HOLY_SHOP_UI
-        and HOLY_SHOP_UI.PetSellDropdown
+        and HOLY_SHOP_UI.PetSellAutoToggle
         or nil
 
-    if type(dropdown) ~= "table" then
-        return false
-    end
-
-    if force ~= true
-    and signature
-        == runtime.LastDropdownSignature then
+    if type(toggle) ~= "table"
+    or type(toggle.SetValue) ~= "function" then
 
         return false
     end
 
-    runtime.LastDropdownSignature =
-        signature
-
-    local selectedKey =
-        tostring(
-            HOLY_SHOP_STATE.PetSellSelectedKey
-            or ""
-        )
-
-    if runtime.KeyToDisplay[
-        selectedKey
-    ] == nil then
-
-        selectedKey =
-            ""
-
-        HOLY_SHOP_STATE.PetSellSelectedKey =
-            ""
-    end
-
-    local selectedDisplay =
-        runtime.KeyToDisplay[
-            selectedKey
-        ]
-        or values[1]
-
-    runtime.UpdatingUI =
+    runtime.UpdatingToggle =
         true
 
     pcall(function()
 
-        if type(dropdown.SetValues) == "function" then
-
-            dropdown:SetValues(
-                values
-            )
-
-        elseif type(dropdown.SetItems) == "function" then
-
-            dropdown:SetItems(
-                values
-            )
-        end
-    end)
-
-    pcall(function()
-
-        if type(dropdown.SetValue) == "function" then
-
-            dropdown:SetValue(
-                selectedDisplay,
-                true
-            )
-        end
+        toggle:SetValue(
+            value == true
+        )
     end)
 
     task.defer(function()
@@ -46372,7 +47733,7 @@ function HolyPetSellRefreshDropdown(
         if HOLY_PET_SELL_RUNTIME
             == runtime then
 
-            runtime.UpdatingUI =
+            runtime.UpdatingToggle =
                 false
         end
     end)
@@ -46429,6 +47790,21 @@ function HolyPetSellStop(
     runtime.Token =
         nil
 
+    runtime.AutoGeneration =
+        (
+            tonumber(
+                runtime.AutoGeneration
+            )
+            or 0
+        )
+        + 1
+
+    runtime.AutoQueued =
+        false
+
+    runtime.RerunAfterBusy =
+        false
+
     if wasBusy == true then
 
         HolyPetSellSetStatus(
@@ -46453,10 +47829,179 @@ function HolyPetSellStop(
     return wasBusy
 end
 
-function HolyPetSellStart()
+function HolyPetSellDisableAuto(reason)
+
+    HOLY_SHOP_STATE.AutoSellPets =
+        false
+
+    HolySaveShopSettings()
+
+    HolyPetSellSetToggleValue(
+        false
+    )
+
+    HOLY_PET_SELL_RUNTIME.AutoGeneration =
+        (
+            tonumber(
+                HOLY_PET_SELL_RUNTIME.AutoGeneration
+            )
+            or 0
+        )
+        + 1
+
+    HOLY_PET_SELL_RUNTIME.AutoQueued =
+        false
+
+    HOLY_PET_SELL_RUNTIME.RerunAfterBusy =
+        false
+
+    return true
+end
+
+function HolyPetSellSetAutoEnabled(
+    enabled,
+    reason
+)
+
+    enabled =
+        enabled == true
+
+    HOLY_SHOP_STATE.AutoSellPets =
+        enabled
+
+    HolySaveShopSettings()
+
+    if enabled == true then
+
+        HolyPetSellRefreshPreview(
+            true
+        )
+
+        HolyPetSellQueueAutoRun(
+            reason
+            or "auto sell enabled",
+            true
+        )
+
+    else
+
+        HolyPetSellStop(
+            reason
+            or "Auto Sell disabled.",
+            false
+        )
+
+        HolyPetSellRefreshPreview(
+            true
+        )
+    end
+
+    return enabled
+end
+
+function HolyPetSellQueueAutoRun(
+    reason,
+    immediate
+)
 
     local runtime =
         HOLY_PET_SELL_RUNTIME
+
+    if type(runtime) ~= "table"
+    or HOLY_SHOP_STATE.AutoSellPets ~= true then
+
+        return false
+    end
+
+    if runtime.Busy == true then
+
+        runtime.RerunAfterBusy =
+            true
+
+        return true
+    end
+
+    runtime.AutoGeneration =
+        (
+            tonumber(
+                runtime.AutoGeneration
+            )
+            or 0
+        )
+        + 1
+
+    local generation =
+        runtime.AutoGeneration
+
+    runtime.AutoQueued =
+        true
+
+    task.delay(
+        immediate == true
+            and 0.10
+            or 0.75,
+        function()
+
+            if HOLY_PET_SELL_RUNTIME
+                ~= runtime
+            or runtime.AutoGeneration
+                ~= generation
+            or HOLY_SHOP_STATE.AutoSellPets
+                ~= true then
+
+                return
+            end
+
+            runtime.AutoQueued =
+                false
+
+            if runtime.Busy == true then
+
+                runtime.RerunAfterBusy =
+                    true
+
+                return
+            end
+
+            local _,
+                _snapshot,
+                _rows,
+                totals =
+                HolyPetSellRefreshPreview(
+                    true
+                )
+
+            if type(totals) == "table"
+            and (
+                tonumber(
+                    totals.WillSell
+                )
+                or 0
+            ) > 0 then
+
+                HolyPetSellStart(
+                    true
+                )
+
+            else
+
+                HolyPetSellSetStatus(
+                    "Watching for matching pets..."
+                )
+            end
+        end
+    )
+
+    return true
+end
+
+function HolyPetSellStart(automatic)
+
+    local runtime =
+        HOLY_PET_SELL_RUNTIME
+
+    automatic =
+        automatic == true
 
     if type(runtime) ~= "table" then
         return false
@@ -46464,47 +48009,77 @@ function HolyPetSellStart()
 
     if runtime.Busy == true then
 
-        HolyNotify(
-            "HOLY Pet Seller",
-            "A pet-selling job is already running.",
-            3
+        if automatic == true then
+
+            runtime.RerunAfterBusy =
+                true
+
+        else
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                "A pet-selling job is already running.",
+                3
+            )
+        end
+
+        return false
+    end
+
+    local filters =
+        HolyPetSellCaptureFilters()
+
+    if #filters.Names <= 0 then
+
+        if automatic ~= true then
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                "Select at least one pet name first.",
+                4
+            )
+        end
+
+        HolyPetSellSetStatus(
+            "Status: Select at least one pet name."
         )
 
         return false
     end
 
-    local selectedKey =
-        tostring(
-            HOLY_SHOP_STATE.PetSellSelectedKey
-            or ""
-        )
+    if #filters.Sizes <= 0
+    or #filters.Variants <= 0 then
 
-    if selectedKey == "" then
+        if automatic ~= true then
 
-        HolyNotify(
-            "HOLY Pet Seller",
-            "Select a pet group first.",
-            4
+            HolyNotify(
+                "HOLY Pet Seller",
+                "Select at least one size and variant first.",
+                4
+            )
+        end
+
+        HolyPetSellSetStatus(
+            "Status: Select at least one size and variant."
         )
 
         return false
     end
 
-    local keepAmount =
-        HolyPetSellReadKeepAmount(
-            HOLY_SHOP_STATE.PetSellKeepAmount
-        )
+    HOLY_SHOP_STATE.PetSellNames =
+        filters.Names
 
-    local batchAmount =
-        HolyPetSellReadBatchAmount(
-            HOLY_SHOP_STATE.PetSellBatchAmount
-        )
+    HOLY_SHOP_STATE.PetSellSizes =
+        filters.Sizes
+
+    HOLY_SHOP_STATE.PetSellVariants =
+        filters.Variants
 
     HOLY_SHOP_STATE.PetSellKeepAmount =
-        keepAmount
+        filters.Keep
 
     HOLY_SHOP_STATE.PetSellBatchAmount =
-        batchAmount
+        filters.Batch
 
     HolySaveShopSettings()
 
@@ -46516,6 +48091,12 @@ function HolyPetSellStart()
 
     runtime.Busy =
         true
+
+    runtime.AutoQueued =
+        false
+
+    runtime.RerunAfterBusy =
+        false
 
     HolyPetSellSetStatus(
         "Checking inventory..."
@@ -46533,6 +48114,9 @@ function HolyPetSellStart()
             0
 
         local finishedNormally =
+            false
+
+        local retryWhenStable =
             false
 
         local failureReason =
@@ -46569,8 +48153,16 @@ function HolyPetSellStart()
 
                 if stable ~= true then
 
-                    failureReason =
-                        "Inventory did not stay stable. Nothing was sold."
+                    if automatic == true then
+
+                        retryWhenStable =
+                            true
+
+                    else
+
+                        failureReason =
+                            "Inventory did not stay stable. Nothing was sold."
+                    end
 
                     return
                 end
@@ -46584,28 +48176,31 @@ function HolyPetSellStart()
                     return
                 end
 
-                local initialGroup =
-                    initial.Groups[
-                        selectedKey
-                    ]
-
-                if type(initialGroup) ~= "table" then
-
-                    failureReason =
-                        "The selected pet group is no longer in your inventory."
-
-                    return
-                end
-
-                plannedTotal =
-                    math.min(
-                        math.max(
-                            0,
-                            initialGroup.Count
-                                - keepAmount
-                        ),
-                        initialGroup.Sellable
+                local initialRows =
+                    HolyPetSellBuildPreviewRows(
+                        initial,
+                        filters
                     )
+
+                local remainingByGroup =
+                    {}
+
+                for _, row in ipairs(
+                    initialRows
+                ) do
+
+                    if row.WillSell > 0 then
+
+                        remainingByGroup[
+                            row.Key
+                        ] =
+                            row.WillSell
+
+                        plannedTotal =
+                            plannedTotal
+                            + row.WillSell
+                    end
+                end
 
                 if plannedTotal <= 0 then
 
@@ -46622,7 +48217,10 @@ function HolyPetSellStart()
                     initial.Pets
                 ) do
 
-                    if pet.GroupKey == selectedKey
+                    if remainingByGroup[
+                        pet.GroupKey
+                    ] ~= nil
+                    and pet.Protected ~= true
                     and pet.Equipped ~= true
                     and pet.Source == "Backpack"
                     and typeof(pet.Ref) == "Instance"
@@ -46653,43 +48251,17 @@ function HolyPetSellStart()
                         return
                     end
 
-                    local currentGroup =
-                        beforeBatch.Groups[
-                            selectedKey
-                        ]
-
-                    if type(currentGroup) ~= "table" then
-
-                        finishedNormally =
-                            true
-
-                        return
-                    end
-
-                    local currentlyAllowed =
-                        math.max(
-                            0,
-                            currentGroup.Count
-                                - keepAmount
-                        )
-
                     local wanted =
                         math.min(
-                            batchAmount,
+                            filters.Batch,
                             plannedTotal
-                                - soldTotal,
-                            currentlyAllowed
+                                - soldTotal
                         )
 
-                    if wanted <= 0 then
-
-                        finishedNormally =
-                            true
-
-                        return
-                    end
-
                     local candidates =
+                        {}
+
+                    local pickedByGroup =
                         {}
 
                     for _, pet in ipairs(
@@ -46700,10 +48272,48 @@ function HolyPetSellStart()
                             break
                         end
 
+                        local remaining =
+                            tonumber(
+                                remainingByGroup[
+                                    pet.GroupKey
+                                ]
+                            )
+                            or 0
+
+                        local currentGroup =
+                            beforeBatch.Groups[
+                                pet.GroupKey
+                            ]
+
+                        local currentlyAllowed =
+                            type(currentGroup) == "table"
+                            and math.max(
+                                0,
+                                currentGroup.Count
+                                    - filters.Keep
+                            )
+                            or 0
+
+                        local alreadyPicked =
+                            tonumber(
+                                pickedByGroup[
+                                    pet.GroupKey
+                                ]
+                            )
+                            or 0
+
+                        local groupCapacity =
+                            math.min(
+                                remaining,
+                                currentlyAllowed
+                            )
+
                         if allowedPetIds[
                             pet.PetId
                         ] == true
-                        and pet.GroupKey == selectedKey
+                        and remaining > 0
+                        and alreadyPicked < groupCapacity
+                        and pet.Protected ~= true
                         and pet.Equipped ~= true
                         and pet.Source == "Backpack"
                         and typeof(pet.Ref) == "Instance"
@@ -46713,6 +48323,12 @@ function HolyPetSellStart()
                                 candidates,
                                 pet
                             )
+
+                            pickedByGroup[
+                                pet.GroupKey
+                            ] =
+                                alreadyPicked
+                                + 1
                         end
                     end
 
@@ -46727,13 +48343,13 @@ function HolyPetSellStart()
                     local immediate =
                         HolyPetSellScan()
 
-                    if HolyPetSellSnapshotsMatch(
+                    if HolyPetSellSnapshotIsSafeExpansion(
                         beforeBatch,
                         immediate
                     ) ~= true then
 
                         failureReason =
-                            "Inventory changed immediately before a batch. Selling stopped."
+                            "Inventory changed unsafely immediately before a batch. Selling stopped."
 
                         return
                     end
@@ -46754,7 +48370,9 @@ function HolyPetSellStart()
                             ]
 
                         if type(livePet) ~= "table"
-                        or livePet.GroupKey ~= selectedKey
+                        or livePet.GroupKey
+                            ~= candidate.GroupKey
+                        or livePet.Protected == true
                         or livePet.Equipped == true
                         or livePet.Source ~= "Backpack"
                         or typeof(livePet.Ref) ~= "Instance"
@@ -46774,7 +48392,7 @@ function HolyPetSellStart()
                         selectedSet[
                             livePet.PetId
                         ] =
-                            true
+                            livePet.GroupKey
                     end
 
                     batchNumber =
@@ -46890,7 +48508,7 @@ function HolyPetSellStart()
                     local removedThisBatch =
                         0
 
-                    for petId in pairs(
+                    for petId, groupKey in pairs(
                         selectedSet
                     ) do
 
@@ -46901,6 +48519,22 @@ function HolyPetSellStart()
                             removedThisBatch =
                                 removedThisBatch
                                 + 1
+
+                            remainingByGroup[
+                                groupKey
+                            ] =
+                                math.max(
+                                    0,
+                                    (
+                                        tonumber(
+                                            remainingByGroup[
+                                                groupKey
+                                            ]
+                                        )
+                                        or 0
+                                    )
+                                        - 1
+                                )
 
                             allowedPetIds[
                                 petId
@@ -46921,7 +48555,7 @@ function HolyPetSellStart()
                         ] == nil
                         and selectedSet[
                             petId
-                        ] ~= true then
+                        ] == nil then
 
                             untargetedRemoved =
                                 true
@@ -47049,24 +48683,25 @@ function HolyPetSellStart()
 
         HolyPetInventoryScheduleRefresh()
 
-        HolyPetSellRefreshDropdown(
-            true
-        )
-
-        local finalSnapshot =
-            HolyPetSellScan()
-
-        local finalGroup =
-            finalSnapshot.Groups[
-                selectedKey
-            ]
-
-        local finalCount =
-            type(finalGroup) == "table"
-            and finalGroup.Count
-            or 0
+        local _changed,
+            _snapshot,
+            _rows,
+            finalTotals =
+            HolyPetSellRefreshPreview(
+                true
+            )
 
         if failureReason ~= nil then
+
+            local autoWasEnabled =
+                HOLY_SHOP_STATE.AutoSellPets == true
+
+            if autoWasEnabled == true then
+
+                HolyPetSellDisableAuto(
+                    failureReason
+                )
+            end
 
             HolyPetSellSetStatus(
                 "Stopped: "
@@ -47088,8 +48723,25 @@ function HolyPetSellStart()
                     .. tostring(
                         soldTotal
                     )
-                    .. " pet(s) before stopping.",
+                    .. " pet(s) before stopping."
+                    .. (
+                        autoWasEnabled == true
+                        and " Auto Sell is off."
+                        or ""
+                    ),
                 6
+            )
+
+        elseif retryWhenStable == true
+        and HOLY_SHOP_STATE.AutoSellPets == true then
+
+            HolyPetSellSetStatus(
+                "Waiting for inventory to settle..."
+            )
+
+            HolyPetSellQueueAutoRun(
+                "inventory still changing",
+                false
             )
 
         elseif cancelled == true
@@ -47100,12 +48752,38 @@ function HolyPetSellStart()
                     .. tostring(
                         soldTotal
                     )
-                    .. " · "
-                    .. tostring(
-                        finalCount
-                    )
-                    .. " remain"
+                    .. " pet(s)."
             )
+
+        elseif automatic == true then
+
+            HolyPetSellSetStatus(
+                "Watching · last sold "
+                    .. tostring(
+                        soldTotal
+                    )
+                    .. " pet(s)."
+            )
+
+            if HOLY_SHOP_STATE.AutoSellPets == true
+            and (
+                (
+                    type(finalTotals) == "table"
+                    and (
+                        tonumber(
+                            finalTotals.WillSell
+                        )
+                        or 0
+                    ) > 0
+                )
+                or runtime.RerunAfterBusy == true
+            ) then
+
+                HolyPetSellQueueAutoRun(
+                    "continue auto sell",
+                    true
+                )
+            end
 
         else
 
@@ -47114,11 +48792,7 @@ function HolyPetSellStart()
                 .. tostring(
                     soldTotal
                 )
-                .. " · "
-                .. tostring(
-                    finalCount
-                )
-                .. " remain · "
+                .. " pet(s) · "
                 .. HolySellFormatValue(
                     sellValueTotal
                 )
@@ -47133,18 +48807,78 @@ function HolyPetSellStart()
                     .. tostring(
                         soldTotal
                     )
-                    .. " pet(s). "
-                    .. tostring(
-                        finalCount
-                    )
-                    .. " remain in that group.",
+                    .. " pet(s).",
                 5
             )
+
+            if HOLY_SHOP_STATE.AutoSellPets == true then
+
+                HolyPetSellQueueAutoRun(
+                    "auto sell enabled during manual job",
+                    true
+                )
+            end
         end
+
+        runtime.RerunAfterBusy =
+            false
     end)
 
     return true
 end
+
+function HolyPetSellHandleInventoryChanged()
+
+    local changed =
+        HolyPetSellRefreshPreview(
+            false
+        )
+
+    if changed == true
+    and HOLY_SHOP_STATE.AutoSellPets == true then
+
+        HolyPetSellQueueAutoRun(
+            "pet inventory changed",
+            false
+        )
+    end
+
+    return changed
+end
+
+function HolyPetSellBuildPreviewUI(groupbox)
+
+    if type(groupbox) ~= "table"
+    or type(groupbox.AddUIPassthrough) ~= "function" then
+
+        return false
+    end
+
+    local surface =
+        HolyPetSellCreatePreviewSurface()
+
+    HOLY_SHOP_UI.PetSellPreviewPassthrough =
+        groupbox:AddUIPassthrough(
+            "HolyShopPetSellPreviewSurface",
+            {
+                Instance =
+                    surface,
+
+                Height =
+                    266,
+
+                Visible =
+                    true,
+            }
+        )
+
+    HolyPetSellRefreshPreview(
+        true
+    )
+
+    return true
+end
+
 
 --==================================================
 -- FARM DETAILS
@@ -154949,6 +156683,14 @@ local ShopPetSellerBox =
         "paw-print"
     )
 
+ShopPetSellPreviewBox =
+    HolyAddLeftGroupbox(
+        Tabs.Shop,
+        "Shop.PetSellPreview",
+        "Pet Sell Preview",
+        "list-checks"
+    )
+
 local ShopDoubleBox =
     HolyAddRightGroupbox(
         Tabs.Shop,
@@ -170313,6 +172055,11 @@ function HolyShopRefreshMode()
     )
 
     HolySetGroupboxVisible(
+        ShopPetSellPreviewBox,
+        not isBuy
+    )
+
+    HolySetGroupboxVisible(
         ShopDoubleBox,
         not isBuy
     )
@@ -170573,2887 +172320,67 @@ HOLY_SHOP_UI =
     and HOLY_SHOP_UI
     or {}
 
-ShopAuctionBox:AddToggle(
-    "HolyShopAutoBuyAuctions",
-    {
-        Text =
-            "Auto Buy Auctions",
-
-        Default =
-            HOLY_SHOP_STATE.AutoBuyAuctions == true,
-
-        Tooltip =
-            "Automatically buys selected auction items at or below your Max Price.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.AutoBuyAuctions =
-        value == true
-
-    HOLY_SHOP_STATE.AuctionNextRetryAt =
-        0
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoBuyAuctions == true then
-
-        if HOLY_SHOP_STATE.AuctionNetworkReady == true then
-
-            HolyAuctionSetStatus(
-                HOLY_SHOP_STATE.AuctionDryRun == true
-                and "Auto enabled — safety dry run"
-                or "Auto enabled — purchases armed"
-            )
-
-            HolyAuctionQueueWorker(
-                "toggle on"
-            )
-
-        else
-
-            HolyAuctionSetStatus(
-                "Auto enabled — waiting synchronized network data"
-            )
-        end
-
-    else
-
-        HolyAuctionSetStatus(
-            "Auto buy off"
-        )
-    end
-end)
-
-ShopAuctionBox:AddToggle(
-    "HolyShopAuctionDryRun",
-    {
-        Text =
-            "Test Mode",
-
-        Default =
-            HOLY_SHOP_STATE.AuctionDryRun ~= false,
-
-        Tooltip =
-            "Shows what Auto Buy would purchase without spending anything.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.AuctionDryRun =
-        value == true
-
-    HOLY_SHOP_STATE.AuctionNextRetryAt =
-        0
-
-    HolySaveShopSettings()
-
-    HolyAuctionSetStatus(
-        HOLY_SHOP_STATE.AuctionDryRun == true
-        and "Safety dry run enabled"
-        or "Real purchases armed"
+HOLY_SHOP_STATE.PetSellNames =
+    HolyPetSellNormalizePetSelection(
+        HOLY_SHOP_STATE.PetSellNames
     )
 
-    HolyAuctionRefreshUI()
-end)
-
-HOLY_AUCTION_WATCHLIST_UI =
-    type(HOLY_AUCTION_WATCHLIST_UI) == "table"
-    and HOLY_AUCTION_WATCHLIST_UI
-    or {}
-
-function HolyAuctionWatchlistLiveRow(itemName)
-
-    local wantedKey =
-        HolyAuctionItemKey(
-            itemName
-        )
-
-    for _, row in ipairs(
-        HOLY_SHOP_STATE.AuctionLastLots
-        or {}
-    ) do
-
-        if HolyAuctionItemKey(row.Name) == wantedKey then
-
-            return row
-        end
-    end
-
-    return nil
-end
-
-function HolyAuctionWatchlistState(entry)
-
-    local row =
-        HolyAuctionWatchlistLiveRow(
-            entry.Name
-        )
-
-    if type(row) ~= "table" then
-
-        return "WAIT",
-            Color3.fromRGB(245, 199, 100)
-    end
-
-    if row.Expired == true then
-
-        return "ENDED",
-            Color3.fromRGB(135, 141, 153)
-    end
-
-    if row.StockKnown == true
-    and (
-        tonumber(row.Stock)
-        or 0
-    ) <= 0 then
-
-        return "SOLD OUT",
-            Color3.fromRGB(135, 141, 153)
-    end
-
-    if row.Active == true
-    and row.NetworkReady == true
-    and HolyAuctionPriceAllows(row) == true then
-
-        return "READY",
-            Color3.fromRGB(105, 229, 160)
-    end
-
-    return "WAIT",
-        Color3.fromRGB(245, 199, 100)
-end
-
-function HolyAuctionWatchlistAvailableItems()
-
-    local values = {}
-
-    for _, row in ipairs(
-        HolyAuctionBuildItemRows(
-            true
-        )
-    ) do
-
-        if HolyAuctionGetWatchEntry(row.Name) == nil then
-
-            values[#values + 1] =
-                tostring(
-                    row.Name
-                )
-        end
-    end
-
-    return values
-end
-
-function HolyAuctionWatchlistReadSingleValue(value)
-
-    if type(value) ~= "table" then
-
-        return HolyCleanText(
-            value
-        )
-    end
-
-    for key, enabled in pairs(value) do
-
-        if enabled == true then
-
-            return HolyCleanText(
-                key
-            )
-        end
-    end
-
-    return HolyCleanText(
-        value[1]
-    )
-end
-
-function HolyAuctionOpenAddWatchDialog()
-
-    local available =
-        HolyAuctionWatchlistAvailableItems()
-
-    if #available <= 0 then
-
-        HolyNotify(
-            "Auction Watchlist",
-            "No new auction items are currently available.",
-            4
-        )
-
-        return
-    end
-
-    table.sort(
-        available,
-        function(a, b)
-
-            return tostring(a):lower()
-                < tostring(b):lower()
-        end
-    )
-
-    local selectedItem =
-        available[1]
-
-    local enteredPrice =
-        "0"
-
-    local dialog
-
-    local function updateValidation()
-
-        if dialog == nil then
-            return
-        end
-
-        local parsedPrice =
-            HolyAuctionReadMoney(
-                enteredPrice
-            )
-
-        dialog:SetDescription(
-            parsedPrice > 0
-            and (
-                "Maximum price: "
-                .. HolyAuctionFormatMoney(
-                    parsedPrice
-                )
-            )
-            or "Choose an item and enter the most you are willing to pay."
-        )
-
-        dialog:SetButtonDisabled(
-            "Add",
-            selectedItem == ""
-                or parsedPrice <= 0
-        )
-    end
-
-    dialog =
-        Window:AddDialog(
-            "HolyAuctionAddWatchItem",
-            {
-                Title =
-                    "Add Auction Item",
-
-                Description =
-                    "Choose an item and enter the most you are willing to pay.",
-
-                AutoDismiss =
-                    false,
-
-                OutsideClickDismiss =
-                    true,
-
-                FooterButtons = {
-                    Cancel = {
-                        Title =
-                            "Cancel",
-
-                        Variant =
-                            "Ghost",
-
-                        Order =
-                            1,
-
-                        Callback =
-                            function()
-
-                                dialog:Dismiss()
-                            end,
-                    },
-
-                    Add = {
-                        Title =
-                            "Add Item",
-
-                        Variant =
-                            "Primary",
-
-                        Order =
-                            2,
-
-                        Callback =
-                            function()
-
-                                local success,
-                                    reason =
-                                    HolyAuctionUpsertWatchItem(
-                                        selectedItem,
-                                        enteredPrice
-                                    )
-
-                                if success == true then
-
-                                    dialog:Dismiss()
-
-                                else
-
-                                    dialog:SetDescription(
-                                        tostring(
-                                            reason
-                                        )
-                                    )
-                                end
-                            end,
-                    },
-                },
-            }
-        )
-
-    dialog:AddDropdown(
-        "HolyAuctionAddWatchItemDropdown",
-        {
-            Text =
-                "Item",
-
-            Values =
-                available,
-
-            Default =
-                1,
-
-            Multi =
-                false,
-
-            AllowNull =
-                false,
-
-            Searchable =
-                true,
-
-            MaxVisibleDropdownItems =
-                8,
-        }
-    ):OnChanged(function(value)
-
-        selectedItem =
-            HolyAuctionWatchlistReadSingleValue(
-                value
-            )
-
-        updateValidation()
-    end)
-
-    dialog:AddInput(
-        "HolyAuctionAddWatchItemPrice",
-        {
-            Text =
-                "Maximum Price",
-
-            Default =
-                "0",
-
-            Placeholder =
-                "Example: 50M",
-
-            Numeric =
-                false,
-
-            Finished =
-                false,
-
-            ClearTextOnFocus =
-                false,
-        }
-    ):OnChanged(function(value)
-
-        enteredPrice =
-            tostring(
-                value
-                or "0"
-            )
-
-        updateValidation()
-    end)
-
-    updateValidation()
-end
-
-function HolyAuctionOpenEditWatchDialog()
-
-    local entry =
-        HolyAuctionGetSelectedWatchEntry()
-
-    if type(entry) ~= "table" then
-
-        HolyNotify(
-            "Auction Watchlist",
-            "Select an item first.",
-            3
-        )
-
-        return
-    end
-
-    local itemName =
-        tostring(
-            entry.Name
-        )
-
-    local enteredPrice =
-        tostring(
-            entry.MaxPrice
-            or "0"
-        )
-
-    local liveRow =
-        HolyAuctionWatchlistLiveRow(
-            itemName
-        )
-
-    local currentText =
-        type(liveRow) == "table"
-        and tostring(
-            liveRow.PriceText
-            or HolyAuctionFormatMoney(
-                liveRow.Price
-            )
-        )
-        or "Unavailable"
-
-    local dialog
-
-    local function updateValidation()
-
-        local parsedPrice =
-            HolyAuctionReadMoney(
-                enteredPrice
-            )
-
-        dialog:SetDescription(
-            "Current price: "
-            .. currentText
-            .. "\nMaximum price: "
-            .. (
-                parsedPrice > 0
-                and HolyAuctionFormatMoney(
-                    parsedPrice
-                )
-                or "Invalid"
-            )
-        )
-
-        dialog:SetButtonDisabled(
-            "Save",
-            parsedPrice <= 0
-        )
-    end
-
-    dialog =
-        Window:AddDialog(
-            "HolyAuctionEditWatchItem",
-            {
-                Title =
-                    "Edit "
-                    .. itemName,
-
-                Description =
-                    "Current price: "
-                    .. currentText,
-
-                AutoDismiss = false,
-                OutsideClickDismiss = true,
-
-                FooterButtons = {
-                    Remove = {
-                        Title = "Remove",
-                        Variant = "Destructive",
-                        WaitTime = 1,
-                        Order = 1,
-
-                        Callback = function()
-
-                            HolyAuctionRemoveWatchItem(
-                                itemName
-                            )
-
-                            dialog:Dismiss()
-                        end,
-                    },
-
-                    Cancel = {
-                        Title = "Cancel",
-                        Variant = "Ghost",
-                        Order = 2,
-
-                        Callback = function()
-
-                            dialog:Dismiss()
-                        end,
-                    },
-
-                    Save = {
-                        Title = "Save",
-                        Variant = "Primary",
-                        Order = 3,
-
-                        Callback = function()
-
-                            local success,
-                                reason =
-                                HolyAuctionUpsertWatchItem(
-                                    itemName,
-                                    enteredPrice
-                                )
-
-                            if success == true then
-
-                                dialog:Dismiss()
-
-                            else
-
-                                dialog:SetDescription(
-                                    tostring(
-                                        reason
-                                    )
-                                )
-                            end
-                        end,
-                    },
-                },
-            }
-        )
-
-    dialog:AddInput(
-        "HolyAuctionEditWatchItemPrice",
-        {
-            Text = "Maximum Price",
-            Default = enteredPrice,
-            Placeholder = "Example: 50M",
-            Numeric = false,
-            Finished = false,
-            ClearTextOnFocus = false,
-        }
-    ):OnChanged(function(value)
-
-        enteredPrice =
-            tostring(
-                value
-                or "0"
-            )
-
-        updateValidation()
-    end)
-
-    updateValidation()
-end
-
-local AuctionWatchlistSurface =
-    Instance.new(
-        "Frame"
-    )
-
-AuctionWatchlistSurface.Name =
-    "HolyAuctionWatchlistSurface"
-
-AuctionWatchlistSurface.BackgroundTransparency =
-    1
-
-AuctionWatchlistSurface.BorderSizePixel =
-    0
-
-AuctionWatchlistSurface.Size =
-    UDim2.new(
-        1,
-        0,
-        0,
-        194
-    )
-
-local AuctionWatchlistSummary =
-    Instance.new(
-        "TextLabel"
-    )
-
-AuctionWatchlistSummary.BackgroundTransparency =
-    1
-
-AuctionWatchlistSummary.Position =
-    UDim2.fromOffset(
-        1,
-        0
-    )
-
-AuctionWatchlistSummary.Size =
-    UDim2.new(
-        1,
-        -2,
-        0,
-        18
-    )
-
-AuctionWatchlistSummary.Text =
-    "0 watched"
-
-AuctionWatchlistSummary.TextColor3 =
-    Library.Scheme.FontColor
-
-AuctionWatchlistSummary.TextTransparency =
-    0.32
-
-AuctionWatchlistSummary.TextSize =
-    12
-
-AuctionWatchlistSummary.TextXAlignment =
-    Enum.TextXAlignment.Left
-
-AuctionWatchlistSummary.FontFace =
-    Library.Scheme.Font
-
-AuctionWatchlistSummary.Parent =
-    AuctionWatchlistSurface
-
-local AuctionWatchlistHeader =
-    Instance.new(
-        "Frame"
-    )
-
-AuctionWatchlistHeader.BackgroundTransparency =
-    1
-
-AuctionWatchlistHeader.Position =
-    UDim2.fromOffset(
-        0,
-        20
-    )
-
-AuctionWatchlistHeader.Size =
-    UDim2.new(
-        1,
-        0,
-        0,
-        16
-    )
-
-AuctionWatchlistHeader.Parent =
-    AuctionWatchlistSurface
-
-local function createHeaderLabel(text, position, size, alignment)
-
-    local label =
-        Instance.new(
-            "TextLabel"
-        )
-
-    label.BackgroundTransparency =
-        1
-
-    label.Position =
-        position
-
-    label.Size =
-        size
-
-    label.Text =
-        text
-
-    label.TextColor3 =
-        Library.Scheme.FontColor
-
-    label.TextTransparency =
-        0.50
-
-    label.TextSize =
-        10
-
-    label.TextXAlignment =
-        alignment
-
-    label.FontFace =
-        Library.Scheme.Font
-
-    label.Parent =
-        AuctionWatchlistHeader
-
-    return label
-end
-
-createHeaderLabel(
-    "ITEM",
-    UDim2.fromOffset(8, 0),
-    UDim2.new(0.57, -8, 1, 0),
-    Enum.TextXAlignment.Left
-)
-
-createHeaderLabel(
-    "MAX",
-    UDim2.fromScale(0.57, 0),
-    UDim2.new(0.26, 0, 1, 0),
-    Enum.TextXAlignment.Left
-)
-
-createHeaderLabel(
-    "STATE",
-    UDim2.fromScale(0.83, 0),
-    UDim2.new(0.17, -6, 1, 0),
-    Enum.TextXAlignment.Right
-)
-
-local AuctionWatchlistList =
-    Instance.new(
-        "ScrollingFrame"
-    )
-
-AuctionWatchlistList.Active =
-    true
-
-AuctionWatchlistList.AutomaticCanvasSize =
-    Enum.AutomaticSize.Y
-
-AuctionWatchlistList.BackgroundTransparency =
-    1
-
-AuctionWatchlistList.BorderSizePixel =
-    0
-
-AuctionWatchlistList.CanvasSize =
-    UDim2.fromOffset(
-        0,
-        0
-    )
-
-AuctionWatchlistList.Position =
-    UDim2.fromOffset(
-        0,
-        38
-    )
-
-AuctionWatchlistList.Size =
-    UDim2.new(
-        1,
-        0,
-        0,
-        120
-    )
-
-AuctionWatchlistList.ScrollBarThickness =
-    2
-
-AuctionWatchlistList.ScrollBarImageColor3 =
-    Library.Scheme.OutlineColor
-
-AuctionWatchlistList.Parent =
-    AuctionWatchlistSurface
-
-local AuctionWatchlistLayout =
-    Instance.new(
-        "UIListLayout"
-    )
-
-AuctionWatchlistLayout.Padding =
-    UDim.new(
-        0,
-        4
-    )
-
-AuctionWatchlistLayout.SortOrder =
-    Enum.SortOrder.LayoutOrder
-
-AuctionWatchlistLayout.Parent =
-    AuctionWatchlistList
-
-local AuctionWatchlistEmpty =
-    Instance.new(
-        "TextLabel"
-    )
-
-AuctionWatchlistEmpty.BackgroundTransparency =
-    1
-
-AuctionWatchlistEmpty.LayoutOrder =
-    0
-
-AuctionWatchlistEmpty.Size =
-    UDim2.new(
-        1,
-        -4,
-        0,
-        58
-    )
-
-AuctionWatchlistEmpty.Text =
-    "No auction items added."
-
-AuctionWatchlistEmpty.TextColor3 =
-    Library.Scheme.FontColor
-
-AuctionWatchlistEmpty.TextTransparency =
-    0.46
-
-AuctionWatchlistEmpty.TextSize =
-    12
-
-AuctionWatchlistEmpty.FontFace =
-    Library.Scheme.Font
-
-AuctionWatchlistEmpty.Parent =
-    AuctionWatchlistList
-
-local AuctionWatchlistActions =
-    Instance.new(
-        "Frame"
-    )
-
-AuctionWatchlistActions.BackgroundTransparency =
-    1
-
-AuctionWatchlistActions.Position =
-    UDim2.fromOffset(
-        0,
-        166
-    )
-
-AuctionWatchlistActions.Size =
-    UDim2.new(
-        1,
-        0,
-        0,
-        28
-    )
-
-AuctionWatchlistActions.Parent =
-    AuctionWatchlistSurface
-
-local function createWatchlistAction(text, position, size, primary)
-
-    local button =
-        Instance.new(
-            "TextButton"
-        )
-
-    button.AutoButtonColor =
-        false
-
-    button.BackgroundColor3 =
-        primary == true
-        and Library.Scheme.AccentColor
-        or Library.Scheme.MainColor
-
-    button.BackgroundTransparency =
-        primary == true
-        and 0.12
-        or 0.22
-
-    button.BorderSizePixel =
-        0
-
-    button.Position =
-        position
-
-    button.Size =
-        size
-
-    button.Text =
-        text
-
-    button.TextColor3 =
-        Library.Scheme.FontColor
-
-    button.TextSize =
-        11
-
-    button.FontFace =
-        Library.Scheme.Font
-
-    button.Parent =
-        AuctionWatchlistActions
-
-    local corner =
-        Instance.new(
-            "UICorner"
-        )
-
-    corner.CornerRadius =
-        UDim.new(
-            0,
-            4
-        )
-
-    corner.Parent =
-        button
-
-    local stroke =
-        Instance.new(
-            "UIStroke"
-        )
-
-    stroke.ApplyStrokeMode =
-        Enum.ApplyStrokeMode.Border
-
-    stroke.Color =
-        primary == true
-        and Library.Scheme.AccentColor
-        or Library.Scheme.OutlineColor
-
-    stroke.Transparency =
-        primary == true
-        and 0.05
-        or 0.24
-
-    stroke.Thickness =
-        1
-
-    stroke.Parent =
-        button
-
-    return button
-end
-
-local AuctionWatchlistAddButton =
-    createWatchlistAction(
-        "+ Add Item",
-        UDim2.fromOffset(0, 0),
-        UDim2.new(0.5, -3, 1, 0),
+HOLY_SHOP_STATE.PetSellSizes =
+    HolyPetSellNormalizeSizeSelection(
+        HOLY_SHOP_STATE.PetSellSizes,
         true
     )
 
-local AuctionWatchlistEditButton =
-    createWatchlistAction(
-        "Edit",
-        UDim2.new(0.5, 3, 0, 0),
-        UDim2.new(0.5, -3, 1, 0),
-        false
-    )
-
-AuctionWatchlistAddButton.MouseButton1Click:Connect(function()
-
-    HolyAuctionOpenAddWatchDialog()
-end)
-
-AuctionWatchlistEditButton.MouseButton1Click:Connect(function()
-
-    if HolyAuctionGetSelectedWatchEntry() ~= nil then
-
-        HolyAuctionOpenEditWatchDialog()
-    end
-end)
-
-HOLY_AUCTION_WATCHLIST_UI.Root =
-    AuctionWatchlistSurface
-
-HOLY_AUCTION_WATCHLIST_UI.List =
-    AuctionWatchlistList
-
-HOLY_AUCTION_WATCHLIST_UI.Summary =
-    AuctionWatchlistSummary
-
-HOLY_AUCTION_WATCHLIST_UI.Empty =
-    AuctionWatchlistEmpty
-
-HOLY_AUCTION_WATCHLIST_UI.EditButton =
-    AuctionWatchlistEditButton
-
-HOLY_AUCTION_WATCHLIST_UI.Rows =
-    {}
-
-HOLY_AUCTION_WATCHLIST_UI.Signature =
-    ""
-
-HOLY_SHOP_UI.AuctionWatchlistPassthrough =
-    ShopAuctionWatchlistBox:AddUIPassthrough(
-        "HolyShopAuctionWatchlistSurface",
-        {
-            Instance =
-                AuctionWatchlistSurface,
-
-            Height =
-                194,
-
-            Visible =
-                true,
-        }
-    )
-
-function HolyAuctionCreateWatchlistRow(entry, index)
-
-    local key =
-        HolyAuctionItemKey(
-            entry.Name
-        )
-
-    local button =
-        Instance.new(
-            "TextButton"
-        )
-
-    button.AutoButtonColor =
-        false
-
-    button.BackgroundColor3 =
-        Library.Scheme.MainColor
-
-    button.BackgroundTransparency =
-        0.30
-
-    button.BorderSizePixel =
-        0
-
-    button.LayoutOrder =
-        index
-
-    button.Size =
-        UDim2.new(
-            1,
-            -4,
-            0,
-            27
-        )
-
-    button.Text =
-        ""
-
-    button.Parent =
-        AuctionWatchlistList
-
-    local corner =
-        Instance.new(
-            "UICorner"
-        )
-
-    corner.CornerRadius =
-        UDim.new(
-            0,
-            3
-        )
-
-    corner.Parent =
-        button
-
-    local stroke =
-        Instance.new(
-            "UIStroke"
-        )
-
-    stroke.ApplyStrokeMode =
-        Enum.ApplyStrokeMode.Border
-
-    stroke.Color =
-        Library.Scheme.OutlineColor
-
-    stroke.Transparency =
-        0.26
-
-    stroke.Thickness =
-        1
-
-    stroke.Parent =
-        button
-
-    local nameLabel =
-        Instance.new(
-            "TextLabel"
-        )
-
-    nameLabel.BackgroundTransparency =
-        1
-
-    nameLabel.Position =
-        UDim2.fromOffset(
-            8,
-            0
-        )
-
-    nameLabel.Size =
-        UDim2.new(
-            0.57,
-            -8,
-            1,
-            0
-        )
-
-    nameLabel.Text =
-        tostring(
-            entry.Name
-        )
-
-    nameLabel.TextColor3 =
-        Library.Scheme.FontColor
-
-    nameLabel.TextSize =
-        11
-
-    nameLabel.TextTruncate =
-        Enum.TextTruncate.AtEnd
-
-    nameLabel.TextXAlignment =
-        Enum.TextXAlignment.Left
-
-    nameLabel.FontFace =
-        Library.Scheme.Font
-
-    nameLabel.Parent =
-        button
-
-    local maxLabel =
-        Instance.new(
-            "TextLabel"
-        )
-
-    maxLabel.BackgroundTransparency =
-        1
-
-    maxLabel.Position =
-        UDim2.fromScale(
-            0.57,
-            0
-        )
-
-    maxLabel.Size =
-        UDim2.new(
-            0.26,
-            0,
-            1,
-            0
-        )
-
-    maxLabel.Text =
-        HolyAuctionFormatMoney(
-            entry.MaxPrice
-        )
-
-    maxLabel.TextColor3 =
-        Library.Scheme.FontColor
-
-    maxLabel.TextTransparency =
-        0.25
-
-    maxLabel.TextSize =
-        11
-
-    maxLabel.TextXAlignment =
-        Enum.TextXAlignment.Left
-
-    maxLabel.FontFace =
-        Library.Scheme.Font
-
-    maxLabel.Parent =
-        button
-
-    local stateLabel =
-        Instance.new(
-            "TextLabel"
-        )
-
-    stateLabel.BackgroundTransparency =
-        1
-
-    stateLabel.Position =
-        UDim2.fromScale(
-            0.83,
-            0
-        )
-
-    stateLabel.Size =
-        UDim2.new(
-            0.17,
-            -7,
-            1,
-            0
-        )
-
-    stateLabel.Text =
-        "WAIT"
-
-    stateLabel.TextSize =
-        10
-
-    stateLabel.TextXAlignment =
-        Enum.TextXAlignment.Right
-
-    stateLabel.FontFace =
-        Library.Scheme.Font
-
-    stateLabel.Parent =
-        button
-
-    button.MouseButton1Click:Connect(function()
-
-        HOLY_SHOP_STATE.AuctionWatchlistSelectedKey =
-            key
-
-        HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
-            true
-
-        pcall(function()
-
-            HolyAuctionRefreshWatchlistUI(
-                false
-            )
-        end)
-    end)
-
-    HOLY_AUCTION_WATCHLIST_UI.Rows[key] = {
-        Button = button,
-        Stroke = stroke,
-        Name = nameLabel,
-        Max = maxLabel,
-        State = stateLabel,
-    }
-end
-
-function HolyAuctionRefreshWatchlistUI(forceRebuild)
-
-    local ui =
-        HOLY_AUCTION_WATCHLIST_UI
-
-    if type(ui) ~= "table"
-    or typeof(ui.List) ~= "Instance" then
-
-        return false
-    end
-
-    HOLY_SHOP_STATE.AuctionWatchlist =
-        HolyAuctionNormalizeWatchlist(
-            HOLY_SHOP_STATE.AuctionWatchlist
-        )
-
-    local watchlist =
-        HOLY_SHOP_STATE.AuctionWatchlist
-
-    local signatureParts = {}
-
-    for _, entry in ipairs(watchlist) do
-
-        signatureParts[#signatureParts + 1] =
-            HolyAuctionItemKey(
-                entry.Name
-            )
-            .. ":"
-            .. tostring(
-                entry.MaxPrice
-            )
-    end
-
-    local signature =
-        table.concat(
-            signatureParts,
-            "|"
-        )
-
-    if forceRebuild == true
-    or signature ~= ui.Signature then
-
-        for _, rowUi in pairs(
-            ui.Rows
-            or {}
-        ) do
-
-            if typeof(rowUi.Button) == "Instance" then
-
-                rowUi.Button:Destroy()
-            end
-        end
-
-        ui.Rows = {}
-        ui.Signature = signature
-
-        for index, entry in ipairs(watchlist) do
-
-            HolyAuctionCreateWatchlistRow(
-                entry,
-                index
-            )
-        end
-    end
-
-    local selectedKey =
-        tostring(
-            HOLY_SHOP_STATE.AuctionWatchlistSelectedKey
-            or ""
-        )
-
-    local selectedValid =
-        false
-
-    local readyCount =
-        0
-
-    for _, entry in ipairs(watchlist) do
-
-        local key =
-            HolyAuctionItemKey(
-                entry.Name
-            )
-
-        local rowUi =
-            ui.Rows[key]
-
-        if type(rowUi) == "table" then
-
-            local selected =
-                selectedKey == key
-
-            if selected == true then
-
-                selectedValid =
-                    true
-            end
-
-            local stateText,
-                stateColor =
-                HolyAuctionWatchlistState(
-                    entry
-                )
-
-            if stateText == "READY" then
-
-                readyCount =
-                    readyCount + 1
-            end
-
-            rowUi.Name.Text =
-                tostring(
-                    entry.Name
-                )
-
-            rowUi.Max.Text =
-                HolyAuctionFormatMoney(
-                    entry.MaxPrice
-                )
-
-            rowUi.State.Text =
-                stateText
-
-            rowUi.State.TextColor3 =
-                stateColor
-
-            rowUi.Button.BackgroundColor3 =
-                selected == true
-                and Library.Scheme.AccentColor
-                or Library.Scheme.MainColor
-
-            rowUi.Button.BackgroundTransparency =
-                selected == true
-                and 0.82
-                or 0.30
-
-            rowUi.Stroke.Color =
-                selected == true
-                and Library.Scheme.AccentColor
-                or Library.Scheme.OutlineColor
-
-            rowUi.Stroke.Transparency =
-                selected == true
-                and 0.02
-                or 0.26
-
-            rowUi.Name.TextTransparency =
-                selected == true
-                and 0
-                or 0.10
-        end
-    end
-
-    if selectedValid ~= true then
-
-        HOLY_SHOP_STATE.AuctionWatchlistSelectedKey =
-            ""
-    end
-
-    ui.Empty.Visible =
-        #watchlist <= 0
-
-    ui.Summary.Text =
-        tostring(#watchlist)
-        .. (
-            #watchlist == 1
-            and " watched"
-            or " watched"
-        )
-        .. "  •  "
-        .. tostring(readyCount)
-        .. " ready"
-
-    ui.EditButton.Active =
-        selectedValid
-
-    ui.EditButton.Selectable =
-        selectedValid
-
-    ui.EditButton.TextTransparency =
-        selectedValid == true
-        and 0
-        or 0.55
-
-    return true
-end
-
-HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN =
-    {}
-
-local HolyAuctionWatchlistRefreshToken =
-    HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN
-
-HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
-    true
-
-HOLY_SHOP_STATE.AuctionWatchlistUIForceRebuild =
-    true
-
-pcall(function()
-
-    HolyAuctionRefreshWatchlistUI(
+HOLY_SHOP_STATE.PetSellVariants =
+    HolyPetSellNormalizeVariantSelection(
+        HOLY_SHOP_STATE.PetSellVariants,
         true
     )
-end)
 
-task.spawn(function()
-
-    while HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN
-        == HolyAuctionWatchlistRefreshToken do
-
-        local surfaceAlive =
-            false
-
-        pcall(function()
-
-            surfaceAlive =
-                AuctionWatchlistSurface.Parent
-                ~= nil
-        end)
-
-        if surfaceAlive ~= true then
-            break
-        end
-
-        if HOLY_SHOP_STATE.AuctionWatchlistUIDirty == true then
-
-            local forceRebuild =
-                HOLY_SHOP_STATE
-                    .AuctionWatchlistUIForceRebuild
-                    == true
-
-            HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
-                false
-
-            HOLY_SHOP_STATE.AuctionWatchlistUIForceRebuild =
-                false
-
-            local refreshed =
-                pcall(function()
-
-                    HolyAuctionRefreshWatchlistUI(
-                        forceRebuild
-                    )
-                end)
-
-            if refreshed ~= true then
-
-                HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
-                    true
-            end
-        end
-
-        task.wait(
-            0.25
-        )
-    end
-end)
-
-ShopAuctionBox:AddToggle(
-    "HolyShopAuctionBuyUntilSoldOut",
-    {
-        Text =
-            "Buy Until Sold Out",
-
-        Default =
-            HOLY_SHOP_STATE.AuctionBuyUntilSoldOut ~= false,
-
-        Tooltip =
-            "Keeps buying selected items until they are sold out.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.AuctionBuyUntilSoldOut =
-        value == true
-
-    HOLY_SHOP_STATE.AuctionNextRetryAt =
-        0
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoBuyAuctions == true
-    and value == true then
-
-        HolyAuctionQueueWorker(
-            "buy until enabled"
-        )
-    end
-end)
-
-ShopAuctionBox:AddToggle(
-    "HolyShopAuctionLiveHud",
-    {
-        Text =
-            "Live Auction HUD",
-
-        Default =
-            HOLY_SHOP_STATE.AuctionHudEnabled == true,
-
-        Tooltip =
-            "Shows a small auction status window.",
-    }
-):OnChanged(function(value)
-
-    HolyAuctionSetHudVisible(
-        value == true,
-        "toggle"
-    )
-end)
-
-ShopAuctionBox:AddDropdown(
-    "HolyShopAuctionHudScale",
-    {
-        Text =
-            "HUD Scale",
-
-        Values = {
-            "60%",
-            "70%",
-            "80%",
-            "90%",
-            "100%",
-            "110%",
-        },
-
-        Default =
-            HolyAuctionFormatHudScale(
-                HOLY_SHOP_STATE.AuctionHudScale
-                or "80%"
-            ),
-
-        Multi =
-            false,
-
-        Searchable =
-            false,
-
-        MaxVisibleDropdownItems =
-            6,
-
-        Tooltip =
-            "Changes the size of the auction status window.",
-    }
-):OnChanged(function(value)
-
-    HolyAuctionSetHudScale(
-        value
-    )
-end)
-
-local HolyAuctionButtons =
-    ShopAuctionBox:AddButton({
-        Text =
-            "Refresh Auctions",
-
-        Tooltip =
-            "Requests server stock and refreshes current live auction lots.",
-
-        Func =
-            function()
-
-                HolyAuctionRefreshDropdown(
-                    true
-                )
-
-                HolyAuctionRequestSnapshot()
-
-                HolyAuctionRefreshUI()
-            end,
-    })
-
-HolyAuctionButtons:AddButton({
-    Text =
-        "Buy Once",
-
-    Tooltip =
-        "Buys one selected auction item when it is within your Max Price.",
-
-    Func =
-        function()
-
-            HolyAuctionManualBuyOnce(
-                "button"
-            )
-
-            HolyAuctionRefreshUI()
-        end,
-})
-
-HOLY_SHOP_UI.AuctionLiveLabel =
-    HolySniperAddLabel(
-        ShopAuctionBox,
-        "Live: waiting auction data."
-    )
-
-HOLY_SHOP_UI.AuctionStatusLabel =
-    HolySniperAddLabel(
-        ShopAuctionBox,
-        "Status: Ready"
-    )
-
-function HolyShopRefreshSellControls()
-
-    local filtered =
-        HolySellIsFilteredMethod(
-            HOLY_SHOP_STATE.SellMethod
-        )
-
-    local sellDelayControl =
-        HOLY_SHOP_UI.SellDelayControl
-
-    local fruitsAtOnceControl =
-        HOLY_SHOP_UI.FruitsAtOnceControl
-
-    if type(sellDelayControl) == "table"
-    and type(sellDelayControl.SetVisible) == "function" then
-
-        pcall(function()
-
-            sellDelayControl:SetVisible(
-                filtered ~= true
-            )
-        end)
-    end
-
-    if type(fruitsAtOnceControl) == "table"
-    and type(fruitsAtOnceControl.SetVisible) == "function" then
-
-        pcall(function()
-
-            fruitsAtOnceControl:SetVisible(
-                filtered == true
-            )
-        end)
-    end
-end
-
-HOLY_SHOP_UI.AutoSellToggle =
-    ShopSellBox:AddToggle(
-        "HolyShopAutoSellFruits",
+HOLY_SHOP_UI.PetSellAutoToggle =
+    ShopPetSellerBox:AddToggle(
+        "HolyShopAutoSellPets",
         {
             Text =
-                "💰 Auto Sell Fruits",
+                "Auto Sell Pets",
 
             Default =
-                HOLY_SHOP_STATE.AutoSellFruits,
-        }
-    )
-
-HOLY_SHOP_UI.AutoSellToggle:OnChanged(function(value)
-
-    HOLY_SHOP_STATE.AutoSellFruits =
-        value == true
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellStartWatcher()
-
-        if HolySellIsFilteredMethod(
-            HOLY_SHOP_STATE.SellMethod
-        ) == true then
-
-            HolySellScanExistingFruitTools(
-                "toggle on"
-            )
-
-        else
-
-            HolySellScheduleSellAll(
-                "toggle on"
-            )
-        end
-
-        HolySellStartWorker()
-
-    else
-
-        HolySellStopWorker()
-    end
-end)
-
-HOLY_SHOP_UI.SellMethodControl =
-    ShopSellBox:AddDropdown(
-        "HolyShopSellMethod",
-        {
-            Text =
-                "⚙️ Method",
-
-            Values = {
-                HolySellMethodDisplay(
-                    "Sell All"
-                ),
-
-                HolySellMethodDisplay(
-                    "Filtered Sell"
-                ),
-            },
-
-            Default =
-                HolySellMethodDisplay(
-                    HOLY_SHOP_STATE.SellMethod
-                ),
-
-            Multi =
-                false,
-
-            Searchable =
-                false,
-
-            MaxVisibleDropdownItems =
-                2,
+                HOLY_SHOP_STATE.AutoSellPets == true,
 
             Tooltip =
-                "Sell All sells the full inventory. Filtered Sell concurrently sells matching fruits.",
+                "Continuously sells matching excess pets. This toggle is saved and resumes automatically after reloads and rejoins.",
         }
     )
 
-HOLY_SHOP_UI.SellMethodControl:OnChanged(function(value)
+HOLY_SHOP_UI.PetSellAutoToggle:OnChanged(function(value)
 
-    HOLY_SHOP_STATE.SellMethod =
-        HolySellNormalizeMethod(
-            value
-        )
-
-    HolySellClearQueue()
-    HolySaveShopSettings()
-    HolyShopRefreshSellControls()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellStartWatcher()
-
-        if HolySellIsFilteredMethod(
-            HOLY_SHOP_STATE.SellMethod
-        ) == true then
-
-            HolySellScanExistingFruitTools(
-                "method changed"
-            )
-
-        else
-
-            HolySellScheduleSellAll(
-                "method changed"
-            )
-        end
-
-        HolySellStartWorker()
+    if HOLY_PET_SELL_RUNTIME.UpdatingToggle == true then
+        return
     end
-end)
 
-HOLY_SHOP_UI.SellDelayControl =
-    ShopSellBox:AddSlider(
-        "HolyShopSellAllSpeed",
-        {
-            Text =
-                "⚡ Sell Delay",
-
-            Default =
-                math.clamp(
-                    tonumber(HOLY_SHOP_STATE.SellAllInterval)
-                    or 0.10,
-                    0,
-                    5
-                ),
-
-            Min =
-                0,
-
-            Max =
-                5,
-
-            Rounding =
-                2,
-
-            Suffix =
-                "s",
-
-            HideMax =
-                true,
-
-            Tooltip =
-                "How long Sell All waits after detecting fruit. 0 = immediate.",
-        }
-    )
-
-HOLY_SHOP_UI.SellDelayControl:OnChanged(function(value)
-
-    HOLY_SHOP_STATE.SellAllInterval =
-        math.clamp(
-            tonumber(value)
-            or 0.10,
-            0,
-            5
-        )
-
-    HolySaveShopSettings()
-end)
-
-HOLY_SHOP_UI.FruitsAtOnceControl =
-    ShopSellBox:AddInput(
-        "HolyShopFruitsAtOnce",
-        {
-            Text =
-                "🍎 Fruits at Once",
-
-            Default =
-                tostring(
-                    HolySellReadFruitsAtOnce(
-                        HOLY_SHOP_STATE.FruitsAtOnce
-                    )
-                ),
-
-            Numeric =
-                true,
-
-            Finished =
-                true,
-
-            ClearTextOnFocus =
-                false,
-
-            Placeholder =
-                "25",
-
-            Tooltip =
-                "Number of filtered fruits sold concurrently. There is no upper limit.",
-        }
-    )
-
-HOLY_SHOP_UI.FruitsAtOnceControl:OnChanged(function(value)
-
-    HOLY_SHOP_STATE.FruitsAtOnce =
-        HolySellReadFruitsAtOnce(
-            value
-        )
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true
-    and HolySellIsFilteredMethod(
-        HOLY_SHOP_STATE.SellMethod
-    ) == true then
-
-        HolySellStartWorker()
-    end
-end)
-
-HolyShopRefreshSellControls()
-
-HOLY_SHOP_UI =
-    type(HOLY_SHOP_UI) == "table"
-    and HOLY_SHOP_UI
-    or {}
-
-ShopDoubleBox:AddToggle(
-    "HolyShopAutoDoubleOrNothing",
-    {
-        Text =
-            "🎲 Auto Double or Nothing",
-
-        Default =
-            HOLY_SHOP_STATE.AutoDoubleOrNothing == true,
-
-        Tooltip =
-            "Automatically doubles until Target Wins, then cashes out.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.AutoDoubleOrNothing =
-        value == true
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoDoubleOrNothing == true then
-
-        HolyDoubleStartWorker(
-            "toggle on"
-        )
-
-    else
-
-        HolyDoubleStopWorker(
-            "Off"
-        )
-    end
-end)
-
-ShopDoubleBox:AddInput(
-    "HolyShopDoubleTargetWins",
-    {
-        Text =
-            "🎯 Target Wins",
-
-        Default =
-            tostring(
-                HOLY_SHOP_STATE.DoubleTargetWins
-                or "1"
-            ),
-
-        Placeholder =
-            "1",
-
-        Numeric =
-            true,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "Cashout after this many wins. Minimum 1. No max clamp.",
-    }
-):OnChanged(function(value)
-
-    HolyDoubleSetTargetWins(
-        value
-    )
-end)
-
-ShopDoubleBox:AddInput(
-    "HolyShopDoubleBustFavDelay",
-    {
-        Text =
-            "🛡️ Bust Fav Delay",
-
-        Default =
-            tostring(
-                HOLY_SHOP_STATE.DoubleBustFavDelay
-                or "0.10"
-            ),
-
-        Placeholder =
-            "0.10",
-
-        Numeric =
-            false,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "Delay after rolling before burst-favoriting fruits. Depends on ping. Lower = earlier, higher = later.",
-    }
-):OnChanged(function(value)
-
-    HolyDoubleSetBustFavDelay(
-        value
-    )
-end)
-
-ShopDoubleBox:AddInput(
-    "HolyShopDoubleUnfavoriteDelay",
-    {
-        Text =
-            "🔓 Unfav Delay",
-
-        Default =
-            tostring(
-                HOLY_SHOP_STATE.DoubleUnfavoriteDelay
-                or "1.00"
-            ),
-
-        Placeholder =
-            "1.00",
-
-        Numeric =
-            false,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "How long to wait before unfavoriting auto-touched fruits after a roll.",
-    }
-):OnChanged(function(value)
-
-    HolyDoubleSetUnfavoriteDelay(
-        value
-    )
-end)
-
-local HolyDoubleManualButton =
-    ShopDoubleBox:AddButton({
-        Text =
-            "🎲 Manual Double",
-
-        Tooltip =
-            "Roll Double or Nothing one time using the same favorite timing.",
-
-        Func =
-            function()
-
-                HolyDoubleManualDouble()
-            end,
-    })
-
-HolyDoubleManualButton:AddButton({
-    Text =
-        "💰 Cashout",
-
-    Tooltip =
-        "Unfavorites auto-touched fruits, waits briefly, then cashes out.",
-
-    Func =
-        function()
-
-            HolyDoubleManualCashout()
-        end,
-})
-
-ShopDoubleBox:AddToggle(
-    "HolyShopDoubleHud",
-    {
-        Text =
-            "📌 Pot HUD",
-
-        Default =
-            HOLY_SHOP_STATE.DoubleHudEnabled == true,
-
-        Tooltip =
-            "Shows a small transparent draggable HUD with pot, wins, and next pot.",
-    }
-):OnChanged(function(value)
-
-    HolyDoubleSetHudVisible(
-        value == true
-    )
-end)
-
-HOLY_SHOP_UI.DoubleStatusLabel =
-    HolySniperAddLabel(
-        ShopDoubleBox,
-        HolyDoubleBuildStatusText()
-    )
-
-HolyDoubleRefreshUI()
-
-if HOLY_SHOP_STATE.DoubleHudEnabled == true then
-
-    task.defer(function()
-
-        HolyDoubleSetHudVisible(
-            true
-        )
-    end)
-end
-
-HolySniperAddLabel(
-    ShopDailyDealBox,
-    "Daily Deal All sells every eligible harvested fruit.\nTrigger Fruits only decide when to activate."
-)
-
-ShopDailyDealBox:AddToggle(
-    "HolyShopAutoDailyDealAll",
-    {
-        Text =
-            "⚡ Auto Daily Deal All",
-
-        Default =
-            HOLY_SHOP_STATE.AutoDailyDealAll == true,
-
-        Tooltip =
-            "Strict auto Daily Deal. Uses CheckDailyDeal, FruitStock.Request, and PreviewSellAll before UseDailyDealAll.",
-    }
-):OnChanged(function(value)
-
-    HolyDailyDealSetAutoEnabled(
+    HolyPetSellSetAutoEnabled(
         value == true,
         value == true
-        and "toggle on"
-        or "toggle off"
+            and "Auto Sell enabled."
+            or "Auto Sell disabled."
     )
 end)
 
-ShopDailyDealBox:AddDropdown(
-    "HolyShopDailyDealTriggerFruits",
-    {
-        Text =
-            "🍅 Trigger Fruits",
-
-        Values =
-            HolyDailyDealGetTriggerFruitDropdownValues(),
-
-        Default =
-            HolyShopSelectionArray(
-                HOLY_SHOP_STATE.DailyDealTriggerFruits
-            ),
-
-        Multi =
-            true,
-
-        Searchable =
-            true,
-
-        MaxVisibleDropdownItems =
-            8,
-
-        Tooltip =
-            "These fruits only decide WHEN Daily Deal All triggers. Daily Deal All still sells every eligible fruit.",
-    }
-):OnChanged(function(value)
-
-    HolyDailyDealSetTriggerFruits(
-        value
-    )
-end)
-
-ShopDailyDealBox:AddInput(
-    "HolyShopDailyDealMinStockMultiplier",
-    {
-        Text =
-            "📈 Min Stock Multiplier",
-
-        Default =
-            tostring(
-                HOLY_SHOP_STATE.DailyDealMinStockMultiplier
-                or "2"
-            ),
-
-        Placeholder =
-            "2",
-
-        Numeric =
-            false,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "Text input only. Commits only after Enter/click-away. Valid range: 0.01 to 100.",
-    }
-):OnChanged(function(value)
-
-    HolyDailyDealSetMinStockMultiplier(
-        value
-    )
-end)
-
-ShopDailyDealBox:AddInput(
-    "HolyShopDailyDealMinFriendBoost",
-    {
-        Text =
-            "👥 Min Friend Boost %",
-
-        Default =
-            tostring(
-                HOLY_SHOP_STATE.DailyDealMinFriendBoost
-                or "0"
-            ),
-
-        Placeholder =
-            "0",
-
-        Numeric =
-            false,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "Text input only. Commits only after Enter/click-away. Accepts 10 or 10%. Valid range: 0 to 100.",
-    }
-):OnChanged(function(value)
-
-    HolyDailyDealSetMinFriendBoost(
-        value
-    )
-end)
-
-ShopDailyDealBox:AddInput(
-    "HolyShopDailyDealMinInventoryValue",
-    {
-        Text =
-            "🎒 Min Inventory Value",
-
-        Default =
-            tostring(
-                HOLY_SHOP_STATE.DailyDealMinInventoryValue
-                or "0"
-            ),
-
-        Placeholder =
-            "500B",
-
-        Numeric =
-            false,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "Optional. 0 disables this check. Uses PreviewSellAll base inventory value before Daily Deal multiplier. Supports K, M, B, T, Q.",
-    }
-):OnChanged(function(value)
-
-    HolyDailyDealSetMinInventoryValue(
-        value
-    )
-end)
-
-ShopDailyDealBox:AddInput(
-    "HolyShopDailyDealMinValue",
-    {
-        Text =
-            "💰 Min Daily Payout",
-
-        Default =
-            tostring(
-                HOLY_SHOP_STATE.DailyDealMinValue
-                or "0"
-            ),
-
-        Placeholder =
-            "1T",
-
-        Numeric =
-            false,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "Optional. 0 disables this check. Expected payout after Daily Deal multiplier. Supports K, M, B, T, Q.",
-    }
-):OnChanged(function(value)
-
-    HolyDailyDealSetMinValue(
-        value
-    )
-end)
-
-ShopDailyDealBox:AddToggle(
-    "HolyShopDailyDealAutoDisable",
-    {
-        Text =
-            "🛑 Disable After Success",
-
-        Default =
-            HOLY_SHOP_STATE.DailyDealAutoDisable ~= false,
-
-        Tooltip =
-            "Recommended ON. Turns Auto Daily Deal off after a successful sale.",
-    }
-):OnChanged(function(value)
-
-    HolyDailyDealSetAutoDisable(
-        value == true
-    )
-end)
-
-local HolyDailyDealCheckButton =
-    ShopDailyDealBox:AddButton({
-        Text =
-            "🔎 Check Now",
-
-        Tooltip =
-            "Safe check only. Reads stock, cooldown, boost, and preview. Does not sell.",
-
-        Func =
-            function()
-
-                HolyDailyDealCheckNow()
-            end,
-    })
-
-HolyDailyDealCheckButton:AddButton({
-    Text =
-        "⚡ Use Once",
-
-    Tooltip =
-        "Runs the same strict checks, then uses Daily Deal All once if every condition passes.",
-
-    Func =
-        function()
-
-            HolyDailyDealUseOnce()
-        end,
-})
-
-HOLY_SHOP_UI.DailyDealStatusLabel =
-    HolySniperAddLabel(
-        ShopDailyDealBox,
-        "Daily: Ready"
-    )
-
-HOLY_SHOP_UI.DailyDealStockLabel =
-    HolySniperAddLabel(
-        ShopDailyDealBox,
-        "Stock: --"
-    )
-
-HOLY_SHOP_UI.DailyDealPreviewLabel =
-    HolySniperAddLabel(
-        ShopDailyDealBox,
-        "Preview: --"
-    )
-
-HOLY_SHOP_UI.DailyDealLastLabel =
-    HolySniperAddLabel(
-        ShopDailyDealBox,
-        "Last: --"
-    )
-
-HolyDailyDealRefreshUI()
-
-ShopFiltersBox:AddToggle(
-    "HolyShopUseSellFilters",
-    {
-        Text =
-            "🛡️ Use Sell Filters",
-
-        Default =
-            HOLY_SHOP_STATE.UseSellFilters,
-
-        Tooltip =
-            "OFF = sell all detected fruits in Selected Only. ON = apply the filters below.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.UseSellFilters =
-        value == true
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "use filters changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddDropdown(
-    "HolyShopSellFruits",
-    {
-        Text =
-            "🍎 Only Fruits",
-
-        Tooltip =
-            "Only sell selected fruits. Empty allows all fruits.",
-
-        Values =
-            HolySellGetFruitDropdownValues(),
-
-        Default =
-            HolyShopSelectionArray(
-                HOLY_SHOP_STATE.SellFruits
-            ),
-
-        Multi =
-            true,
-
-        Searchable =
-            true,
-
-        MaxVisibleDropdownItems =
-            6,
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.SellFruits =
-        HolyShopSelectionArray(
-            value
-        )
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellStartWatcher()
-
-        HolySellScanExistingFruitTools(
-            "only fruits changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddDropdown(
-    "HolyShopSellRarities",
-    {
-        Text =
-            "⭐ Only Rarity",
-
-        Tooltip =
-            "Only sell selected rarities. Empty allows all rarities.",
-
-        Values = {
-            "All",
-            "Common",
-            "Uncommon",
-            "Rare",
-            "Epic",
-            "Legendary",
-            "Mythic",
-            "Super",
-        },
-
-        Default =
-            HolyShopSelectionArray(
-                HOLY_SHOP_STATE.SellRarities
-            ),
-
-        Multi =
-            true,
-
-        Searchable =
-            false,
-
-        MaxVisibleDropdownItems =
-            6,
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.SellRarities =
-        HolyShopSelectionArray(
-            value
-        )
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "only rarity changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddDropdown(
-    "HolyShopSellMutations",
-    {
-        Text =
-            "🧬 Only Mutations",
-
-        Tooltip =
-            "Only sell fruits with selected mutations. Empty allows all mutations.",
-
-        Values =
-            HolySellGetMutationDropdownValues(),
-
-        Default =
-            HolyShopSelectionArray(
-                HOLY_SHOP_STATE.SellMutations
-            ),
-
-        Multi =
-            true,
-
-        Searchable =
-            true,
-
-        MaxVisibleDropdownItems =
-            8,
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.SellMutations =
-        HolyShopSelectionArray(
-            value
-        )
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "only mutations changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddDropdown(
-    "HolyShopProtectMutations",
-    {
-        Text =
-            "🚫 Protect Mutations",
-
-        Tooltip =
-            "Selected mutations will not be sold. Protect wins over Only.",
-
-        Values =
-            HolySellGetProtectMutationDropdownValues(),
-
-        Default =
-            HolyShopSelectionArray(
-                HOLY_SHOP_STATE.ProtectMutations
-            ),
-
-        Multi =
-            true,
-
-        Searchable =
-            true,
-
-        MaxVisibleDropdownItems =
-            8,
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.ProtectMutations =
-        HolyShopSelectionArray(
-            value
-        )
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "protect mutations changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddDropdown(
-    "HolyShopSellVariants",
-    {
-        Text =
-            "🌈 Only Variants",
-
-        Tooltip =
-            "Only sell selected variants. Empty allows all variants.",
-
-        Values =
-            HolySellGetVariantDropdownValues(),
-
-        Default =
-            HolyShopSelectionArray(
-                HOLY_SHOP_STATE.SellVariants
-            ),
-
-        Multi =
-            true,
-
-        Searchable =
-            false,
-
-        MaxVisibleDropdownItems =
-            4,
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.SellVariants =
-        HolyShopSelectionArray(
-            value
-        )
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "only variants changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddDropdown(
-    "HolyShopProtectVariants",
-    {
-        Text =
-            "🛡️ Protect Variants",
-
-        Tooltip =
-            "Selected variants will not be sold. Protect wins over Only.",
-
-        Values =
-            HolySellGetProtectVariantDropdownValues(),
-
-        Default =
-            HolyShopSelectionArray(
-                HOLY_SHOP_STATE.ProtectVariants
-            ),
-
-        Multi =
-            true,
-
-        Searchable =
-            false,
-
-        MaxVisibleDropdownItems =
-            3,
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.ProtectVariants =
-        HolyShopSelectionArray(
-            value
-        )
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "protect variants changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddInput(
-    "HolyShopMinWeightKg",
-    {
-        Text =
-            "⬇️ Min Weight KG",
-
-        Default =
-            HOLY_SHOP_STATE.MinWeightKg,
-
-        Numeric =
-            true,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "0 = no minimum weight filter.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.MinWeightKg =
-        tostring(value or "0")
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "min weight changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddInput(
-    "HolyShopMaxWeightKg",
-    {
-        Text =
-            "⬆️ Max Weight KG",
-
-        Default =
-            HOLY_SHOP_STATE.MaxWeightKg,
-
-        Numeric =
-            true,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "0 = no maximum weight filter.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.MaxWeightKg =
-        tostring(value or "0")
-
-    HolySaveShopSettings()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "max weight changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddDropdown(
-    "HolyShopSellValueMode",
-    {
-        Text =
-            "💸 Value Mode",
-
-        Values = {
-            "Below",
-            "Above",
-        },
-
-        Default =
-            HolySellNormalizeValueMode(
-                HOLY_SHOP_STATE.SellValueMode
-                or "Below"
-            ),
-
-        Multi =
-            false,
-
-        Searchable =
-            false,
-
-        MaxVisibleDropdownItems =
-            2,
-
-        Tooltip =
-            "Filtered Sell only. Below sells fruits at or below Value $. Above sells fruits at or above Value $.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.SellValueMode =
-        HolySellNormalizeValueMode(
-            value
-        )
-
-    HolySaveShopSettings()
-    HolySellClearQueue()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        HolySellScanExistingFruitTools(
-            "value mode changed"
-        )
-
-        HolySellStartWorker()
-    end
-end)
-
-ShopFiltersBox:AddInput(
-    "HolyShopSellValueThreshold",
-    {
-        Text =
-            "💰 Value $ (0 = off)",
-
-        Default =
-            tostring(
-                HolySellReadValueThreshold(
-                    HOLY_SHOP_STATE.SellValueThreshold
-                    or "0"
-                )
-            ),
-
-        Numeric =
-            false,
-
-        Finished =
-            true,
-
-        ClearTextOnFocus =
-            false,
-
-        Tooltip =
-            "Filtered Sell only. Supports 500k, 1.5m, 2b, 1t, or 250000. 0 disables value filtering.",
-    }
-):OnChanged(function(value)
-
-    HOLY_SHOP_STATE.SellValueThreshold =
-        tostring(
-            HolySellReadValueThreshold(
-                value
-            )
-        )
-
-    HolySaveShopSettings()
-    HolySellClearQueue()
-
-    if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-        task.delay(0.10, function()
-
-            if HOLY_SHOP_STATE.AutoSellFruits == true then
-
-                HolySellScanExistingFruitTools(
-                    "value threshold changed"
-                )
-
-                HolySellStartWorker()
-            end
-        end)
-    end
-end)
-
-HOLY_SHOP_UI =
-    type(HOLY_SHOP_UI) == "table"
-    and HOLY_SHOP_UI
-    or {}
-
-HOLY_PET_SELL_RUNTIME.InitialValues =
-    HolyPetSellGetDropdownValues()
-
-HOLY_PET_SELL_RUNTIME.InitialKey =
-    tostring(
-        HOLY_SHOP_STATE.PetSellSelectedKey
-        or ""
-    )
-
-if HOLY_PET_SELL_RUNTIME.KeyToDisplay[
-    HOLY_PET_SELL_RUNTIME.InitialKey
-] == nil then
-
-    HOLY_PET_SELL_RUNTIME.InitialKey =
-        ""
-
-    HOLY_SHOP_STATE.PetSellSelectedKey =
-        ""
-end
-
-HOLY_SHOP_UI.PetSellDropdown =
+HOLY_SHOP_UI.PetSellNamesDropdown =
     ShopPetSellerBox:AddDropdown(
-        "HolyShopPetSellGroup",
+        "HolyShopPetSellNames",
         {
             Text =
-                "Pet Group",
+                "Pet Names",
 
             Values =
-                HOLY_PET_SELL_RUNTIME.InitialValues,
+                HolyPetSellGetPetNameValues(),
 
             Default =
-                HOLY_PET_SELL_RUNTIME.KeyToDisplay[
-                    HOLY_PET_SELL_RUNTIME.InitialKey
-                ]
-                or HOLY_PET_SELL_RUNTIME.InitialValues[
-                    1
-                ],
+                HOLY_SHOP_STATE.PetSellNames,
 
             Multi =
-                false,
+                true,
 
             Searchable =
                 true,
@@ -173462,38 +172389,130 @@ HOLY_SHOP_UI.PetSellDropdown =
                 10,
 
             Tooltip =
-                "Select one exact pet, size, and variant group. Normal, Big, Huge, and different variants remain separated.",
+                "Select one or more pet names. No selected pet names means nothing can be sold.",
         }
     )
 
-HOLY_SHOP_UI.PetSellDropdown:OnChanged(function(value)
+HOLY_SHOP_UI.PetSellNamesDropdown:OnChanged(function(value)
 
-    if HOLY_PET_SELL_RUNTIME.UpdatingUI == true then
-        return
-    end
-
-    local display =
-        HolyPetSellReadDropdownValue(
+    HOLY_SHOP_STATE.PetSellNames =
+        HolyPetSellNormalizePetSelection(
             value
         )
 
-    local selectedKey =
-        HOLY_PET_SELL_RUNTIME.DisplayToKey[
-            display
-        ]
+    HolySaveShopSettings()
 
-    if selectedKey == nil then
-        return
+    HolyPetSellRefreshPreview(
+        true
+    )
+
+    if HOLY_SHOP_STATE.AutoSellPets == true then
+
+        HolyPetSellQueueAutoRun(
+            "pet-name filters changed",
+            false
+        )
     end
+end)
 
-    HOLY_SHOP_STATE.PetSellSelectedKey =
-        selectedKey
+HOLY_SHOP_UI.PetSellSizesDropdown =
+    ShopPetSellerBox:AddDropdown(
+        "HolyShopPetSellSizes",
+        {
+            Text =
+                "Sizes",
+
+            Values =
+                HolyPetSellGetSizeValues(),
+
+            Default =
+                HOLY_SHOP_STATE.PetSellSizes,
+
+            Multi =
+                true,
+
+            Searchable =
+                false,
+
+            MaxVisibleDropdownItems =
+                5,
+
+            Tooltip =
+                "Select the exact sizes Auto Sell may touch. Normal is the safe default; Big and Huge stay protected unless selected.",
+        }
+    )
+
+HOLY_SHOP_UI.PetSellSizesDropdown:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellSizes =
+        HolyPetSellNormalizeSizeSelection(
+            value,
+            false
+        )
 
     HolySaveShopSettings()
 
-    HolyPetSellSetStatus(
-        HolyPetSellBuildReadyStatus()
+    HolyPetSellRefreshPreview(
+        true
     )
+
+    if HOLY_SHOP_STATE.AutoSellPets == true then
+
+        HolyPetSellQueueAutoRun(
+            "size filters changed",
+            false
+        )
+    end
+end)
+
+HOLY_SHOP_UI.PetSellVariantsDropdown =
+    ShopPetSellerBox:AddDropdown(
+        "HolyShopPetSellVariants",
+        {
+            Text =
+                "Variants",
+
+            Values =
+                HolyPetSellGetVariantValues(),
+
+            Default =
+                HOLY_SHOP_STATE.PetSellVariants,
+
+            Multi =
+                true,
+
+            Searchable =
+                false,
+
+            MaxVisibleDropdownItems =
+                8,
+
+            Tooltip =
+                "Select the exact variants Auto Sell may touch. Normal is the safe default; Rainbow and other variants stay protected unless selected.",
+        }
+    )
+
+HOLY_SHOP_UI.PetSellVariantsDropdown:OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellVariants =
+        HolyPetSellNormalizeVariantSelection(
+            value,
+            false
+        )
+
+    HolySaveShopSettings()
+
+    HolyPetSellRefreshPreview(
+        true
+    )
+
+    if HOLY_SHOP_STATE.AutoSellPets == true then
+
+        HolyPetSellQueueAutoRun(
+            "variant filters changed",
+            false
+        )
+    end
 end)
 
 HOLY_SHOP_UI.PetSellKeepInput =
@@ -173501,7 +172520,7 @@ HOLY_SHOP_UI.PetSellKeepInput =
         "HolyShopPetSellKeepAmount",
         {
             Text =
-                "Keep Amount",
+                "Keep Per Group",
 
             Default =
                 tostring(
@@ -173523,7 +172542,7 @@ HOLY_SHOP_UI.PetSellKeepInput =
                 false,
 
             Tooltip =
-                "How many pets from the selected exact group to keep. The value commits after Enter or clicking away.",
+                "How many pets to keep separately in every exact pet, size, and variant group.",
         }
     )
 
@@ -173536,10 +172555,15 @@ HOLY_SHOP_UI.PetSellKeepInput:OnChanged(function(value)
 
     HolySaveShopSettings()
 
-    if HOLY_PET_SELL_RUNTIME.Busy ~= true then
+    HolyPetSellRefreshPreview(
+        true
+    )
 
-        HolyPetSellSetStatus(
-            HolyPetSellBuildReadyStatus()
+    if HOLY_SHOP_STATE.AutoSellPets == true then
+
+        HolyPetSellQueueAutoRun(
+            "keep amount changed",
+            false
         )
     end
 end)
@@ -173571,7 +172595,7 @@ HOLY_SHOP_UI.PetSellBatchInput =
                 false,
 
             Tooltip =
-                "How many eligible pets to sell together per batch. There is no configured maximum. If fewer pets remain, all remaining pets are used.",
+                "Maximum eligible pets sent together per batch. There is no configured maximum; fewer remaining pets means a smaller batch.",
         }
     )
 
@@ -173588,15 +172612,17 @@ end)
 HOLY_SHOP_UI.PetSellStartButton =
     ShopPetSellerBox:AddButton({
         Text =
-            "Sell Pets",
+            "Sell Preview",
 
         Tooltip =
-            "Sells the selected exact pet group down to Keep Amount using your chosen Batch Amount.",
+            "Manually sells every currently previewed excess pet while respecting Keep Per Group and Batch Amount.",
 
         Func =
             function()
 
-                HolyPetSellStart()
+                HolyPetSellStart(
+                    false
+                )
             end,
     })
 
@@ -173605,27 +172631,56 @@ HOLY_SHOP_UI.PetSellStartButton:AddButton({
         "Stop",
 
     Tooltip =
-        "Stops before the next batch. Any batch already sent finishes confirmation first.",
+        "Turns Auto Sell off and stops before the next batch. A batch already sent still finishes confirmation.",
 
     Func =
         function()
 
-            HolyPetSellStop(
-                "Stopped by user.",
-                true
-            )
+            if HOLY_SHOP_STATE.AutoSellPets == true then
+
+                HolyPetSellSetToggleValue(
+                    false
+                )
+
+                HolyPetSellSetAutoEnabled(
+                    false,
+                    "Stopped by user."
+                )
+
+            else
+
+                HolyPetSellStop(
+                    "Stopped by user.",
+                    true
+                )
+            end
         end,
 })
 
 HOLY_SHOP_UI.PetSellStatusLabel =
     HolySniperAddLabel(
         ShopPetSellerBox,
-        HolyPetSellBuildReadyStatus()
+        "Loading pet-sell preview..."
     )
 
-HolyPetSellRefreshDropdown(
+HolyPetSellBuildPreviewUI(
+    ShopPetSellPreviewBox
+)
+
+HolyPetSellRefreshPreview(
     true
 )
+
+if HOLY_SHOP_STATE.AutoSellPets == true then
+
+    task.defer(function()
+
+        HolyPetSellQueueAutoRun(
+            "startup",
+            true
+        )
+    end)
+end
 
 HolyShopConnectStockSignals()
 
