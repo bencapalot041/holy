@@ -1822,8 +1822,11 @@ HOLY_DEV_UI_STATE = {
 
     AutoSkipLoading = true,
     AntiAfk = true,
-    AntiKnockback = false,
-    AntiWheelbarrow = false,
+    AntiKnockback = true,
+    AntiWheelbarrow = true,
+    AntiBeeSting = true,
+    AntiMagnet = true,
+    Noclip = true,
     HideHarvestPrompts = false,
     AutoFarmMiddle = true,
 
@@ -2961,6 +2964,67 @@ HOLY_ANTI_WHEELBARROW_STATE = {
 
     ActiveSeat =
         nil,
+}
+
+if type(HOLY_SPECIAL_PROTECTION_STATE) == "table"
+and type(HOLY_SPECIAL_PROTECTION_STATE.Stop) == "function" then
+
+    pcall(function()
+
+        HOLY_SPECIAL_PROTECTION_STATE.Stop(
+            "restart"
+        )
+    end)
+end
+
+HOLY_SPECIAL_PROTECTION_STATE = {
+    Running =
+        false,
+
+    Token =
+        nil,
+
+    AntiBeeEnabled =
+        false,
+
+    AntiMagnetEnabled =
+        false,
+
+    NoclipEnabled =
+        false,
+
+    Character =
+        nil,
+
+    Humanoid =
+        nil,
+
+    Root =
+        nil,
+
+    Networking =
+        nil,
+
+    Connections =
+        {},
+
+    CharacterConnections =
+        {},
+
+    PacketConnections =
+        {},
+
+    OriginalCollisions =
+        {},
+
+    BeeActiveUntil =
+        0,
+
+    MagnetActiveUntil =
+        0,
+
+    LastBeeUnragdollAt =
+        0,
 }
 
 if type(HOLY_HARVEST_PROMPT_RUNTIME) == "table"
@@ -8820,6 +8884,15 @@ function HolySaveUISettings()
         AntiWheelbarrow =
             HOLY_DEV_UI_STATE.AntiWheelbarrow == true,
 
+        AntiBeeSting =
+            HOLY_DEV_UI_STATE.AntiBeeSting == true,
+
+        AntiMagnet =
+            HOLY_DEV_UI_STATE.AntiMagnet == true,
+
+        Noclip =
+            HOLY_DEV_UI_STATE.Noclip == true,
+
         HideHarvestPrompts =
             HOLY_DEV_UI_STATE.HideHarvestPrompts == true,
 
@@ -9119,6 +9192,24 @@ function HolyLoadUISettings()
 
         HOLY_DEV_UI_STATE.AntiWheelbarrow =
             data.AntiWheelbarrow
+    end
+
+    if type(data.AntiBeeSting) == "boolean" then
+
+        HOLY_DEV_UI_STATE.AntiBeeSting =
+            data.AntiBeeSting
+    end
+
+    if type(data.AntiMagnet) == "boolean" then
+
+        HOLY_DEV_UI_STATE.AntiMagnet =
+            data.AntiMagnet
+    end
+
+    if type(data.Noclip) == "boolean" then
+
+        HOLY_DEV_UI_STATE.Noclip =
+            data.Noclip
     end
 
     if type(data.HideHarvestPrompts) == "boolean" then
@@ -59041,6 +59132,1100 @@ end
 HOLY_ANTI_WHEELBARROW_STATE.Stop =
     HolyAntiWheelbarrowStop
 
+--==================================================
+-- ANTI BEE STING + ANTI MAGNET + NOCLIP
+--==================================================
+
+function HolySpecialProtectionDisconnectList(list)
+
+    for _, connection in ipairs(
+        list
+        or {}
+    ) do
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+
+    if type(list) == "table" then
+
+        table.clear(
+            list
+        )
+    end
+end
+
+function HolySpecialProtectionGetCharacter()
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    local character =
+        runtime.Character
+
+    local humanoid =
+        runtime.Humanoid
+
+    local root =
+        runtime.Root
+
+    if typeof(character) ~= "Instance"
+    or character.Parent == nil
+    or LocalPlayer.Character ~= character then
+
+        return nil,
+            nil,
+            nil
+    end
+
+    if typeof(humanoid) ~= "Instance"
+    or humanoid.Parent == nil then
+
+        return character,
+            nil,
+            nil
+    end
+
+    if typeof(root) ~= "Instance"
+    or root.Parent == nil
+    or root:IsA("BasePart") ~= true then
+
+        return character,
+            humanoid,
+            nil
+    end
+
+    return character,
+        humanoid,
+        root
+end
+
+function HolyNoclipRestoreParts()
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    for part, originalCanCollide in pairs(
+        runtime.OriginalCollisions
+        or {}
+    ) do
+
+        if typeof(part) == "Instance"
+        and part.Parent ~= nil
+        and part:IsA("BasePart") then
+
+            pcall(function()
+
+                part.CanCollide =
+                    originalCanCollide
+            end)
+        end
+    end
+
+    runtime.OriginalCollisions =
+        {}
+
+    return true
+end
+
+function HolyNoclipApplyPart(part)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if runtime.NoclipEnabled ~= true
+    or typeof(part) ~= "Instance"
+    or part:IsA("BasePart") ~= true then
+
+        return false
+    end
+
+    if runtime.OriginalCollisions[part] == nil then
+
+        runtime.OriginalCollisions[part] =
+            part.CanCollide == true
+    end
+
+    if part.CanCollide == true then
+
+        pcall(function()
+
+            part.CanCollide =
+                false
+        end)
+    end
+
+    return true
+end
+
+function HolyNoclipApplyCharacter()
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if runtime.NoclipEnabled ~= true then
+        return false
+    end
+
+    local character =
+        runtime.Character
+
+    if typeof(character) ~= "Instance"
+    or character.Parent == nil then
+
+        return false
+    end
+
+    for _, descendant in ipairs(
+        character:GetDescendants()
+    ) do
+
+        if descendant:IsA("BasePart") then
+
+            HolyNoclipApplyPart(
+                descendant
+            )
+        end
+    end
+
+    return true
+end
+
+function HolySpecialProtectionIsBeeForce(instance)
+
+    if typeof(instance) ~= "Instance" then
+        return false
+    end
+
+    return instance:IsA("BodyVelocity")
+        or instance:IsA("BodyAngularVelocity")
+        or instance:IsA("BodyPosition")
+        or instance:IsA("BodyGyro")
+        or instance:IsA("LinearVelocity")
+        or instance:IsA("AngularVelocity")
+        or instance:IsA("VectorForce")
+        or instance:IsA("AlignPosition")
+        or instance:IsA("AlignOrientation")
+end
+
+function HolySpecialProtectionIsMagnetForce(instance)
+
+    if typeof(instance) ~= "Instance" then
+        return false
+    end
+
+    return instance:IsA("BodyPosition")
+        or instance:IsA("BodyGyro")
+        or instance:IsA("BodyVelocity")
+        or instance:IsA("BodyAngularVelocity")
+        or instance:IsA("AlignPosition")
+        or instance:IsA("AlignOrientation")
+        or instance:IsA("LinearVelocity")
+        or instance:IsA("AngularVelocity")
+        or instance:IsA("VectorForce")
+end
+
+function HolySpecialProtectionDestroyForces(
+    character,
+    mode
+)
+
+    if typeof(character) ~= "Instance" then
+        return 0
+    end
+
+    local removed =
+        0
+
+    for _, descendant in ipairs(
+        character:GetDescendants()
+    ) do
+
+        local shouldRemove =
+            mode == "magnet"
+            and HolySpecialProtectionIsMagnetForce(
+                descendant
+            )
+            or mode == "bee"
+            and HolySpecialProtectionIsBeeForce(
+                descendant
+            )
+
+        if shouldRemove == true then
+
+            local destroyed =
+                pcall(function()
+
+                    descendant:Destroy()
+                end)
+
+            if destroyed == true then
+
+                removed +=
+                    1
+            end
+        end
+    end
+
+    return removed
+end
+
+function HolyAntiBeeStingRecover(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if runtime.Running ~= true
+    or runtime.AntiBeeEnabled ~= true
+    or os.clock() > (
+        tonumber(runtime.BeeActiveUntil)
+        or 0
+    ) then
+
+        return false
+    end
+
+    local character,
+        humanoid,
+        root =
+        HolySpecialProtectionGetCharacter()
+
+    if not character
+    or not humanoid
+    or not root
+    or humanoid.Health <= 0 then
+
+        return false
+    end
+
+    local state =
+        humanoid:GetState()
+
+    local needsRecovery =
+        character:GetAttribute(
+            "Ragdolled"
+        ) == true
+        or humanoid.PlatformStand == true
+        or state == Enum.HumanoidStateType.Physics
+        or state == Enum.HumanoidStateType.Ragdoll
+        or state == Enum.HumanoidStateType.FallingDown
+        or state == Enum.HumanoidStateType.PlatformStanding
+
+    local removed =
+        HolySpecialProtectionDestroyForces(
+            character,
+            "bee"
+        )
+
+    if needsRecovery == true
+    and os.clock() - (
+        tonumber(runtime.LastBeeUnragdollAt)
+        or 0
+    ) >= 0.05 then
+
+        runtime.LastBeeUnragdollAt =
+            os.clock()
+
+        local ragdollModule =
+            HolyAntiKnockbackLoadModule()
+
+        if type(ragdollModule) == "table"
+        and type(ragdollModule.Unragdoll) == "function" then
+
+            pcall(function()
+
+                ragdollModule:Unragdoll(
+                    character
+                )
+            end)
+        end
+    end
+
+    if needsRecovery == true
+    or removed > 0 then
+
+        pcall(function()
+
+            humanoid.PlatformStand =
+                false
+
+            humanoid.Sit =
+                false
+
+            humanoid.AutoRotate =
+                true
+
+            root.AssemblyLinearVelocity =
+                Vector3.zero
+
+            root.AssemblyAngularVelocity =
+                Vector3.zero
+
+            humanoid:ChangeState(
+                Enum.HumanoidStateType.GettingUp
+            )
+        end)
+    end
+
+    return needsRecovery == true
+        or removed > 0
+end
+
+function HolyAntiMagnetRecover(
+    reason,
+    forceVelocityClear
+)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if runtime.Running ~= true
+    or runtime.AntiMagnetEnabled ~= true
+    or os.clock() > (
+        tonumber(runtime.MagnetActiveUntil)
+        or 0
+    ) then
+
+        return false
+    end
+
+    local character,
+        humanoid,
+        root =
+        HolySpecialProtectionGetCharacter()
+
+    if not character
+    or not humanoid
+    or not root
+    or humanoid.Health <= 0 then
+
+        return false
+    end
+
+    local removed =
+        HolySpecialProtectionDestroyForces(
+            character,
+            "magnet"
+        )
+
+    if removed > 0
+    or forceVelocityClear == true then
+
+        pcall(function()
+
+            root.AssemblyLinearVelocity =
+                Vector3.zero
+
+            root.AssemblyAngularVelocity =
+                Vector3.zero
+        end)
+    end
+
+    return removed > 0
+end
+
+function HolyAntiBeeStingTrigger(duration)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if runtime.Running ~= true
+    or runtime.AntiBeeEnabled ~= true then
+
+        return false
+    end
+
+    runtime.BeeActiveUntil =
+        math.max(
+            tonumber(runtime.BeeActiveUntil)
+            or 0,
+            os.clock() + 1
+        )
+
+    HolyAntiBeeStingRecover(
+        "packet"
+    )
+
+    for _, delayTime in ipairs({
+        0.03,
+        0.08,
+        0.18,
+        0.40,
+    }) do
+
+        task.delay(
+            delayTime,
+            function()
+
+                HolyAntiBeeStingRecover(
+                    "packet follow-up"
+                )
+            end
+        )
+    end
+
+    return true
+end
+
+function HolyAntiMagnetTrigger(
+    handle,
+    range,
+    remainingTime
+)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if runtime.Running ~= true
+    or runtime.AntiMagnetEnabled ~= true then
+
+        return false
+    end
+
+    runtime.MagnetActiveUntil =
+        math.max(
+            tonumber(runtime.MagnetActiveUntil)
+            or 0,
+            os.clock() + 0.35
+        )
+
+    HolyAntiMagnetRecover(
+        "packet",
+        true
+    )
+
+    task.defer(function()
+
+        HolyAntiMagnetRecover(
+            "packet follow-up",
+            false
+        )
+    end)
+
+    return true
+end
+
+function HolySpecialProtectionBindCharacter(character)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    HolySpecialProtectionDisconnectList(
+        runtime.CharacterConnections
+    )
+
+    HolyNoclipRestoreParts()
+
+    runtime.Character =
+        character
+
+    runtime.Humanoid =
+        nil
+
+    runtime.Root =
+        nil
+
+    runtime.BeeActiveUntil =
+        0
+
+    runtime.MagnetActiveUntil =
+        0
+
+    runtime.LastBeeUnragdollAt =
+        0
+
+    runtime.OriginalCollisions =
+        {}
+
+    if typeof(character) ~= "Instance" then
+        return false
+    end
+
+    local humanoid =
+        character:FindFirstChildOfClass(
+            "Humanoid"
+        )
+        or character:WaitForChild(
+            "Humanoid",
+            8
+        )
+
+    local root =
+        character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+        or character:WaitForChild(
+            "HumanoidRootPart",
+            8
+        )
+
+    if typeof(humanoid) ~= "Instance"
+    or typeof(root) ~= "Instance"
+    or root:IsA("BasePart") ~= true then
+
+        return false
+    end
+
+    runtime.Humanoid =
+        humanoid
+
+    runtime.Root =
+        root
+
+    table.insert(
+        runtime.CharacterConnections,
+        character.DescendantAdded:Connect(function(
+            descendant
+        )
+
+            if runtime.Running ~= true then
+                return
+            end
+
+            if descendant:IsA("BasePart")
+            and runtime.NoclipEnabled == true then
+
+                HolyNoclipApplyPart(
+                    descendant
+                )
+            end
+
+            local beeActive =
+                runtime.AntiBeeEnabled == true
+                and os.clock() <= (
+                    tonumber(runtime.BeeActiveUntil)
+                    or 0
+                )
+
+            local magnetActive =
+                runtime.AntiMagnetEnabled == true
+                and os.clock() <= (
+                    tonumber(runtime.MagnetActiveUntil)
+                    or 0
+                )
+
+            if beeActive == true
+            and HolySpecialProtectionIsBeeForce(
+                descendant
+            ) == true then
+
+                task.defer(function()
+
+                    HolyAntiBeeStingRecover(
+                        "force added"
+                    )
+                end)
+            end
+
+            if magnetActive == true
+            and HolySpecialProtectionIsMagnetForce(
+                descendant
+            ) == true then
+
+                task.defer(function()
+
+                    HolyAntiMagnetRecover(
+                        "force added",
+                        false
+                    )
+                end)
+            end
+        end)
+    )
+
+    table.insert(
+        runtime.CharacterConnections,
+        humanoid:GetPropertyChangedSignal(
+            "PlatformStand"
+        ):Connect(function()
+
+            if runtime.AntiBeeEnabled == true
+            and os.clock() <= (
+                tonumber(runtime.BeeActiveUntil)
+                or 0
+            )
+            and humanoid.PlatformStand == true then
+
+                task.defer(function()
+
+                    HolyAntiBeeStingRecover(
+                        "platform stand"
+                    )
+                end)
+            end
+        end)
+    )
+
+    table.insert(
+        runtime.CharacterConnections,
+        humanoid.StateChanged:Connect(function(
+            _,
+            newState
+        )
+
+            if runtime.AntiBeeEnabled == true
+            and os.clock() <= (
+                tonumber(runtime.BeeActiveUntil)
+                or 0
+            )
+            and (
+                newState == Enum.HumanoidStateType.Physics
+                or newState == Enum.HumanoidStateType.Ragdoll
+                or newState == Enum.HumanoidStateType.FallingDown
+                or newState == Enum.HumanoidStateType.PlatformStanding
+            ) then
+
+                task.defer(function()
+
+                    HolyAntiBeeStingRecover(
+                        "humanoid state"
+                    )
+                end)
+            end
+        end)
+    )
+
+    if runtime.NoclipEnabled == true then
+
+        HolyNoclipApplyCharacter()
+    end
+
+    return true
+end
+
+function HolySpecialProtectionLoadNetworking()
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if type(runtime.Networking) == "table" then
+
+        return runtime.Networking
+    end
+
+    local networking =
+        nil
+
+    if type(HolyShopRequireModule) == "function" then
+
+        networking =
+            HolyShopRequireModule(
+                "SharedModules.Networking"
+            )
+    end
+
+    if type(networking) ~= "table" then
+
+        local sharedModules =
+            ReplicatedStorage:FindFirstChild(
+                "SharedModules"
+            )
+
+        local networkingModule =
+            sharedModules
+            and sharedModules:FindFirstChild(
+                "Networking"
+            )
+            or nil
+
+        if typeof(networkingModule) == "Instance"
+        and networkingModule:IsA("ModuleScript") then
+
+            local ok,
+                result =
+                pcall(
+                    require,
+                    networkingModule
+                )
+
+            if ok == true
+            and type(result) == "table" then
+
+                networking =
+                    result
+            end
+        end
+    end
+
+    runtime.Networking =
+        type(networking) == "table"
+        and networking
+        or nil
+
+    return runtime.Networking
+end
+
+function HolySpecialProtectionConnectPackets()
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    HolySpecialProtectionDisconnectList(
+        runtime.PacketConnections
+    )
+
+    runtime.PacketConnections =
+        {}
+
+    local networking =
+        HolySpecialProtectionLoadNetworking()
+
+    if type(networking) ~= "table" then
+        return false
+    end
+
+    local beePacket =
+        type(networking.Bee) == "table"
+        and networking.Bee.Sting
+        or nil
+
+    local magnetPacket =
+        type(networking.Magnet) == "table"
+        and networking.Magnet.Pull
+        or nil
+
+    local connected =
+        0
+
+    local beeSignal =
+        type(beePacket) == "table"
+        and beePacket.OnClientEvent
+        or nil
+
+    if beeSignal ~= nil
+    and type(beeSignal.Connect) == "function" then
+
+        local ok,
+            connection =
+            pcall(function()
+
+                return beeSignal:Connect(
+                    HolyAntiBeeStingTrigger
+                )
+            end)
+
+        if ok == true
+        and connection ~= nil then
+
+            table.insert(
+                runtime.PacketConnections,
+                connection
+            )
+
+            connected +=
+                1
+        end
+    end
+
+    local magnetSignal =
+        type(magnetPacket) == "table"
+        and magnetPacket.OnClientEvent
+        or nil
+
+    if magnetSignal ~= nil
+    and type(magnetSignal.Connect) == "function" then
+
+        local ok,
+            connection =
+            pcall(function()
+
+                return magnetSignal:Connect(
+                    HolyAntiMagnetTrigger
+                )
+            end)
+
+        if ok == true
+        and connection ~= nil then
+
+            table.insert(
+                runtime.PacketConnections,
+                connection
+            )
+
+            connected +=
+                1
+        end
+    end
+
+    return connected > 0
+end
+
+function HolySpecialProtectionStart(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if runtime.Running == true then
+        return true
+    end
+
+    runtime.Running =
+        true
+
+    runtime.Token =
+        {}
+
+    local token =
+        runtime.Token
+
+    runtime.Connections =
+        {}
+
+    runtime.CharacterConnections =
+        {}
+
+    runtime.PacketConnections =
+        {}
+
+    table.insert(
+        runtime.Connections,
+        LocalPlayer.CharacterAdded:Connect(function(
+            character
+        )
+
+            task.defer(function()
+
+                if runtime.Running == true
+                and runtime.Token == token then
+
+                    HolySpecialProtectionBindCharacter(
+                        character
+                    )
+                end
+            end)
+        end)
+    )
+
+    table.insert(
+        runtime.Connections,
+        RunService.Stepped:Connect(function()
+
+            if runtime.Running ~= true
+            or runtime.Token ~= token then
+
+                return
+            end
+
+            if runtime.NoclipEnabled == true then
+
+                HolyNoclipApplyCharacter()
+            end
+
+            if runtime.AntiBeeEnabled == true
+            and os.clock() <= (
+                tonumber(runtime.BeeActiveUntil)
+                or 0
+            ) then
+
+                HolyAntiBeeStingRecover(
+                    "stepped"
+                )
+            end
+
+            if runtime.AntiMagnetEnabled == true
+            and os.clock() <= (
+                tonumber(runtime.MagnetActiveUntil)
+                or 0
+            ) then
+
+                HolyAntiMagnetRecover(
+                    "stepped",
+                    false
+                )
+            end
+        end)
+    )
+
+    HolySpecialProtectionConnectPackets()
+
+    HolySpecialProtectionBindCharacter(
+        LocalPlayer.Character
+        or LocalPlayer.CharacterAdded:Wait()
+    )
+
+    return true
+end
+
+function HolySpecialProtectionAnyEnabled()
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    return runtime.AntiBeeEnabled == true
+        or runtime.AntiMagnetEnabled == true
+        or runtime.NoclipEnabled == true
+end
+
+function HolySpecialProtectionStop(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    if type(runtime) ~= "table" then
+        return false
+    end
+
+    runtime.Running =
+        false
+
+    runtime.Token =
+        nil
+
+    runtime.AntiBeeEnabled =
+        false
+
+    runtime.AntiMagnetEnabled =
+        false
+
+    runtime.NoclipEnabled =
+        false
+
+    runtime.BeeActiveUntil =
+        0
+
+    runtime.MagnetActiveUntil =
+        0
+
+    HolySpecialProtectionDisconnectList(
+        runtime.PacketConnections
+    )
+
+    HolySpecialProtectionDisconnectList(
+        runtime.CharacterConnections
+    )
+
+    HolySpecialProtectionDisconnectList(
+        runtime.Connections
+    )
+
+    HolyNoclipRestoreParts()
+
+    runtime.Character =
+        nil
+
+    runtime.Humanoid =
+        nil
+
+    runtime.Root =
+        nil
+
+    runtime.Networking =
+        nil
+
+    runtime.LastBeeUnragdollAt =
+        0
+
+    return true
+end
+
+function HolyAntiBeeStingStart(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    runtime.AntiBeeEnabled =
+        true
+
+    return HolySpecialProtectionStart(
+        reason
+    )
+end
+
+function HolyAntiBeeStingStop(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    runtime.AntiBeeEnabled =
+        false
+
+    runtime.BeeActiveUntil =
+        0
+
+    if HolySpecialProtectionAnyEnabled() ~= true then
+
+        return HolySpecialProtectionStop(
+            reason
+        )
+    end
+
+    return true
+end
+
+function HolyAntiMagnetStart(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    runtime.AntiMagnetEnabled =
+        true
+
+    return HolySpecialProtectionStart(
+        reason
+    )
+end
+
+function HolyAntiMagnetStop(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    runtime.AntiMagnetEnabled =
+        false
+
+    runtime.MagnetActiveUntil =
+        0
+
+    if HolySpecialProtectionAnyEnabled() ~= true then
+
+        return HolySpecialProtectionStop(
+            reason
+        )
+    end
+
+    return true
+end
+
+function HolyNoclipStart(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    runtime.NoclipEnabled =
+        true
+
+    HolySpecialProtectionStart(
+        reason
+    )
+
+    return HolyNoclipApplyCharacter()
+end
+
+function HolyNoclipStop(reason)
+
+    local runtime =
+        HOLY_SPECIAL_PROTECTION_STATE
+
+    runtime.NoclipEnabled =
+        false
+
+    HolyNoclipRestoreParts()
+
+    if HolySpecialProtectionAnyEnabled() ~= true then
+
+        return HolySpecialProtectionStop(
+            reason
+        )
+    end
+
+    return true
+end
+
+HOLY_SPECIAL_PROTECTION_STATE.Stop =
+    HolySpecialProtectionStop
+
 function HolySetGroupboxVisible(groupbox, visible)
 
     if type(groupbox) ~= "table" then
@@ -95829,6 +97014,27 @@ if HOLY_DEV_UI_STATE.AntiWheelbarrow == true then
     )
 end
 
+if HOLY_DEV_UI_STATE.AntiBeeSting == true then
+
+    HolyAntiBeeStingStart(
+        "startup"
+    )
+end
+
+if HOLY_DEV_UI_STATE.AntiMagnet == true then
+
+    HolyAntiMagnetStart(
+        "startup"
+    )
+end
+
+if HOLY_DEV_UI_STATE.Noclip == true then
+
+    HolyNoclipStart(
+        "startup"
+    )
+end
+
 if HOLY_DEV_UI_STATE.HideHarvestPrompts == true then
 
     HolyHarvestPromptStart(
@@ -97551,6 +98757,17 @@ if type(Library.OnUnload) == "function" then
                 pcall(function()
 
                     HOLY_MAIL_RUNTIME.Stop(
+                        "unload"
+                    )
+                end)
+            end
+
+            if type(HOLY_SPECIAL_PROTECTION_STATE) == "table"
+            and type(HOLY_SPECIAL_PROTECTION_STATE.Stop) == "function" then
+
+                pcall(function()
+
+                    HOLY_SPECIAL_PROTECTION_STATE.Stop(
                         "unload"
                     )
                 end)
@@ -168208,6 +169425,105 @@ SettingsProtectionBox:AddToggle(
     else
 
         HolyAntiWheelbarrowStop(
+            "toggle off"
+        )
+    end
+end)
+
+SettingsProtectionBox:AddToggle(
+    "HolyAntiBeeSting",
+    {
+        Text =
+            "Anti Bee Sting",
+
+        Default =
+            HOLY_DEV_UI_STATE.AntiBeeSting == true,
+
+        Tooltip =
+            "Prevents the knockback and ragdoll effect caused by Bee stings.",
+    }
+):OnChanged(function(value)
+
+    HOLY_DEV_UI_STATE.AntiBeeSting =
+        value == true
+
+    HolySaveUISettings()
+
+    if HOLY_DEV_UI_STATE.AntiBeeSting == true then
+
+        HolyAntiBeeStingStart(
+            "toggle on"
+        )
+
+    else
+
+        HolyAntiBeeStingStop(
+            "toggle off"
+        )
+    end
+end)
+
+SettingsProtectionBox:AddToggle(
+    "HolyAntiMagnet",
+    {
+        Text =
+            "Anti Magnet",
+
+        Default =
+            HOLY_DEV_UI_STATE.AntiMagnet == true,
+
+        Tooltip =
+            "Prevents Player Magnets from pulling you. Fruit Magnets are unaffected.",
+    }
+):OnChanged(function(value)
+
+    HOLY_DEV_UI_STATE.AntiMagnet =
+        value == true
+
+    HolySaveUISettings()
+
+    if HOLY_DEV_UI_STATE.AntiMagnet == true then
+
+        HolyAntiMagnetStart(
+            "toggle on"
+        )
+
+    else
+
+        HolyAntiMagnetStop(
+            "toggle off"
+        )
+    end
+end)
+
+SettingsProtectionBox:AddToggle(
+    "HolyNoclip",
+    {
+        Text =
+            "Noclip",
+
+        Default =
+            HOLY_DEV_UI_STATE.Noclip == true,
+
+        Tooltip =
+            "Disables collision on your character so you can move through objects.",
+    }
+):OnChanged(function(value)
+
+    HOLY_DEV_UI_STATE.Noclip =
+        value == true
+
+    HolySaveUISettings()
+
+    if HOLY_DEV_UI_STATE.Noclip == true then
+
+        HolyNoclipStart(
+            "toggle on"
+        )
+
+    else
+
+        HolyNoclipStop(
             "toggle off"
         )
     end
