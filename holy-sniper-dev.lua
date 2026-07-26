@@ -69,6 +69,1508 @@ or tostring(HOLY_AUTH.SessionId or "") == "" then
 end
 
 --==================================================
+-- [0.55] EARLY PERFORMANCE BOOTSTRAP
+--==================================================
+
+do
+
+    local earlyEnv =
+        (
+            type(getgenv) == "function"
+            and getgenv()
+        )
+        or _G
+
+    local earlySettingsFile =
+        "HolyGAG2/HolyDevUISettings.json"
+
+    local earlyBootstrapSource = [==[
+local Players =
+    game:GetService("Players")
+
+local HttpService =
+    game:GetService("HttpService")
+
+local Lighting =
+    game:GetService("Lighting")
+
+local env =
+    (
+        type(getgenv) == "function"
+        and getgenv()
+    )
+    or _G
+
+local VERSION =
+    "HOLY_EARLY_PERFORMANCE_V1"
+
+local SETTINGS_FILE =
+    "HolyGAG2/HolyDevUISettings.json"
+
+local PROFILE_KEYS = {
+    "LowEndMode",
+    "PerformanceMode",
+    "UnloadOwnGarden",
+    "HideMiddle",
+    "DeleteBackpack",
+}
+
+local function readProfile()
+
+    local profile = {
+        LowEndMode = false,
+        PerformanceMode = false,
+        UnloadOwnGarden = false,
+        HideMiddle = false,
+        DeleteBackpack = false,
+    }
+
+    if type(readfile) == "function"
+    and type(isfile) == "function" then
+
+        local exists =
+            false
+
+        pcall(function()
+
+            exists =
+                isfile(
+                    SETTINGS_FILE
+                )
+        end)
+
+        if exists == true then
+
+            local ok,
+                data =
+                pcall(function()
+
+                    return HttpService:JSONDecode(
+                        readfile(
+                            SETTINGS_FILE
+                        )
+                    )
+                end)
+
+            if ok == true
+            and type(data) == "table" then
+
+                profile.LowEndMode =
+                    data.LowEndMode == true
+
+                profile.PerformanceMode =
+                    data.PerformanceMode == true
+
+                if type(data.UnloadOwnGarden) == "boolean" then
+
+                    profile.UnloadOwnGarden =
+                        data.UnloadOwnGarden
+
+                else
+
+                    profile.UnloadOwnGarden =
+                        data.DeleteOwnGarden == true
+                end
+
+                if type(data.HideMiddle) == "boolean" then
+
+                    profile.HideMiddle =
+                        data.HideMiddle
+
+                elseif type(data.DeleteMiddle) == "boolean" then
+
+                    profile.HideMiddle =
+                        data.DeleteMiddle
+
+                else
+
+                    profile.HideMiddle =
+                        data.UnloadMiddle == true
+                end
+
+                profile.DeleteBackpack =
+                    data.DeleteBackpack == true
+            end
+        end
+    end
+
+    local forced =
+        env.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE
+
+    if type(forced) == "table" then
+
+        for _, key in ipairs(PROFILE_KEYS) do
+
+            if type(forced[key]) == "boolean" then
+
+                profile[key] =
+                    forced[key]
+            end
+        end
+    end
+
+    return profile
+end
+
+local profile =
+    readProfile()
+
+local anyEnabled =
+    profile.PerformanceMode == true
+    or profile.UnloadOwnGarden == true
+    or profile.HideMiddle == true
+    or profile.DeleteBackpack == true
+
+if anyEnabled ~= true then
+    return
+end
+
+local player =
+    Players.LocalPlayer
+
+while not player do
+
+    Players:GetPropertyChangedSignal(
+        "LocalPlayer"
+    ):Wait()
+
+    player =
+        Players.LocalPlayer
+end
+
+local existing =
+    env.HOLY_EARLY_PERFORMANCE_RUNTIME
+
+if type(existing) == "table"
+and existing.JobId == game.JobId
+and existing.Version == VERSION
+and type(existing.SetProfile) == "function" then
+
+    existing.SetProfile(
+        profile
+    )
+
+    return
+end
+
+if type(existing) == "table"
+and type(existing.Stop) == "function" then
+
+    pcall(
+        existing.Stop
+    )
+end
+
+local runtime = {
+    Version = VERSION,
+    JobId = game.JobId,
+    PlaceId = game.PlaceId,
+    Active = true,
+    StartedAt = os.clock(),
+    Profile = profile,
+    Generation = 0,
+    Connections = {},
+    WatchedGardens = setmetatable({}, { __mode = "k" }),
+    WatchedPlots = setmetatable({}, { __mode = "k" }),
+    WatchedPlantContainers = setmetatable({}, { __mode = "k" }),
+    WatchedMaps = setmetatable({}, { __mode = "k" }),
+    WatchedHiddenRoots = setmetatable({}, { __mode = "k" }),
+    OwnContainersRemoved = 0,
+    OwnPlantModelsRemoved = 0,
+    MiddleObjectsRemoved = 0,
+    HiddenObjectsChanged = 0,
+    VisualObjectsRemoved = 0,
+    WorldObjectsSimplified = 0,
+    BackpacksRemoved = 0,
+    Errors = {},
+}
+
+env.HOLY_EARLY_PERFORMANCE_RUNTIME =
+    runtime
+
+local function addError(label, message)
+
+    table.insert(
+        runtime.Errors,
+        tostring(label)
+            .. ": "
+            .. tostring(message)
+    )
+end
+
+local function addConnection(connection)
+
+    if connection then
+
+        table.insert(
+            runtime.Connections,
+            connection
+        )
+    end
+
+    return connection
+end
+
+local function removeInstance(instance, counterName)
+
+    if typeof(instance) ~= "Instance"
+    or instance.Parent == nil then
+
+        return false
+    end
+
+    local ok,
+        message =
+        pcall(function()
+
+            instance:Destroy()
+        end)
+
+    if ok ~= true then
+
+        addError(
+            "remove "
+                .. tostring(instance.Name),
+            message
+        )
+
+        return false
+    end
+
+    runtime[counterName] =
+        (
+            tonumber(
+                runtime[counterName]
+            )
+            or 0
+        )
+        + 1
+
+    return true
+end
+
+local function detachInstance(instance, counterName)
+
+    if typeof(instance) ~= "Instance"
+    or instance.Parent == nil then
+
+        return false
+    end
+
+    local ok,
+        message =
+        pcall(function()
+
+            instance.Parent =
+                nil
+        end)
+
+    if ok ~= true then
+
+        addError(
+            "detach "
+                .. tostring(instance.Name),
+            message
+        )
+
+        return false
+    end
+
+    runtime[counterName] =
+        (
+            tonumber(
+                runtime[counterName]
+            )
+            or 0
+        )
+        + 1
+
+    return true
+end
+
+local function getLocalPlotName()
+
+    local plotId =
+        player:GetAttribute(
+            "PlotId"
+        )
+
+    if plotId == nil then
+        return nil
+    end
+
+    return "Plot"
+        .. tostring(plotId)
+end
+
+local function isOwnPlot(plot)
+
+    if typeof(plot) ~= "Instance" then
+        return false
+    end
+
+    local localPlotName =
+        getLocalPlotName()
+
+    if localPlotName
+    and plot.Name == localPlotName then
+
+        return true
+    end
+
+    local ownerUserId =
+        tonumber(
+            plot:GetAttribute(
+                "OwnerUserId"
+            )
+        )
+
+    if ownerUserId then
+        return ownerUserId == player.UserId
+    end
+
+    local ownerName =
+        tostring(
+            plot:GetAttribute(
+                "Owner"
+            )
+            or ""
+        )
+
+    return ownerName ~= ""
+        and ownerName == player.Name
+end
+
+local function simplifyInstance(instance)
+
+    if runtime.Active ~= true
+    or runtime.Profile.PerformanceMode ~= true
+    or typeof(instance) ~= "Instance"
+    or instance.Parent == nil then
+
+        return false
+    end
+
+    local destroyVisual =
+        instance:IsA("Decal")
+        or instance:IsA("Texture")
+        or instance:IsA("ParticleEmitter")
+        or instance:IsA("Trail")
+        or instance:IsA("Beam")
+        or instance:IsA("Smoke")
+        or instance:IsA("Fire")
+        or instance:IsA("Sparkles")
+        or instance:IsA("Highlight")
+        or instance:IsA("PostEffect")
+        or instance:IsA("Atmosphere")
+        or instance:IsA("Sky")
+
+    if destroyVisual == true then
+
+        return removeInstance(
+            instance,
+            "VisualObjectsRemoved"
+        )
+    end
+
+    if instance:IsA("BasePart") then
+
+        local ok =
+            pcall(function()
+
+                instance.Material =
+                    Enum.Material.SmoothPlastic
+
+                instance.CastShadow =
+                    false
+
+                instance.Reflectance =
+                    0
+            end)
+
+        if ok == true then
+
+            runtime.WorldObjectsSimplified =
+                runtime.WorldObjectsSimplified
+                + 1
+        end
+
+        return ok == true
+    end
+
+    return false
+end
+
+local function applyEnvironment()
+
+    if runtime.Profile.PerformanceMode ~= true then
+        return
+    end
+
+    pcall(function()
+
+        Lighting.Brightness =
+            0
+
+        Lighting.GlobalShadows =
+            false
+
+        Lighting.EnvironmentDiffuseScale =
+            0
+
+        Lighting.EnvironmentSpecularScale =
+            0
+
+        Lighting.FogEnd =
+            9000000000
+    end)
+
+    local terrain =
+        workspace:FindFirstChildOfClass(
+            "Terrain"
+        )
+
+    if typeof(terrain) == "Instance" then
+
+        pcall(function()
+
+            terrain.WaterWaveSize =
+                0
+
+            terrain.WaterWaveSpeed =
+                0
+
+            terrain.WaterReflectance =
+                0
+
+            terrain.WaterTransparency =
+                0
+        end)
+    end
+end
+
+local function hideInstance(instance)
+
+    if runtime.Active ~= true
+    or runtime.Profile.HideMiddle ~= true
+    or typeof(instance) ~= "Instance" then
+
+        return false
+    end
+
+    local changed =
+        false
+
+    if instance:IsA("BasePart") then
+
+        pcall(function()
+
+            instance.Transparency =
+                1
+
+            instance.LocalTransparencyModifier =
+                1
+
+            instance.CanCollide =
+                false
+
+            instance.CanTouch =
+                false
+
+            instance.CanQuery =
+                false
+
+            instance.CastShadow =
+                false
+        end)
+
+        changed =
+            true
+    end
+
+    if instance:IsA("Decal")
+    or instance:IsA("Texture") then
+
+        pcall(function()
+
+            instance.Transparency =
+                1
+        end)
+
+        changed =
+            true
+    end
+
+    if instance:IsA("ParticleEmitter")
+    or instance:IsA("Beam")
+    or instance:IsA("Trail")
+    or instance:IsA("Fire")
+    or instance:IsA("Smoke")
+    or instance:IsA("Sparkles") then
+
+        pcall(function()
+
+            instance.Enabled =
+                false
+        end)
+
+        changed =
+            true
+    end
+
+    if instance:IsA("BillboardGui")
+    or instance:IsA("SurfaceGui")
+    or instance:IsA("ProximityPrompt") then
+
+        pcall(function()
+
+            instance.Enabled =
+                false
+        end)
+
+        changed =
+            true
+    end
+
+    if changed == true then
+
+        runtime.HiddenObjectsChanged =
+            runtime.HiddenObjectsChanged
+            + 1
+    end
+
+    return changed
+end
+
+local function hideTree(root)
+
+    if runtime.Profile.HideMiddle ~= true
+    or typeof(root) ~= "Instance" then
+
+        return
+    end
+
+    hideInstance(
+        root
+    )
+
+    local descendants =
+        {}
+
+    pcall(function()
+
+        descendants =
+            root:GetDescendants()
+    end)
+
+    for _, descendant in ipairs(descendants) do
+
+        hideInstance(
+            descendant
+        )
+    end
+end
+
+local function watchHiddenRoot(root)
+
+    if typeof(root) ~= "Instance"
+    or runtime.WatchedHiddenRoots[root] then
+
+        return
+    end
+
+    runtime.WatchedHiddenRoots[root] =
+        true
+
+    addConnection(
+        root.DescendantAdded:Connect(function(descendant)
+
+            if runtime.Profile.HideMiddle == true then
+
+                hideInstance(
+                    descendant
+                )
+            end
+        end)
+    )
+
+    hideTree(
+        root
+    )
+end
+
+local function watchMiddle(middle)
+
+    if typeof(middle) ~= "Instance" then
+        return
+    end
+
+    if runtime.WatchedHiddenRoots[middle] ~= true then
+
+        runtime.WatchedHiddenRoots[middle] =
+            true
+
+        addConnection(
+            middle.ChildAdded:Connect(function(child)
+
+                if runtime.Profile.HideMiddle == true then
+
+                    detachInstance(
+                        child,
+                        "MiddleObjectsRemoved"
+                    )
+                end
+            end)
+        )
+    end
+
+    if runtime.Profile.HideMiddle == true then
+
+        for _, child in ipairs(middle:GetChildren()) do
+
+            detachInstance(
+                child,
+                "MiddleObjectsRemoved"
+            )
+        end
+    end
+end
+
+local function watchMap(map)
+
+    if typeof(map) ~= "Instance"
+    or runtime.WatchedMaps[map] then
+
+        return
+    end
+
+    runtime.WatchedMaps[map] =
+        true
+
+    addConnection(
+        map.ChildAdded:Connect(function(child)
+
+            if child.Name == "Middle" then
+
+                watchMiddle(
+                    child
+                )
+
+            elseif child.Name == "Stands" then
+
+                watchHiddenRoot(
+                    child
+                )
+            end
+        end)
+    )
+
+    local middle =
+        map:FindFirstChild(
+            "Middle"
+        )
+
+    if middle then
+
+        watchMiddle(
+            middle
+        )
+    end
+
+    local stands =
+        map:FindFirstChild(
+            "Stands"
+        )
+
+    if stands then
+
+        watchHiddenRoot(
+            stands
+        )
+    end
+end
+
+local function watchPlantContainer(plants)
+
+    if typeof(plants) ~= "Instance"
+    or runtime.WatchedPlantContainers[plants] then
+
+        return
+    end
+
+    runtime.WatchedPlantContainers[plants] =
+        true
+
+    addConnection(
+        plants.ChildAdded:Connect(function(child)
+
+            if runtime.Profile.PerformanceMode == true
+            and runtime.Profile.UnloadOwnGarden ~= true then
+
+                removeInstance(
+                    child,
+                    "OwnPlantModelsRemoved"
+                )
+            end
+        end)
+    )
+
+    if runtime.Profile.PerformanceMode == true
+    and runtime.Profile.UnloadOwnGarden ~= true then
+
+        for _, child in ipairs(plants:GetChildren()) do
+
+            removeInstance(
+                child,
+                "OwnPlantModelsRemoved"
+            )
+        end
+    end
+end
+
+local ownContainerNames = {
+    Plants = true,
+    Sprinklers = true,
+    Props = true,
+}
+
+local function processOwnPlot(plot)
+
+    if runtime.Active ~= true
+    or isOwnPlot(plot) ~= true then
+
+        return
+    end
+
+    if runtime.Profile.UnloadOwnGarden == true then
+
+        for _, child in ipairs(plot:GetChildren()) do
+
+            if ownContainerNames[child.Name] == true then
+
+                detachInstance(
+                    child,
+                    "OwnContainersRemoved"
+                )
+            end
+        end
+
+        return
+    end
+
+    if runtime.Profile.PerformanceMode == true then
+
+        local plants =
+            plot:FindFirstChild(
+                "Plants"
+            )
+
+        if plants then
+
+            watchPlantContainer(
+                plants
+            )
+        end
+    end
+end
+
+local function watchPlot(plot)
+
+    if typeof(plot) ~= "Instance"
+    or (
+        plot:IsA("Model") ~= true
+        and plot:IsA("Folder") ~= true
+    ) then
+
+        return
+    end
+
+    if runtime.WatchedPlots[plot] ~= true then
+
+        runtime.WatchedPlots[plot] =
+            true
+
+        addConnection(
+            plot.ChildAdded:Connect(function(child)
+
+                if isOwnPlot(plot) ~= true then
+                    return
+                end
+
+                if runtime.Profile.UnloadOwnGarden == true
+                and ownContainerNames[child.Name] == true then
+
+                    detachInstance(
+                        child,
+                        "OwnContainersRemoved"
+                    )
+
+                elseif runtime.Profile.PerformanceMode == true
+                and child.Name == "Plants" then
+
+                    watchPlantContainer(
+                        child
+                    )
+                end
+            end)
+        )
+
+        for _, attributeName in ipairs({
+            "OwnerUserId",
+            "Owner",
+        }) do
+
+            addConnection(
+                plot:GetAttributeChangedSignal(
+                    attributeName
+                ):Connect(function()
+
+                    processOwnPlot(
+                        plot
+                    )
+                end)
+            )
+        end
+    end
+
+    processOwnPlot(
+        plot
+    )
+end
+
+local function watchGardens(gardens)
+
+    if typeof(gardens) ~= "Instance"
+    or runtime.WatchedGardens[gardens] then
+
+        return
+    end
+
+    runtime.WatchedGardens[gardens] =
+        true
+
+    addConnection(
+        gardens.ChildAdded:Connect(
+            watchPlot
+        )
+    )
+
+    for _, plot in ipairs(gardens:GetChildren()) do
+
+        watchPlot(
+            plot
+        )
+    end
+end
+
+local function deleteBackpack()
+
+    if runtime.Profile.DeleteBackpack ~= true then
+        return
+    end
+
+    local backpack =
+        player:FindFirstChildOfClass(
+            "Backpack"
+        )
+
+    if backpack then
+
+        removeInstance(
+            backpack,
+            "BackpacksRemoved"
+        )
+    end
+end
+
+local function startWorldScan()
+
+    if runtime.Profile.PerformanceMode ~= true then
+        return
+    end
+
+    local generation =
+        runtime.Generation
+
+    task.spawn(function()
+
+        local workspaceObjects =
+            {}
+
+        pcall(function()
+
+            workspaceObjects =
+                workspace:GetDescendants()
+        end)
+
+        for index, instance in ipairs(workspaceObjects) do
+
+            if runtime.Active ~= true
+            or runtime.Profile.PerformanceMode ~= true
+            or runtime.Generation ~= generation then
+
+                return
+            end
+
+            simplifyInstance(
+                instance
+            )
+
+            if index % 350 == 0 then
+
+                task.wait()
+            end
+        end
+
+        local lightingObjects =
+            {}
+
+        pcall(function()
+
+            lightingObjects =
+                Lighting:GetDescendants()
+        end)
+
+        for index, instance in ipairs(lightingObjects) do
+
+            if runtime.Active ~= true
+            or runtime.Profile.PerformanceMode ~= true
+            or runtime.Generation ~= generation then
+
+                return
+            end
+
+            simplifyInstance(
+                instance
+            )
+
+            if index % 150 == 0 then
+
+                task.wait()
+            end
+        end
+
+        runtime.FinishedWorldScanAt =
+            os.clock()
+    end)
+end
+
+local function applyCurrentProfile()
+
+    if runtime.Active ~= true then
+        return
+    end
+
+    deleteBackpack()
+
+    if runtime.Profile.PerformanceMode == true
+    or runtime.Profile.UnloadOwnGarden == true then
+
+        local gardens =
+            workspace:FindFirstChild(
+                "Gardens",
+                true
+            )
+
+        if gardens then
+
+            watchGardens(
+                gardens
+            )
+        end
+    end
+
+    if runtime.Profile.HideMiddle == true then
+
+        local map =
+            workspace:FindFirstChild(
+                "Map",
+                true
+            )
+
+        if map then
+
+            watchMap(
+                map
+            )
+        end
+
+        local npcs =
+            workspace:FindFirstChild(
+                "NPCS",
+                true
+            )
+
+        if npcs then
+
+            watchHiddenRoot(
+                npcs
+            )
+        end
+    end
+
+    if runtime.Profile.PerformanceMode == true then
+
+        applyEnvironment()
+        startWorldScan()
+    end
+end
+
+function runtime.IsFeatureActive(featureName)
+
+    return runtime.Active == true
+        and runtime.Profile[
+            tostring(featureName)
+        ] == true
+end
+
+function runtime.SetFeature(featureName, enabled)
+
+    featureName =
+        tostring(featureName or "")
+
+    local supported =
+        false
+
+    for _, key in ipairs(PROFILE_KEYS) do
+
+        if key == featureName then
+
+            supported =
+                true
+
+            break
+        end
+    end
+
+    if supported ~= true then
+        return false
+    end
+
+    if runtime.Profile[featureName] == enabled then
+        return true
+    end
+
+    runtime.Profile[featureName] =
+        enabled == true
+
+    local keepRunning =
+        runtime.Profile.PerformanceMode == true
+        or runtime.Profile.UnloadOwnGarden == true
+        or runtime.Profile.HideMiddle == true
+        or runtime.Profile.DeleteBackpack == true
+
+    if keepRunning ~= true then
+
+        runtime.Stop()
+
+        return true
+    end
+
+    runtime.Generation =
+        runtime.Generation
+        + 1
+
+    applyCurrentProfile()
+
+    return true
+end
+
+function runtime.SetProfile(newProfile)
+
+    if type(newProfile) ~= "table" then
+        return false
+    end
+
+    local changed =
+        false
+
+    for _, key in ipairs(PROFILE_KEYS) do
+
+        if type(newProfile[key]) == "boolean"
+        and runtime.Profile[key] ~= newProfile[key] then
+
+            runtime.Profile[key] =
+                newProfile[key]
+
+            changed =
+                true
+        end
+    end
+
+    runtime.Active =
+        true
+
+    if changed ~= true then
+        return true
+    end
+
+    runtime.Generation =
+        runtime.Generation
+        + 1
+
+    applyCurrentProfile()
+
+    return true
+end
+
+function runtime.Stop()
+
+    runtime.Active =
+        false
+
+    runtime.Generation =
+        runtime.Generation
+        + 1
+
+    for _, connection in ipairs(runtime.Connections) do
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+
+    table.clear(
+        runtime.Connections
+    )
+
+    if env.HOLY_EARLY_PERFORMANCE_RUNTIME == runtime then
+
+        env.HOLY_EARLY_PERFORMANCE_RUNTIME =
+            nil
+    end
+
+    return true
+end
+
+addConnection(
+    player.ChildAdded:Connect(function(child)
+
+        if runtime.Profile.DeleteBackpack == true
+        and child:IsA("Backpack") then
+
+            removeInstance(
+                child,
+                "BackpacksRemoved"
+            )
+        end
+    end)
+)
+
+addConnection(
+    player:GetAttributeChangedSignal(
+        "PlotId"
+    ):Connect(function()
+
+        local gardens =
+            workspace:FindFirstChild(
+                "Gardens",
+                true
+            )
+
+        if gardens then
+
+            watchGardens(
+                gardens
+            )
+
+            for _, plot in ipairs(gardens:GetChildren()) do
+
+                processOwnPlot(
+                    plot
+                )
+            end
+        end
+    end)
+)
+
+addConnection(
+    workspace.DescendantAdded:Connect(function(instance)
+
+        if runtime.Profile.PerformanceMode == true then
+
+            simplifyInstance(
+                instance
+            )
+        end
+
+        if (
+            runtime.Profile.PerformanceMode == true
+            or runtime.Profile.UnloadOwnGarden == true
+        )
+        and instance.Name == "Gardens" then
+
+            watchGardens(
+                instance
+            )
+
+        elseif runtime.Profile.HideMiddle == true
+        and instance.Name == "Map" then
+
+            watchMap(
+                instance
+            )
+
+        elseif runtime.Profile.HideMiddle == true
+        and instance.Name == "NPCS" then
+
+            watchHiddenRoot(
+                instance
+            )
+        end
+    end)
+)
+
+addConnection(
+    Lighting.DescendantAdded:Connect(function(instance)
+
+        if runtime.Profile.PerformanceMode == true then
+
+            simplifyInstance(
+                instance
+            )
+        end
+    end)
+)
+
+applyCurrentProfile()
+
+runtime.ReadyAt =
+    os.clock()
+]==]
+
+    local function earlyAnyEnabled()
+
+        local profile = {
+            LowEndMode = false,
+            PerformanceMode = false,
+            UnloadOwnGarden = false,
+            HideMiddle = false,
+            DeleteBackpack = false,
+        }
+
+        if type(readfile) == "function"
+        and type(isfile) == "function" then
+
+            local exists =
+                false
+
+            pcall(function()
+
+                exists =
+                    isfile(
+                        earlySettingsFile
+                    )
+            end)
+
+            if exists == true then
+
+                local ok,
+                    data =
+                    pcall(function()
+
+                        return HttpService:JSONDecode(
+                            readfile(
+                                earlySettingsFile
+                            )
+                        )
+                    end)
+
+                if ok == true
+                and type(data) == "table" then
+
+                    profile.LowEndMode =
+                        data.LowEndMode == true
+
+                    profile.PerformanceMode =
+                        data.PerformanceMode == true
+
+                    profile.UnloadOwnGarden =
+                        (
+                            type(data.UnloadOwnGarden) == "boolean"
+                            and data.UnloadOwnGarden
+                        )
+                        or (
+                            type(data.UnloadOwnGarden) ~= "boolean"
+                            and data.DeleteOwnGarden == true
+                        )
+
+                    profile.HideMiddle =
+                        (
+                            type(data.HideMiddle) == "boolean"
+                            and data.HideMiddle
+                        )
+                        or (
+                            type(data.HideMiddle) ~= "boolean"
+                            and (
+                                data.DeleteMiddle == true
+                                or data.UnloadMiddle == true
+                            )
+                        )
+
+                    profile.DeleteBackpack =
+                        data.DeleteBackpack == true
+                end
+            end
+        end
+
+        local forced =
+            earlyEnv.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE
+
+        if type(forced) == "table" then
+
+            for key in pairs(profile) do
+
+                if type(forced[key]) == "boolean" then
+
+                    profile[key] =
+                        forced[key]
+                end
+            end
+        end
+
+        return profile.PerformanceMode == true
+            or profile.UnloadOwnGarden == true
+            or profile.HideMiddle == true
+            or profile.DeleteBackpack == true
+    end
+
+    local function findEarlyQueueFunction()
+
+        if type(queue_on_teleport) == "function" then
+            return queue_on_teleport
+        end
+
+        if type(queueonteleport) == "function" then
+            return queueonteleport
+        end
+
+        if type(syn) == "table"
+        and type(syn.queue_on_teleport) == "function" then
+
+            return syn.queue_on_teleport
+        end
+
+        if type(fluxus) == "table"
+        and type(fluxus.queue_on_teleport) == "function" then
+
+            return fluxus.queue_on_teleport
+        end
+
+        return nil
+    end
+
+    local function queueEarlyBootstrap()
+
+        if earlyAnyEnabled() ~= true then
+            return false
+        end
+
+        if earlyEnv.HOLY_EARLY_PERFORMANCE_QUEUED_FROM_JOB
+            == game.JobId then
+
+            return true
+        end
+
+        local queueFunction =
+            findEarlyQueueFunction()
+
+        if type(queueFunction) ~= "function" then
+            return false
+        end
+
+        local ok =
+            pcall(
+                queueFunction,
+                earlyBootstrapSource
+            )
+
+        if ok == true then
+
+            earlyEnv.HOLY_EARLY_PERFORMANCE_QUEUED_FROM_JOB =
+                game.JobId
+        end
+
+        return ok
+    end
+
+    local function runEarlyBootstrap()
+
+        if earlyAnyEnabled() ~= true then
+            return false
+        end
+
+        local compiler =
+            loadstring
+            or load
+
+        if type(compiler) ~= "function" then
+            return false
+        end
+
+        local compileOk,
+            chunk =
+            pcall(
+                compiler,
+                earlyBootstrapSource
+            )
+
+        if compileOk ~= true
+        or type(chunk) ~= "function" then
+
+            return false
+        end
+
+        local runOk =
+            pcall(
+                chunk
+            )
+
+        return runOk == true
+    end
+
+    local function stopEarlyBootstrap()
+
+        local runtime =
+            earlyEnv.HOLY_EARLY_PERFORMANCE_RUNTIME
+
+        if type(runtime) == "table"
+        and runtime.JobId == game.JobId
+        and type(runtime.Stop) == "function" then
+
+            pcall(
+                runtime.Stop
+            )
+        end
+
+        return true
+    end
+
+    earlyEnv.HOLY_EARLY_PERFORMANCE_SOURCE =
+        earlyBootstrapSource
+
+    earlyEnv.HOLY_EARLY_PERFORMANCE_QUEUE =
+        queueEarlyBootstrap
+
+    earlyEnv.HOLY_EARLY_PERFORMANCE_RUN =
+        runEarlyBootstrap
+
+    earlyEnv.HOLY_EARLY_PERFORMANCE_STOP =
+        stopEarlyBootstrap
+
+    if earlyAnyEnabled() == true then
+
+        queueEarlyBootstrap()
+        runEarlyBootstrap()
+
+    else
+
+        stopEarlyBootstrap()
+    end
+end
+
+--==================================================
 -- [0.6] EARLY FAST LOADER
 --==================================================
 
@@ -1839,6 +3341,47 @@ HOLY_DEV_UI_STATE = {
     HideMiddle = false,
     DeleteBackpack = false,
 }
+
+do
+
+    local earlyEnv =
+        (
+            type(getgenv) == "function"
+            and getgenv()
+        )
+        or _G
+
+    local earlyRuntime =
+        earlyEnv
+        and earlyEnv.HOLY_EARLY_PERFORMANCE_RUNTIME
+        or nil
+
+    local earlyProfile =
+        type(earlyRuntime) == "table"
+        and earlyRuntime.JobId == game.JobId
+        and type(earlyRuntime.Profile) == "table"
+        and earlyRuntime.Profile
+        or nil
+
+    if type(earlyProfile) == "table" then
+
+        for _, key in ipairs({
+            "LowEndMode",
+            "PerformanceMode",
+            "UnloadOwnGarden",
+            "HideMiddle",
+            "DeleteBackpack",
+        }) do
+
+            if type(earlyProfile[key]) == "boolean" then
+
+                HOLY_DEV_UI_STATE[key] =
+                    earlyProfile[key]
+            end
+        end
+    end
+end
+
 
 local HOLY_ACCOUNT_ENVIRONMENT =
     (
@@ -94183,6 +95726,99 @@ function HolySellStopWorker()
         false
 end
 
+function HolyPerformanceGetEarlyRuntime()
+
+    local env =
+        (
+            type(getgenv) == "function"
+            and getgenv()
+        )
+        or _G
+
+    local runtime =
+        env
+        and env.HOLY_EARLY_PERFORMANCE_RUNTIME
+        or nil
+
+    if type(runtime) == "table"
+    and runtime.JobId == game.JobId
+    and runtime.Active == true then
+
+        return runtime
+    end
+
+    return nil
+end
+
+function HolyPerformanceSetEarlyFeature(featureName, enabled)
+
+    featureName =
+        tostring(featureName or "")
+
+    enabled =
+        enabled == true
+
+    local env =
+        (
+            type(getgenv) == "function"
+            and getgenv()
+        )
+        or _G
+
+    env.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE =
+        type(env.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE) == "table"
+        and env.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE
+        or {}
+
+    env.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE[featureName] =
+        enabled
+
+    local runtime =
+        HolyPerformanceGetEarlyRuntime()
+
+    if enabled == true
+    and type(runtime) ~= "table"
+    and type(env.HOLY_EARLY_PERFORMANCE_RUN) == "function" then
+
+        pcall(
+            env.HOLY_EARLY_PERFORMANCE_RUN
+        )
+
+        runtime =
+            HolyPerformanceGetEarlyRuntime()
+    end
+
+    local handled =
+        false
+
+    if type(runtime) == "table"
+    and type(runtime.SetFeature) == "function" then
+
+        local ok,
+            result =
+            pcall(
+                runtime.SetFeature,
+                featureName,
+                enabled
+            )
+
+        handled =
+            ok == true
+            and result == true
+    end
+
+    if enabled == true
+    and type(env.HOLY_EARLY_PERFORMANCE_QUEUE) == "function" then
+
+        pcall(
+            env.HOLY_EARLY_PERFORMANCE_QUEUE
+        )
+    end
+
+    return handled
+end
+
+
 function HolyPerformanceBuildStatusText()
 
     return "Status: "
@@ -94324,6 +95960,20 @@ function HolyPerformanceStartDeleteBackpack(reason)
 
     HolySaveUISettings()
 
+    if HolyPerformanceSetEarlyFeature(
+        "DeleteBackpack",
+        true
+    ) == true then
+
+        HolyPerformanceDisconnectBackpackWatcher()
+
+        HolyPerformanceSetStatus(
+            "Backpack deletion is active from the early bootstrap."
+        )
+
+        return true
+    end
+
     HolyPerformanceConnectBackpackWatcher()
 
     HolyPerformanceDeleteBackpackOnce(
@@ -94341,6 +95991,11 @@ function HolyPerformanceStopDeleteBackpack(reason)
 
     HolySaveUISettings()
 
+    HolyPerformanceSetEarlyFeature(
+        "DeleteBackpack",
+        false
+    )
+
     HolyPerformanceDisconnectBackpackWatcher()
 
     HolyPerformanceSetStatus(
@@ -94349,6 +96004,7 @@ function HolyPerformanceStopDeleteBackpack(reason)
 
     return true
 end
+
 
 function HolyPerformanceGetGardensRoot()
 
@@ -95008,6 +96664,29 @@ function HolyPerformanceModeStart(reason)
 
     HolySaveUISettings()
 
+    if HolyPerformanceSetEarlyFeature(
+        "PerformanceMode",
+        true
+    ) == true then
+
+        HOLY_PERFORMANCE_STATE.PerformanceModeToken =
+            (
+                tonumber(
+                    HOLY_PERFORMANCE_STATE.PerformanceModeToken
+                )
+                or 0
+            )
+            + 1
+
+        HolyPerformanceModeDisconnect()
+
+        HolyPerformanceSetStatus(
+            "Performance mode is active from the early bootstrap."
+        )
+
+        return true
+    end
+
     HolyPerformanceModeDisconnect()
 
     HOLY_PERFORMANCE_STATE.PerformanceModeToken =
@@ -95115,6 +96794,11 @@ function HolyPerformanceModeStop(reason)
 
     HolySaveUISettings()
 
+    HolyPerformanceSetEarlyFeature(
+        "PerformanceMode",
+        false
+    )
+
     HOLY_PERFORMANCE_STATE.PerformanceModeToken =
         (
             tonumber(
@@ -95132,6 +96816,7 @@ function HolyPerformanceModeStop(reason)
 
     return true
 end
+
 
 
 function HolyPerformanceIsOwnGarden(garden, ownGarden)
@@ -96353,6 +98038,25 @@ function HolyPerformanceStartUnloadOwnGarden(reason)
     HOLY_PERFORMANCE_STATE.Active =
         true
 
+    HolySaveUISettings()
+
+    if HolyPerformanceSetEarlyFeature(
+        "UnloadOwnGarden",
+        true
+    ) == true then
+
+        HOLY_PERFORMANCE_STATE.Applying =
+            false
+
+        HolyPerformanceDisconnectConnections()
+
+        HolyPerformanceSetStatus(
+            "Own garden cleanup is active from the early bootstrap."
+        )
+
+        return true
+    end
+
     return HolyPerformanceStartApply(
         reason
         or "performance"
@@ -96365,6 +98069,29 @@ function HolyPerformanceStopUnloadOwnGarden(reason)
         false
 
     HolySaveUISettings()
+
+    local earlyHandled =
+        HolyPerformanceSetEarlyFeature(
+            "UnloadOwnGarden",
+            false
+        )
+
+    if earlyHandled == true then
+
+        HOLY_PERFORMANCE_STATE.Active =
+            HolyPerformanceAnyUnloadEnabled()
+
+        HOLY_PERFORMANCE_STATE.Applying =
+            false
+
+        HolyPerformanceDisconnectConnections()
+
+        HolyPerformanceSetStatus(
+            "Own garden cleanup stopped. Rejoin to restore it."
+        )
+
+        return true
+    end
 
     if HolyPerformanceAnyUnloadEnabled() == true then
 
@@ -96399,6 +98126,25 @@ function HolyPerformanceStartHideMiddle(reason)
     HOLY_PERFORMANCE_STATE.Active =
         true
 
+    HolySaveUISettings()
+
+    if HolyPerformanceSetEarlyFeature(
+        "HideMiddle",
+        true
+    ) == true then
+
+        HOLY_PERFORMANCE_STATE.Applying =
+            false
+
+        HolyPerformanceDisconnectConnections()
+
+        HolyPerformanceSetStatus(
+            "Middle cleanup is active from the early bootstrap."
+        )
+
+        return true
+    end
+
     return HolyPerformanceStartApply(
         reason
         or "performance"
@@ -96411,6 +98157,29 @@ function HolyPerformanceStopHideMiddle(reason)
         false
 
     HolySaveUISettings()
+
+    local earlyHandled =
+        HolyPerformanceSetEarlyFeature(
+            "HideMiddle",
+            false
+        )
+
+    if earlyHandled == true then
+
+        HOLY_PERFORMANCE_STATE.Active =
+            HolyPerformanceAnyUnloadEnabled()
+
+        HOLY_PERFORMANCE_STATE.Applying =
+            false
+
+        HolyPerformanceDisconnectConnections()
+
+        HolyPerformanceSetStatus(
+            "Middle cleanup stopped. Rejoin to restore it."
+        )
+
+        return true
+    end
 
     if HolyPerformanceAnyUnloadEnabled() == true then
 
@@ -96436,6 +98205,7 @@ function HolyPerformanceStopHideMiddle(reason)
 
     return true
 end
+
 
 --==================================================
 -- ROLLBACK SYSTEM
