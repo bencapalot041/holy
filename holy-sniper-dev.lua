@@ -443,40 +443,41 @@ end
 
 local function simplifyInstance(instance)
 
-    if runtime.Active ~= true
-    or runtime.Profile.PerformanceMode ~= true
-    or typeof(instance) ~= "Instance"
-    or instance.Parent == nil then
+    local ok,
+        changed =
+        pcall(function()
 
-        return false
-    end
+            if runtime.Active ~= true
+            or runtime.Profile.PerformanceMode ~= true
+            or typeof(instance) ~= "Instance"
+            or instance.Parent == nil then
 
-    local destroyVisual =
-        instance:IsA("Decal")
-        or instance:IsA("Texture")
-        or instance:IsA("ParticleEmitter")
-        or instance:IsA("Trail")
-        or instance:IsA("Beam")
-        or instance:IsA("Smoke")
-        or instance:IsA("Fire")
-        or instance:IsA("Sparkles")
-        or instance:IsA("Highlight")
-        or instance:IsA("PostEffect")
-        or instance:IsA("Atmosphere")
-        or instance:IsA("Sky")
+                return false
+            end
 
-    if destroyVisual == true then
+            local destroyVisual =
+                instance:IsA("Decal")
+                or instance:IsA("Texture")
+                or instance:IsA("ParticleEmitter")
+                or instance:IsA("Trail")
+                or instance:IsA("Beam")
+                or instance:IsA("Smoke")
+                or instance:IsA("Fire")
+                or instance:IsA("Sparkles")
+                or instance:IsA("Highlight")
+                or instance:IsA("PostEffect")
+                or instance:IsA("Atmosphere")
+                or instance:IsA("Sky")
 
-        return removeInstance(
-            instance,
-            "VisualObjectsRemoved"
-        )
-    end
+            if destroyVisual == true then
 
-    if instance:IsA("BasePart") then
+                return removeInstance(
+                    instance,
+                    "VisualObjectsRemoved"
+                )
+            end
 
-        local ok =
-            pcall(function()
+            if instance:IsA("BasePart") then
 
                 instance.Material =
                     Enum.Material.SmoothPlastic
@@ -486,20 +487,21 @@ local function simplifyInstance(instance)
 
                 instance.Reflectance =
                     0
-            end)
 
-        if ok == true then
+                runtime.WorldObjectsSimplified =
+                    runtime.WorldObjectsSimplified
+                    + 1
 
-            runtime.WorldObjectsSimplified =
-                runtime.WorldObjectsSimplified
-                + 1
-        end
+                return true
+            end
 
-        return ok == true
-    end
+            return false
+        end)
 
-    return false
+    return ok == true
+        and changed == true
 end
+
 
 local function applyEnvironment()
 
@@ -986,13 +988,86 @@ end
 local function startWorldScan()
 
     if runtime.Profile.PerformanceMode ~= true then
-        return
+        return false
     end
 
     local generation =
         runtime.Generation
 
+    runtime.WorldScanDeferred =
+        true
+
     task.spawn(function()
+
+        if game:IsLoaded() ~= true then
+
+            pcall(function()
+
+                game.Loaded:Wait()
+            end)
+        end
+
+        local CollectionService =
+            game:GetService(
+                "CollectionService"
+            )
+
+        local controllerDeadline =
+            os.clock() + 45
+
+        while runtime.Active == true
+        and runtime.Profile.PerformanceMode == true
+        and runtime.Generation == generation do
+
+            local controllersStarted =
+                false
+
+            pcall(function()
+
+                controllersStarted =
+                    CollectionService:HasTag(
+                        player,
+                        "ControllersStarted"
+                    )
+            end)
+
+            if controllersStarted == true
+            or os.clock() >= controllerDeadline then
+
+                break
+            end
+
+            task.wait(
+                0.25
+            )
+        end
+
+        if runtime.Active ~= true
+        or runtime.Profile.PerformanceMode ~= true
+        or runtime.Generation ~= generation then
+
+            runtime.WorldScanDeferred =
+                false
+
+            return
+        end
+
+        task.wait(
+            2
+        )
+
+        if runtime.Active ~= true
+        or runtime.Profile.PerformanceMode ~= true
+        or runtime.Generation ~= generation then
+
+            runtime.WorldScanDeferred =
+                false
+
+            return
+        end
+
+        runtime.WorldScanStartedAt =
+            os.clock()
 
         local workspaceObjects =
             {}
@@ -1009,10 +1084,14 @@ local function startWorldScan()
             or runtime.Profile.PerformanceMode ~= true
             or runtime.Generation ~= generation then
 
+                runtime.WorldScanDeferred =
+                    false
+
                 return
             end
 
-            simplifyInstance(
+            pcall(
+                simplifyInstance,
                 instance
             )
 
@@ -1037,10 +1116,14 @@ local function startWorldScan()
             or runtime.Profile.PerformanceMode ~= true
             or runtime.Generation ~= generation then
 
+                runtime.WorldScanDeferred =
+                    false
+
                 return
             end
 
-            simplifyInstance(
+            pcall(
+                simplifyInstance,
                 instance
             )
 
@@ -1050,10 +1133,16 @@ local function startWorldScan()
             end
         end
 
+        runtime.WorldScanDeferred =
+            false
+
         runtime.FinishedWorldScanAt =
             os.clock()
     end)
+
+    return true
 end
+
 
 local function applyCurrentProfile()
 
@@ -1286,34 +1375,38 @@ addConnection(
 )
 
 addConnection(
-    workspace.DescendantAdded:Connect(function(instance)
+    workspace.ChildAdded:Connect(function(instance)
 
-        if runtime.Profile.PerformanceMode == true then
+        local readable,
+            instanceName =
+            pcall(function()
 
-            simplifyInstance(
-                instance
-            )
+                return instance.Name
+            end)
+
+        if readable ~= true then
+            return
         end
 
         if (
             runtime.Profile.PerformanceMode == true
             or runtime.Profile.UnloadOwnGarden == true
         )
-        and instance.Name == "Gardens" then
+        and instanceName == "Gardens" then
 
             watchGardens(
                 instance
             )
 
         elseif runtime.Profile.HideMiddle == true
-        and instance.Name == "Map" then
+        and instanceName == "Map" then
 
             watchMap(
                 instance
             )
 
         elseif runtime.Profile.HideMiddle == true
-        and instance.Name == "NPCS" then
+        and instanceName == "NPCS" then
 
             watchHiddenRoot(
                 instance
@@ -1322,17 +1415,11 @@ addConnection(
     end)
 )
 
-addConnection(
-    Lighting.DescendantAdded:Connect(function(instance)
+runtime.BroadWorkspaceWatcherDisabled =
+    true
 
-        if runtime.Profile.PerformanceMode == true then
-
-            simplifyInstance(
-                instance
-            )
-        end
-    end)
-)
+runtime.BroadLightingWatcherDisabled =
+    true
 
 applyCurrentProfile()
 
@@ -2525,15 +2612,18 @@ local function patchNPCController()
     return true
 end
 
-patchReleaseController(
-    "ReleaseCountdownController"
-)
+-- Do not move game-owned controller initialization into bootstrap
+-- task threads. Roblox can reject those threads with a capability error.
 
-patchReleaseController(
-    "ReleaseChangelogController"
-)
+runtime.ReleasePatches =
+    0
 
-patchNPCController()
+runtime.NPCPatchInstalled =
+    false
+
+runtime.UnrelatedControllerPatchesSkipped =
+    true
+
 
 do
 
@@ -96383,40 +96473,46 @@ end
 
 function HolyPerformanceModeSimplifyInstance(instance)
 
-    if typeof(instance) ~= "Instance"
-    or instance.Parent == nil then
-
-        return false
-    end
-
-    if HolyPerformanceModeShouldDestroyVisual(
-        instance
-    ) == true then
-
-        return HolyPerformanceModeDestroy(
-            instance
-        ) > 0
-    end
-
-    if instance:IsA("BasePart") then
-
+    local ok,
+        changed =
         pcall(function()
 
-            instance.Material =
-                Enum.Material.SmoothPlastic
+            if typeof(instance) ~= "Instance"
+            or instance.Parent == nil then
 
-            instance.CastShadow =
-                false
+                return false
+            end
 
-            instance.Reflectance =
-                0
+            if HolyPerformanceModeShouldDestroyVisual(
+                instance
+            ) == true then
+
+                return HolyPerformanceModeDestroy(
+                    instance
+                ) > 0
+            end
+
+            if instance:IsA("BasePart") then
+
+                instance.Material =
+                    Enum.Material.SmoothPlastic
+
+                instance.CastShadow =
+                    false
+
+                instance.Reflectance =
+                    0
+
+                return true
+            end
+
+            return false
         end)
 
-        return true
-    end
-
-    return false
+    return ok == true
+        and changed == true
 end
+
 
 function HolyPerformanceModeApplyEnvironment()
 
@@ -96664,30 +96760,11 @@ function HolyPerformanceModeStart(reason)
 
     HolySaveUISettings()
 
-    if HolyPerformanceSetEarlyFeature(
-        "PerformanceMode",
-        true
-    ) == true then
-
-        HOLY_PERFORMANCE_STATE.PerformanceModeToken =
-            (
-                tonumber(
-                    HOLY_PERFORMANCE_STATE.PerformanceModeToken
-                )
-                or 0
-            )
-            + 1
-
-        HolyPerformanceModeDisconnect()
-
-        HolyPerformanceSetStatus(
-            "Performance mode is active from the early bootstrap."
+    local earlyHandled =
+        HolyPerformanceSetEarlyFeature(
+            "PerformanceMode",
+            true
         )
-
-        return true
-    end
-
-    HolyPerformanceModeDisconnect()
 
     HOLY_PERFORMANCE_STATE.PerformanceModeToken =
         (
@@ -96698,63 +96775,31 @@ function HolyPerformanceModeStart(reason)
         )
         + 1
 
+    HolyPerformanceModeDisconnect()
+
+    if earlyHandled == true then
+
+        HolyPerformanceSetStatus(
+            "Performance mode is active from the safe early bootstrap."
+        )
+
+        return true
+    end
+
     local token =
         HOLY_PERFORMANCE_STATE.PerformanceModeToken
 
     HOLY_PERFORMANCE_STATE.PerformanceModeConnections =
         {}
 
-    table.insert(
-        HOLY_PERFORMANCE_STATE.PerformanceModeConnections,
-        workspace.DescendantAdded:Connect(function(instance)
-
-            task.defer(function()
-
-                if HOLY_DEV_UI_STATE.PerformanceMode ~= true
-                or HOLY_PERFORMANCE_STATE.PerformanceModeToken
-                    ~= token then
-
-                    return
-                end
-
-                HolyPerformanceModeSimplifyInstance(
-                    instance
-                )
-
-                if instance.Name == "Plants" then
-
-                    HolyPerformanceModeBindOwnPlants()
-                end
-            end)
-        end)
-    )
-
-    table.insert(
-        HOLY_PERFORMANCE_STATE.PerformanceModeConnections,
-        Lighting.DescendantAdded:Connect(function(instance)
-
-            task.defer(function()
-
-                if HOLY_DEV_UI_STATE.PerformanceMode == true
-                and HOLY_PERFORMANCE_STATE.PerformanceModeToken
-                    == token then
-
-                    HolyPerformanceModeSimplifyInstance(
-                        instance
-                    )
-                end
-            end)
-        end)
-    )
-
     task.spawn(function()
 
-        local deadline =
+        local plantDeadline =
             os.clock() + 6
 
         while HOLY_DEV_UI_STATE.PerformanceMode == true
         and HOLY_PERFORMANCE_STATE.PerformanceModeToken == token
-        and os.clock() <= deadline do
+        and os.clock() <= plantDeadline do
 
             if HolyPerformanceModeBindOwnPlants() == true then
                 break
@@ -96764,6 +96809,50 @@ function HolyPerformanceModeStart(reason)
                 0.25
             )
         end
+
+        local CollectionService =
+            game:GetService(
+                "CollectionService"
+            )
+
+        local controllerDeadline =
+            os.clock() + 45
+
+        while HOLY_DEV_UI_STATE.PerformanceMode == true
+        and HOLY_PERFORMANCE_STATE.PerformanceModeToken == token do
+
+            local controllersStarted =
+                false
+
+            pcall(function()
+
+                controllersStarted =
+                    CollectionService:HasTag(
+                        LocalPlayer,
+                        "ControllersStarted"
+                    )
+            end)
+
+            if controllersStarted == true
+            or os.clock() >= controllerDeadline then
+
+                break
+            end
+
+            task.wait(
+                0.25
+            )
+        end
+
+        if HOLY_DEV_UI_STATE.PerformanceMode ~= true
+        or HOLY_PERFORMANCE_STATE.PerformanceModeToken ~= token then
+
+            return
+        end
+
+        task.wait(
+            2
+        )
 
         if HOLY_DEV_UI_STATE.PerformanceMode ~= true
         or HOLY_PERFORMANCE_STATE.PerformanceModeToken ~= token then
@@ -96779,13 +96868,14 @@ function HolyPerformanceModeStart(reason)
         and HOLY_PERFORMANCE_STATE.PerformanceModeToken == token then
 
             HolyPerformanceSetStatus(
-                "Performance mode applied."
+                "Performance mode safely applied after controllers started."
             )
         end
     end)
 
     return true
 end
+
 
 function HolyPerformanceModeStop(reason)
 
