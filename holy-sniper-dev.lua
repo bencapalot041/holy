@@ -2719,7 +2719,7 @@ HOLY_SNIPER_STATE = {
     BuilderPriority = "High",
 
     DefendBoughtPets = true,
-    DefendGear = "Strawberry Sniper",
+    DefendGear = "Auto",
     DefendMovement = "Walk",
     DefendRebuyIfStolen = true,
 
@@ -28461,19 +28461,34 @@ end
 
 function HolyDefenseNormalizeGear(value)
 
-    local text =
+    local lower =
         HolyCleanText(
             value
         )
-
-    local lower =
-        text:lower()
+        :lower()
 
     if lower == "shovel" then
         return "Shovel"
     end
 
-    return "Strawberry Sniper"
+    if lower == "strawberry sniper"
+    or (
+        lower:find(
+            "strawberry",
+            1,
+            true
+        ) ~= nil
+        and lower:find(
+            "sniper",
+            1,
+            true
+        ) ~= nil
+    ) then
+
+        return "Strawberry Sniper"
+    end
+
+    return "Auto"
 end
 
 function HolySniperNormalizeBuyMode(value)
@@ -34909,6 +34924,1792 @@ function HolySniperMaybeReturnAfterBuy(token)
         "after buy",
         token
     )
+end
+
+--==================================================
+-- [2.44B] AUTO DEFENSE GEAR + NOTIFICATION OVERRIDE
+--==================================================
+
+function HolyDefenseUpgradeRuntime()
+
+    local runtime =
+        HolyDefenseEnsureRuntime()
+
+    runtime.NoticeTimes =
+        type(runtime.NoticeTimes) == "table"
+        and runtime.NoticeTimes
+        or {}
+
+    local targetKey =
+        HolyDefenseNormalizeId(
+            runtime.CurrentRecordKey
+        )
+
+    if targetKey == ""
+    and typeof(runtime.Target) == "Instance" then
+
+        targetKey =
+            HolyDefenseRefKey(
+                runtime.Target
+            )
+    end
+
+    if runtime.UpgradeTargetKey ~= targetKey then
+
+        runtime.UpgradeTargetKey =
+            targetKey
+
+        runtime.CurrentGear =
+            ""
+
+        runtime.NoGearNotified =
+            false
+
+        runtime.StartNoticeSent =
+            false
+
+        runtime.LastContestedOwnerId =
+            0
+
+        runtime.LastRebuyBlockKey =
+            ""
+
+        runtime.RebuyPending =
+            false
+
+        runtime.RebuyPendingAt =
+            0
+
+        runtime.RebuyPendingKey =
+            ""
+
+        runtime.LastRebuyNoticeAt =
+            0
+    end
+
+    runtime.RebuyResultTimeout =
+        math.clamp(
+            tonumber(
+                runtime.RebuyResultTimeout
+            )
+            or 1.35,
+            0.75,
+            3
+        )
+
+    return runtime
+end
+
+function HolyDefenseNotify(
+    key,
+    description,
+    duration,
+    minimumGap
+)
+
+    if type(HolyNotify) ~= "function" then
+        return false
+    end
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    local noticeKey =
+        tostring(
+            runtime.UpgradeTargetKey
+            or ""
+        )
+        .. "|"
+        .. tostring(
+            key
+            or "defense"
+        )
+
+    local now =
+        os.clock()
+
+    local gap =
+        math.max(
+            0,
+            tonumber(minimumGap)
+            or 1.5
+        )
+
+    if now - (
+        tonumber(
+            runtime.NoticeTimes[
+                noticeKey
+            ]
+        )
+        or 0
+    ) < gap then
+
+        return false
+    end
+
+    runtime.NoticeTimes[
+        noticeKey
+    ] =
+        now
+
+    HolyNotify(
+        "HOLY Defense",
+        tostring(
+            description
+            or ""
+        ),
+        tonumber(duration)
+        or 5
+    )
+
+    return true
+end
+
+function HolyDefensePlayerLabel(userId)
+
+    userId =
+        tonumber(userId)
+        or 0
+
+    if userId <= 0 then
+        return "another player"
+    end
+
+    local player =
+        Players:GetPlayerByUserId(
+            userId
+        )
+
+    if player ~= nil then
+
+        return "@"
+            .. tostring(
+                player.Name
+            )
+    end
+
+    return "user "
+        .. tostring(userId)
+end
+
+function HolyDefenseToolMatches(tool, gearName)
+
+    if typeof(tool) ~= "Instance"
+    or tool:IsA("Tool") ~= true then
+
+        return false
+    end
+
+    gearName =
+        HolyDefenseNormalizeGear(
+            gearName
+        )
+
+    if gearName == "Auto" then
+
+        return HolyDefenseToolMatches(
+            tool,
+            "Strawberry Sniper"
+        )
+        or HolyDefenseToolMatches(
+            tool,
+            "Shovel"
+        )
+    end
+
+    local lowerName =
+        tostring(
+            tool.Name
+            or ""
+        )
+        :lower()
+
+    local attrs =
+        ""
+
+    pcall(function()
+
+        for key, value in pairs(
+            tool:GetAttributes()
+        ) do
+
+            attrs =
+                attrs
+                .. " "
+                .. tostring(key)
+                .. "="
+                .. tostring(value)
+        end
+    end)
+
+    attrs =
+        attrs:lower()
+
+    if gearName == "Shovel" then
+
+        return lowerName == "shovel"
+            or attrs:find(
+                "shovel",
+                1,
+                true
+            ) ~= nil
+    end
+
+    return lowerName == "strawberry sniper"
+        or (
+            lowerName:find(
+                "strawberry",
+                1,
+                true
+            ) ~= nil
+            and lowerName:find(
+                "sniper",
+                1,
+                true
+            ) ~= nil
+        )
+        or attrs:find(
+            "strawberrysniper",
+            1,
+            true
+        ) ~= nil
+        or attrs:find(
+            "strawberry sniper",
+            1,
+            true
+        ) ~= nil
+end
+
+function HolyDefenseResolveGear()
+
+    local selected =
+        HolyDefenseNormalizeGear(
+            HOLY_SNIPER_STATE.DefendGear
+        )
+
+    if selected ~= "Auto" then
+        return selected
+    end
+
+    if HolyDefenseFindTool(
+        "Strawberry Sniper"
+    ) ~= nil then
+
+        return "Strawberry Sniper"
+    end
+
+    if HolyDefenseFindTool(
+        "Shovel"
+    ) ~= nil then
+
+        return "Shovel"
+    end
+
+    return ""
+end
+
+function HolyDefenseSelectedGearEquipped()
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    local gear =
+        HolyDefenseResolveGear()
+
+    runtime.CurrentGear =
+        gear
+
+    if gear == "" then
+        return false
+    end
+
+    return HolyDefenseToolMatches(
+        HolyDefenseGetEquippedTool(),
+        gear
+    ) == true
+end
+
+function HolyDefenseEquipSelectedGear(reason)
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or runtime.Active ~= true
+    or runtime.GearLockActive ~= true
+    or runtime.InventoryConfirmed == true then
+
+        return false
+    end
+
+    local previousGear =
+        HolyCleanText(
+            runtime.CurrentGear
+        )
+
+    local gear =
+        HolyDefenseResolveGear()
+
+    runtime.CurrentGear =
+        gear
+
+    if gear == "" then
+
+        if runtime.StartNoticeSent == true
+        and runtime.NoGearNotified ~= true then
+
+            runtime.NoGearNotified =
+                true
+
+            HolyDefenseNotify(
+                "no gear",
+                "No Strawberry Sniper or Shovel found. Following and rebuying will continue.",
+                6,
+                4
+            )
+        end
+
+        return false
+    end
+
+    runtime.NoGearNotified =
+        false
+
+    if previousGear ~= ""
+    and previousGear ~= gear then
+
+        HolyDefenseNotify(
+            "gear switch "
+            .. gear,
+            "Defense switched from "
+            .. previousGear
+            .. " to "
+            .. gear
+            .. ".",
+            5,
+            1
+        )
+    end
+
+    local equipped =
+        HolyDefenseGetEquippedTool()
+
+    if HolyDefenseToolMatches(
+        equipped,
+        gear
+    ) == true then
+
+        runtime.DefenseTool =
+            equipped
+
+        return true
+    end
+
+    if runtime.EquipPending == true then
+        return false
+    end
+
+    local now =
+        os.clock()
+
+    if now - (
+        tonumber(runtime.LastEquipAt)
+        or 0
+    ) < runtime.ReequipCooldown then
+
+        return false
+    end
+
+    local tool =
+        HolyDefenseFindTool(
+            gear
+        )
+
+    local humanoid =
+        HolyDefenseGetHumanoid()
+
+    if typeof(tool) ~= "Instance"
+    or typeof(humanoid) ~= "Instance" then
+
+        return false
+    end
+
+    runtime.EquipPending =
+        true
+
+    local ok =
+        pcall(function()
+
+            humanoid:EquipTool(
+                tool
+            )
+        end)
+
+    runtime.EquipPending =
+        false
+
+    if ok == true then
+
+        runtime.DefenseTool =
+            tool
+
+        runtime.LastEquipAt =
+            os.clock()
+
+        runtime.LastEquipReason =
+            tostring(
+                reason
+                or "defense"
+            )
+    end
+
+    return ok == true
+end
+
+function HolyDefenseQueueReequip(reason)
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or runtime.Active ~= true
+    or runtime.GearLockActive ~= true
+    or runtime.InventoryConfirmed == true then
+
+        return false
+    end
+
+    runtime.ReequipToken =
+        (
+            tonumber(
+                runtime.ReequipToken
+            )
+            or 0
+        )
+        + 1
+
+    local token =
+        runtime.ReequipToken
+
+    task.delay(0.12, function()
+
+        local liveRuntime =
+            HolyDefenseUpgradeRuntime()
+
+        if liveRuntime.ReequipToken ~= token
+        or HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+        or liveRuntime.Active ~= true
+        or liveRuntime.GearLockActive ~= true
+        or liveRuntime.InventoryConfirmed == true
+        or HolyDefenseSelectedGearEquipped() == true then
+
+            return
+        end
+
+        HolyDefenseEquipSelectedGear(
+            reason
+            or "defense tool unequipped"
+        )
+    end)
+
+    return true
+end
+
+function HolyDefenseEnsureStartNotice()
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    if runtime.Active ~= true
+    or runtime.StartNoticeSent == true then
+
+        return false
+    end
+
+    local petName =
+        HolyCleanText(
+            runtime.TargetPetName
+        )
+
+    if petName == "" then
+        petName = "bought pet"
+    end
+
+    local gear =
+        HolyCleanText(
+            runtime.CurrentGear
+        )
+
+    local description =
+        gear ~= ""
+        and (
+            "Defending "
+            .. petName
+            .. " with "
+            .. gear
+            .. "."
+        )
+        or (
+            "Defending "
+            .. petName
+            .. ". No defense gear found, so following and rebuying only."
+        )
+
+    local sent =
+        HolyDefenseNotify(
+            "defense started",
+            description,
+            5,
+            1
+        )
+
+    if sent == true then
+
+        runtime.StartNoticeSent =
+            true
+
+        runtime.NoGearNotified =
+            gear == ""
+    end
+
+    return sent
+end
+
+function HolyDefenseStartGearLock()
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    HolyDefenseDisconnectGearLock()
+
+    if HOLY_SNIPER_STATE.DefendBoughtPets ~= true
+    or runtime.Active ~= true then
+
+        return false
+    end
+
+    runtime.GearLockActive =
+        true
+
+    runtime.InventoryConfirmed =
+        false
+
+    runtime.InventoryConfirmationItem =
+        nil
+
+    runtime.LastEquipAt =
+        0
+
+    runtime.CurrentGear =
+        ""
+
+    HolyDefenseCaptureInventoryBaseline()
+
+    HolyDefenseAddGearConnection(
+        LocalPlayer.CharacterAdded:Connect(function()
+
+            task.delay(0.35, function()
+
+                local liveRuntime =
+                    HolyDefenseUpgradeRuntime()
+
+                if liveRuntime.Active == true
+                and HOLY_SNIPER_STATE.DefendBoughtPets == true then
+
+                    HolyDefenseStartGearLock()
+                end
+            end)
+        end)
+    )
+
+    local character =
+        HolyDefenseGetCharacter()
+
+    if typeof(character) == "Instance" then
+
+        HolyDefenseAddGearConnection(
+            character.ChildRemoved:Connect(function(child)
+
+                if child == runtime.DefenseTool
+                or HolyDefenseToolMatches(
+                    child,
+                    runtime.CurrentGear ~= ""
+                    and runtime.CurrentGear
+                    or HOLY_SNIPER_STATE.DefendGear
+                ) == true then
+
+                    HolyDefenseQueueReequip(
+                        "defense tool unequipped"
+                    )
+                end
+            end)
+        )
+
+        HolyDefenseAddGearConnection(
+            character.ChildAdded:Connect(function(child)
+
+                if child:IsA("Tool")
+                and HolyDefenseToolMatches(
+                    child,
+                    HolyDefenseResolveGear()
+                ) ~= true then
+
+                    HolyDefenseQueueReequip(
+                        "another tool equipped"
+                    )
+                end
+            end)
+        )
+    end
+
+    local backpack =
+        LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+
+    if typeof(backpack) == "Instance" then
+
+        HolyDefenseAddGearConnection(
+            backpack.ChildAdded:Connect(function(child)
+
+                if HolyDefenseToolMatches(
+                    child,
+                    HOLY_SNIPER_STATE.DefendGear
+                ) == true then
+
+                    HolyDefenseQueueReequip(
+                        "defense gear available"
+                    )
+                end
+            end)
+        )
+    end
+
+    HolyDefenseEquipSelectedGear(
+        "defense start"
+    )
+
+    HolyDefenseEnsureStartNotice()
+
+    return true
+end
+
+function HolyDefenseFindThreat(targetPos)
+
+    if typeof(targetPos) ~= "Vector3" then
+        return nil
+    end
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    local ownerUserId =
+        tonumber(
+            HolyDefenseReadAnyAttr(
+                runtime.Target,
+                {
+                    "OwnerUserId",
+                    "OwnerUserID",
+                    "Owner",
+                    "UserId",
+                    "UserID",
+                }
+            )
+        )
+        or 0
+
+    if ownerUserId <= 0 then
+
+        local record =
+            HolyDefenseGetQueuedRecordForRef(
+                runtime.Target
+            )
+
+        ownerUserId =
+            type(record) == "table"
+            and tonumber(
+                record.LastResultOwnerUserId
+            )
+            or 0
+    end
+
+    local localRoot =
+        HolyDefenseGetRoot()
+
+    if ownerUserId > 0
+    and ownerUserId ~= tonumber(
+        LocalPlayer.UserId
+    ) then
+
+        local player =
+            Players:GetPlayerByUserId(
+                ownerUserId
+            )
+
+        local root =
+            HolyDefenseGetPlayerRoot(
+                player
+            )
+
+        if typeof(root) ~= "Instance"
+        or root:IsA("BasePart") ~= true then
+
+            return nil
+        end
+
+        return {
+            Player =
+                player,
+
+            Root =
+                root,
+
+            Distance =
+                (
+                    root.Position
+                    - targetPos
+                ).Magnitude,
+
+            AttackDistance =
+                typeof(localRoot) == "Instance"
+                and localRoot:IsA("BasePart")
+                and (
+                    root.Position
+                    - localRoot.Position
+                ).Magnitude
+                or math.huge,
+
+            ExactOwner =
+                true,
+        }
+    end
+
+    local best =
+        nil
+
+    for _, player in ipairs(
+        Players:GetPlayers()
+    ) do
+
+        if player ~= LocalPlayer then
+
+            local root =
+                HolyDefenseGetPlayerRoot(
+                    player
+                )
+
+            if typeof(root) == "Instance"
+            and root:IsA("BasePart") then
+
+                local distance =
+                    (
+                        root.Position
+                        - targetPos
+                    ).Magnitude
+
+                if distance <= 45
+                and (
+                    best == nil
+                    or distance < best.Distance
+                ) then
+
+                    best = {
+                        Player =
+                            player,
+
+                        Root =
+                            root,
+
+                        Distance =
+                            distance,
+
+                        AttackDistance =
+                            typeof(localRoot) == "Instance"
+                            and localRoot:IsA("BasePart")
+                            and (
+                                root.Position
+                                - localRoot.Position
+                            ).Magnitude
+                            or math.huge,
+
+                        ExactOwner =
+                            false,
+                    }
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+function HolyDefenseUseShovel(threat)
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    if threat == nil
+    or threat.Player == nil
+    or typeof(threat.Root) ~= "Instance" then
+
+        return false
+    end
+
+    local attackDistance =
+        tonumber(
+            threat.AttackDistance
+        )
+        or math.huge
+
+    if attackDistance > 3.6 then
+        return false
+    end
+
+    if os.clock() - (
+        tonumber(runtime.LastShovelAt)
+        or 0
+    ) < 0.22 then
+
+        return false
+    end
+
+    HolyDefenseResolvePackets()
+
+    if HolyDefenseToolMatches(
+        HolyDefenseGetEquippedTool(),
+        "Shovel"
+    ) ~= true then
+
+        HolyDefenseQueueReequip(
+            "shovel required"
+        )
+
+        return false
+    end
+
+    HolyDefenseFaceShot(
+        threat.Root.Position
+    )
+
+    runtime.LastShovelAt =
+        os.clock()
+
+    local ok =
+        false
+
+    if type(runtime.ShovelSwingPacket) == "table" then
+
+        ok =
+            HolyDefenseFirePacket(
+                runtime.ShovelSwingPacket
+            )
+            or ok
+    end
+
+    task.wait(
+        0.03
+    )
+
+    if type(runtime.ShovelHitPacket) == "table" then
+
+        ok =
+            HolyDefenseFirePacket(
+                runtime.ShovelHitPacket,
+                threat.Player.UserId
+            )
+            or ok
+    end
+
+    local petId =
+        HolyDefenseReadTargetPetId()
+
+    if petId ~= ""
+    and type(runtime.PetScarePacket) == "table" then
+
+        ok =
+            HolyDefenseFirePacket(
+                runtime.PetScarePacket,
+                threat.Player.UserId,
+                petId
+            )
+            or ok
+    end
+
+    return ok
+end
+
+function HolyDefenseUseGear(threat)
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    local gear =
+        HolyDefenseResolveGear()
+
+    if gear == "" then
+
+        HolyDefenseEquipSelectedGear(
+            "gear scan"
+        )
+
+        return false
+    end
+
+    if runtime.CurrentGear ~= gear then
+
+        HolyDefenseEquipSelectedGear(
+            "automatic gear switch"
+        )
+    end
+
+    if HolyDefenseToolMatches(
+        HolyDefenseGetEquippedTool(),
+        gear
+    ) ~= true then
+
+        HolyDefenseEquipSelectedGear(
+            "defense attack"
+        )
+
+        return false
+    end
+
+    if gear == "Shovel" then
+
+        return HolyDefenseUseShovel(
+            threat
+        )
+    end
+
+    return HolyDefenseUseStrawberry(
+        threat
+    )
+end
+
+function HolyDefenseOnTameResult(ref, buyerUserId)
+
+    local record =
+        HolyDefenseGetQueuedRecordForRef(
+            ref
+        )
+
+    if type(record) ~= "table" then
+        return false
+    end
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    local owner =
+        tonumber(
+            buyerUserId
+        )
+        or 0
+
+    local previousResultOwner =
+        tonumber(
+            record.LastResultOwnerUserId
+        )
+        or 0
+
+    local wasContested =
+        (
+            tonumber(
+                record.RebuyCount
+            )
+            or 0
+        ) > 0
+        or (
+            previousResultOwner > 0
+            and previousResultOwner ~= tonumber(
+                LocalPlayer.UserId
+            )
+        )
+        or (
+            tonumber(
+                runtime.LastContestedOwnerId
+            )
+            or 0
+        ) > 0
+
+    record.LastResultOwnerUserId =
+        owner
+
+    record.LastResultAt =
+        os.clock()
+
+    local refKey =
+        HolyDefenseRefKey(
+            ref
+        )
+
+    if runtime.RebuyPendingKey == refKey
+    or runtime.Target == ref then
+
+        runtime.RebuyPending =
+            false
+
+        runtime.RebuyPendingAt =
+            0
+
+        runtime.RebuyPendingKey =
+            ""
+    end
+
+    if owner == tonumber(
+        LocalPlayer.UserId
+    ) then
+
+        record.Reason =
+            "reclaimed"
+
+        record.Entry.Ref =
+            ref
+
+        HolySniperRegisterSettlingPet(
+            record.Entry,
+            "defense reclaim"
+        )
+
+        if record.Counted ~= true
+        and type(record.Match) == "table" then
+
+            HolySniperMarkBought(
+                record.Match,
+                record.Entry
+            )
+
+            HolySniperRegisterConfirmedBuy(
+                record.Match,
+                record.Entry
+            )
+
+            record.Counted =
+                true
+        end
+
+        if wasContested == true then
+
+            HolyDefenseNotify(
+                "reclaimed "
+                .. tostring(
+                    record.RebuyCount
+                    or 0
+                ),
+                "Reclaimed "
+                .. HolySniperDescribeEntry(
+                    record.Entry
+                )
+                .. " • escorting it to your garden.",
+                6,
+                1
+            )
+        end
+
+        runtime.LastContestedOwnerId =
+            0
+
+        runtime.LastRebuyBlockKey =
+            ""
+
+    else
+
+        record.Reason =
+            "contested by user "
+            .. tostring(owner)
+
+        if owner > 0
+        and runtime.Active == true
+        and runtime.Target == ref
+        and runtime.LastContestedOwnerId ~= owner then
+
+            runtime.LastContestedOwnerId =
+                owner
+
+            HolyDefenseNotify(
+                "stolen "
+                .. tostring(owner),
+                HolySniperDescribeEntry(
+                    record.Entry
+                )
+                .. " was stolen by "
+                .. HolyDefensePlayerLabel(
+                    owner
+                )
+                .. " • chasing now.",
+                6,
+                1
+            )
+        end
+    end
+
+    return true
+end
+
+function HolyDefenseTryRebuy(target)
+
+    HolySniperBatchEnsureRuntime()
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    if typeof(target) ~= "Instance"
+    or HolyDefenseCanRebuy(
+        target
+    ) ~= true then
+
+        return false
+    end
+
+    local now =
+        os.clock()
+
+    local targetKey =
+        HolyDefenseRefKey(
+            target
+        )
+
+    if runtime.RebuyPending == true then
+
+        local sameTarget =
+            runtime.RebuyPendingKey == targetKey
+
+        local timedOut =
+            now - (
+                tonumber(
+                    runtime.RebuyPendingAt
+                )
+                or 0
+            ) >= runtime.RebuyResultTimeout
+
+        if sameTarget == true
+        and timedOut ~= true then
+
+            return false
+        end
+
+        runtime.RebuyPending =
+            false
+
+        runtime.RebuyPendingAt =
+            0
+
+        runtime.RebuyPendingKey =
+            ""
+    end
+
+    if now - (
+        tonumber(runtime.LastRebuyAt)
+        or 0
+    ) < runtime.RebuyCooldown then
+
+        return false
+    end
+
+    local root =
+        HolyDefenseGetRoot()
+
+    local targetPos =
+        HolyDefenseGetPosition(
+            target
+        )
+
+    if typeof(root) ~= "Instance"
+    or root:IsA("BasePart") ~= true
+    or typeof(targetPos) ~= "Vector3"
+    or (
+        root.Position
+        - targetPos
+    ).Magnitude > 10 then
+
+        return false
+    end
+
+    HolyDefenseResolvePackets()
+
+    HolySniperEnsureTameSignals()
+
+    if type(runtime.WildTamePacket) ~= "table" then
+        return false
+    end
+
+    local ok =
+        HolyDefenseFirePacket(
+            runtime.WildTamePacket,
+            target
+        )
+
+    if ok == true then
+
+        runtime.RebuyCount =
+            (
+                tonumber(
+                    runtime.RebuyCount
+                )
+                or 0
+            )
+            + 1
+
+        runtime.LastRebuyAt =
+            now
+
+        runtime.RebuyPending =
+            true
+
+        runtime.RebuyPendingAt =
+            now
+
+        runtime.RebuyPendingKey =
+            targetKey
+
+        local record =
+            HolyDefenseGetQueuedRecordForRef(
+                target
+            )
+
+        if type(record) == "table" then
+
+            record.RebuyCount =
+                runtime.RebuyCount
+
+            record.LastRebuyAt =
+                now
+        end
+
+        if runtime.RebuyCount == 1
+        or now - (
+            tonumber(
+                runtime.LastRebuyNoticeAt
+            )
+            or 0
+        ) >= 4 then
+
+            runtime.LastRebuyNoticeAt =
+                now
+
+            HolyDefenseNotify(
+                "rebuy "
+                .. tostring(
+                    runtime.RebuyCount
+                ),
+                "Rebuy attempt #"
+                .. tostring(
+                    runtime.RebuyCount
+                )
+                .. " for "
+                .. HolyCleanText(
+                    runtime.TargetPetName
+                    or "pet"
+                )
+                .. ".",
+                4,
+                0
+            )
+        end
+    end
+
+    return ok
+end
+
+function HolyDefenseSetRebuyBlock(
+    blockKey,
+    message
+)
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    blockKey =
+        tostring(
+            blockKey
+            or ""
+        )
+
+    local previous =
+        tostring(
+            runtime.LastRebuyBlockKey
+            or ""
+        )
+
+    if blockKey == "" then
+
+        runtime.LastRebuyBlockKey =
+            ""
+
+        return true
+    end
+
+    if previous ~= blockKey then
+
+        runtime.LastRebuyBlockKey =
+            blockKey
+
+        HolyDefenseNotify(
+            "rebuy blocked "
+            .. blockKey,
+            tostring(message),
+            6,
+            1
+        )
+    end
+
+    return false
+end
+
+function HolyDefenseRunWorker(token)
+
+    local runtime =
+        HolyDefenseUpgradeRuntime()
+
+    while runtime.Token == token
+    and runtime.Active == true do
+
+        HolyDefenseEnsureStartNotice()
+
+        local wateringState =
+            type(HOLY_WATERING_REJOIN_STATE) == "table"
+            and HOLY_WATERING_REJOIN_STATE
+            or {}
+
+        local wateringRuntime =
+            type(HOLY_WATERING_REJOIN_RUNTIME) == "table"
+            and HOLY_WATERING_REJOIN_RUNTIME
+            or {}
+
+        local wateringOwnsMovement =
+            wateringState.Enabled == true
+            and (
+                wateringRuntime.Running == true
+                or wateringRuntime.Busy == true
+                or wateringRuntime.RespawnPending == true
+                or wateringRuntime.RecoveryScheduled == true
+            )
+
+        if wateringOwnsMovement == true then
+
+            task.wait(
+                0.08
+            )
+
+            continue
+        end
+
+        if HOLY_SNIPER_STATE.DefendBoughtPets ~= true then
+
+            HolyDefenseStop(
+                "toggle off"
+            )
+
+            return
+        end
+
+        if HolyDefenseInventoryConfirmed(
+            false
+        ) == true then
+
+            HolyDefenseNotify(
+                "safe",
+                HolyCleanText(
+                    runtime.TargetPetName
+                    or "Bought pet"
+                )
+                .. " reached your inventory safely.",
+                5,
+                1
+            )
+
+            HolyDefenseStop(
+                "inventory confirmed"
+            )
+
+            return
+        end
+
+        local target =
+            runtime.Target
+
+        if typeof(target) ~= "Instance"
+        or target.Parent == nil then
+
+            runtime.TargetMissingAt =
+                (
+                    tonumber(
+                        runtime.TargetMissingAt
+                    )
+                    or 0
+                ) > 0
+                and runtime.TargetMissingAt
+                or os.clock()
+
+            HolyDefenseStopMovementOnly()
+
+            if os.clock()
+                - runtime.TargetMissingAt >= 3 then
+
+                HolyDefenseNotify(
+                    "missing",
+                    "Defense ended because "
+                    .. HolyCleanText(
+                        runtime.TargetPetName
+                        or "the pet"
+                    )
+                    .. " disappeared.",
+                    5,
+                    1
+                )
+
+                HolyDefenseStop(
+                    "target missing"
+                )
+
+                return
+            end
+
+            task.wait(
+                0.08
+            )
+
+            continue
+        end
+
+        runtime.TargetMissingAt =
+            0
+
+        local owner =
+            tonumber(
+                HolyDefenseReadAnyAttr(
+                    target,
+                    {
+                        "OwnerUserId",
+                        "OwnerUserID",
+                        "Owner",
+                        "UserId",
+                        "UserID",
+                    }
+                )
+            )
+            or 0
+
+        local record =
+            HolyDefenseGetQueuedRecordForRef(
+                target
+            )
+
+        local contestedOwner =
+            owner
+
+        if contestedOwner <= 0 then
+
+            contestedOwner =
+                type(record) == "table"
+                and tonumber(
+                    record.LastResultOwnerUserId
+                )
+                or 0
+        end
+
+        local state =
+            HolyCleanText(
+                HolyDefenseReadAnyAttr(
+                    target,
+                    {
+                        "State",
+                        "PetState",
+                    }
+                )
+                or ""
+            )
+
+        if owner ~= tonumber(
+            LocalPlayer.UserId
+        ) then
+
+            if HolySniperPetBuyStateLooksPending(
+                state
+            ) ~= true then
+
+                HolyDefenseStop(
+                    "target completed"
+                )
+
+                return
+            end
+
+            if contestedOwner > 0
+            and runtime.LastContestedOwnerId ~= contestedOwner then
+
+                runtime.LastContestedOwnerId =
+                    contestedOwner
+
+                HolyDefenseNotify(
+                    "stolen "
+                    .. tostring(
+                        contestedOwner
+                    ),
+                    HolyCleanText(
+                        runtime.TargetPetName
+                        or "Pet"
+                    )
+                    .. " was stolen by "
+                    .. HolyDefensePlayerLabel(
+                        contestedOwner
+                    )
+                    .. " • chasing now.",
+                    6,
+                    1
+                )
+            end
+
+            local filter =
+                HolySniperNormalizeFilter(
+                    runtime.Filter
+                    or {}
+                )
+
+            local maxPrice =
+                tonumber(
+                    filter.MaxPrice
+                )
+                or 0
+
+            local price =
+                tonumber(
+                    HolyDefenseReadAnyAttr(
+                        target,
+                        {
+                            "Price",
+                            "Cost",
+                            "TameCost",
+                        }
+                    )
+                )
+                or 0
+
+            local sheckles =
+                HolySniperReadSheckles()
+
+            local blockKey =
+                ""
+
+            local blockMessage =
+                ""
+
+            if HOLY_SNIPER_STATE.DefendRebuyIfStolen ~= true then
+
+                blockKey =
+                    "disabled"
+
+                blockMessage =
+                    "Rebuy is disabled • gear defense and chasing will continue."
+
+            elseif price <= 0 then
+
+                blockKey =
+                    "price unavailable"
+
+                blockMessage =
+                    "Rebuy price is unavailable • gear defense and chasing will continue."
+
+            elseif maxPrice > 0
+            and price > maxPrice then
+
+                blockKey =
+                    "price "
+                    .. tostring(price)
+                    .. " max "
+                    .. tostring(maxPrice)
+
+                blockMessage =
+                    "Price "
+                    .. HolySniperFormatMoney(
+                        price
+                    )
+                    .. " is over the "
+                    .. HolySniperFormatMoney(
+                        maxPrice
+                    )
+                    .. " max • gear defense continues."
+
+            elseif sheckles ~= nil
+            and sheckles < price then
+
+                blockKey =
+                    "funds "
+                    .. tostring(price)
+
+                blockMessage =
+                    "Not enough sheckles to rebuy at "
+                    .. HolySniperFormatMoney(
+                        price
+                    )
+                    .. " • gear defense continues."
+            end
+
+            local rebuyAllowed =
+                HolyDefenseSetRebuyBlock(
+                    blockKey,
+                    blockMessage
+                )
+
+            local targetPos =
+                HolyDefenseGetPosition(
+                    target
+                )
+
+            if typeof(targetPos) == "Vector3" then
+
+                local threat =
+                    HolyDefenseFindThreat(
+                        targetPos
+                    )
+
+                local goal =
+                    HolyDefenseChooseGoal(
+                        targetPos,
+                        threat
+                    )
+
+                if typeof(goal) == "Vector3" then
+
+                    HolyDefenseMoveTo(
+                        goal,
+                        threat
+                    )
+                end
+
+                if threat ~= nil then
+
+                    HolyDefenseUseGear(
+                        threat
+                    )
+                end
+
+                if rebuyAllowed == true then
+
+                    HolyDefenseTryRebuy(
+                        target
+                    )
+                end
+            end
+
+            task.wait(
+                0.04
+            )
+
+            continue
+        end
+
+        if runtime.LastContestedOwnerId > 0 then
+
+            runtime.LastContestedOwnerId =
+                0
+
+            runtime.RebuyPending =
+                false
+
+            runtime.RebuyPendingAt =
+                0
+
+            runtime.RebuyPendingKey =
+                ""
+
+            HolyDefenseNotify(
+                "owner reclaimed "
+                .. tostring(
+                    runtime.RebuyCount
+                    or 0
+                ),
+                "Reclaimed "
+                .. HolyCleanText(
+                    runtime.TargetPetName
+                    or "pet"
+                )
+                .. " • escorting it to your garden.",
+                6,
+                1
+            )
+        end
+
+        runtime.LastRebuyBlockKey =
+            ""
+
+        local walking =
+            HolySniperPetBuyStateLooksPending(
+                state
+            ) == true
+
+        if walking ~= true then
+
+            runtime.CompletionStartedAt =
+                (
+                    tonumber(
+                        runtime.CompletionStartedAt
+                    )
+                    or 0
+                ) > 0
+                and runtime.CompletionStartedAt
+                or os.clock()
+
+            HolyDefenseStopMovementOnly()
+
+            if os.clock()
+                - runtime.CompletionStartedAt >= 3 then
+
+                HolyDefenseStop(
+                    "target completed"
+                )
+
+                return
+            end
+
+            task.wait(
+                0.08
+            )
+
+            continue
+        end
+
+        runtime.CompletionStartedAt =
+            0
+
+        local targetPos =
+            HolyDefenseGetPosition(
+                target
+            )
+
+        if typeof(targetPos) == "Vector3" then
+
+            local threat =
+                HolyDefenseFindThreat(
+                    targetPos
+                )
+
+            local goal =
+                HolyDefenseChooseGoal(
+                    targetPos,
+                    threat
+                )
+
+            if typeof(goal) == "Vector3" then
+
+                HolyDefenseMoveTo(
+                    goal,
+                    threat
+                )
+            end
+
+            if threat ~= nil then
+
+                HolyDefenseUseGear(
+                    threat
+                )
+            end
+        end
+
+        task.wait(
+            0.04
+        )
+    end
 end
 
 function HolySniperMaybeReturnAfterBatchNoMatches(token)
@@ -52860,6 +54661,9 @@ function HolySaveSniperSettings()
         DefendBoughtPets =
             HOLY_SNIPER_STATE.DefendBoughtPets == true,
 
+        DefenseGearVersion =
+            2,
+
         DefendGear =
             HolyDefenseNormalizeGear(
                 HOLY_SNIPER_STATE.DefendGear
@@ -53057,11 +54861,24 @@ function HolyLoadSniperSettings()
     HOLY_SNIPER_STATE.DefendBoughtPets =
         data.DefendBoughtPets ~= false
 
+    local savedDefenseGear =
+        data.DefendGear
+
+    if (
+        tonumber(
+            data.DefenseGearVersion
+        )
+        or 0
+    ) < 2 then
+
+        savedDefenseGear =
+            "Auto"
+    end
+
     HOLY_SNIPER_STATE.DefendGear =
         HolyDefenseNormalizeGear(
-            data.DefendGear
-            or HOLY_SNIPER_STATE.DefendGear
-            or "Strawberry Sniper"
+            savedDefenseGear
+            or "Auto"
         )
 
     HOLY_SNIPER_STATE.DefendMovement =
@@ -160489,7 +162306,7 @@ HOLY_SNIPER_UI.DefenseRebuyToggle =
                 HOLY_SNIPER_STATE.DefendRebuyIfStolen == true,
 
             Tooltip =
-                "If stolen, rebuy only when current Price is <= the filter Max Price. Hard cap: 3 rebuys.",
+                "Keeps retrying until confirmed. Stops rebuying above Max Price but continues chasing and using defense gear.",
         }
     )
 
