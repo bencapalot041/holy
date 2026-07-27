@@ -14,10 +14,54 @@ local ALLOWED_PLACE_IDS = {
         true,
 }
 
-if ALLOWED_PLACE_IDS[game.PlaceId] ~= true then
+local function HolyPublicWaitForSupportedPlace(
+    timeout
+)
+
+    local deadline =
+        os.clock()
+        + (
+            tonumber(timeout)
+            or 45
+        )
+
+    repeat
+
+        local currentPlaceId =
+            tonumber(game.PlaceId)
+            or 0
+
+        if ALLOWED_PLACE_IDS[
+            currentPlaceId
+        ] == true then
+
+            return true,
+                currentPlaceId
+        end
+
+        task.wait(
+            0.25
+        )
+
+    until os.clock() >= deadline
+
+    return false,
+        tonumber(game.PlaceId)
+        or 0
+end
+
+local supportedExperience,
+    resolvedPlaceId =
+    HolyPublicWaitForSupportedPlace(
+        45
+    )
+
+if supportedExperience ~= true then
 
     error(
-        "[HOLY] This loader cannot run in this experience.",
+        "[HOLY] This loader cannot run in this experience."
+        .. "\nPlaceId: "
+        .. tostring(resolvedPlaceId),
         0
     )
 end
