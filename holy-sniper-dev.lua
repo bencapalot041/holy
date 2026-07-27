@@ -3385,7 +3385,7 @@ local DEV_TOOLS = {
 
     {
         Name = "Dex Explorer V2",
-        Url = "https://github.com/BOXLEGENDARY/Dex/releases/latest/download/out.lua",
+        Url = "https://raw.githubusercontent.com/peyton2465/Dex/master/out.lua",
         Tooltip = "Open Dex Explorer V2.",
     },
 }
