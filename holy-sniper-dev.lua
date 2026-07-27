@@ -158076,9 +158076,15 @@ HOLY_LOADOUT_TRIGGER_VALUES = {
 }
 
 HOLY_LOADOUT_STATE = {
-    Version = 1,
+    Version = 2,
 
     AutoEnabled = false,
+
+    AutoFillSlots = true,
+    AutoFillPets = {
+        "Bunny",
+    },
+
     DefaultLoadoutId = "",
     ManualOverrideId = "",
     SelectedLoadoutId = "",
@@ -158097,6 +158103,11 @@ HOLY_LOADOUT_RUNTIME = {
     PendingLoadoutId = "",
     PendingReason = "",
     PendingForce = false,
+
+    AutoFillBusy = false,
+    AutoFillToken = nil,
+    AutoFillRerun = false,
+    AutoFillScheduleGeneration = 0,
 
     RequestGeneration = 0,
     CurrentGeneration = 0,
@@ -158152,6 +158163,8 @@ HOLY_LOADOUT_UI = {
     SmartRuleDropdown = nil,
 
     AutoToggle = nil,
+    AutoFillToggle = nil,
+    AutoFillPetsDropdown = nil,
     DefaultDropdown = nil,
     ManualDropdown = nil,
     SwitchCooldownInput = nil,
@@ -158758,6 +158771,21 @@ function HolyLoadoutEnsureState()
     HOLY_LOADOUT_STATE.AutoEnabled =
         HOLY_LOADOUT_STATE.AutoEnabled == true
 
+    HOLY_LOADOUT_STATE.AutoFillSlots =
+        HOLY_LOADOUT_STATE.AutoFillSlots ~= false
+
+    HOLY_LOADOUT_STATE.AutoFillPets =
+        HolyLoadoutArray(
+            HOLY_LOADOUT_STATE.AutoFillPets
+        )
+
+    if #HOLY_LOADOUT_STATE.AutoFillPets <= 0 then
+
+        HOLY_LOADOUT_STATE.AutoFillPets = {
+            "Bunny",
+        }
+    end
+
     HOLY_LOADOUT_STATE.SwitchCooldown =
         math.clamp(
             tonumber(
@@ -158852,10 +158880,16 @@ function HolyLoadoutSaveNow()
     HolyEnsureFolder()
 
     local payload = {
-        Version = 1,
+        Version = 2,
 
         AutoEnabled =
             HOLY_LOADOUT_STATE.AutoEnabled == true,
+
+        AutoFillSlots =
+            HOLY_LOADOUT_STATE.AutoFillSlots == true,
+
+        AutoFillPets =
+            HOLY_LOADOUT_STATE.AutoFillPets,
 
         DefaultLoadoutId =
             HOLY_LOADOUT_STATE.DefaultLoadoutId,
@@ -159097,6 +159131,21 @@ function HolyLoadoutLoadSettings()
 
     HOLY_LOADOUT_STATE.AutoEnabled =
         data.AutoEnabled == true
+
+    HOLY_LOADOUT_STATE.AutoFillSlots =
+        data.AutoFillSlots ~= false
+
+    HOLY_LOADOUT_STATE.AutoFillPets =
+        HolyLoadoutArray(
+            data.AutoFillPets
+        )
+
+    if #HOLY_LOADOUT_STATE.AutoFillPets <= 0 then
+
+        HOLY_LOADOUT_STATE.AutoFillPets = {
+            "Bunny",
+        }
+    end
 
     HOLY_LOADOUT_STATE.DefaultLoadoutId =
         HolyLoadoutTrim(
@@ -162940,6 +162989,14 @@ function HolyLoadoutRequestApply(loadoutId, reason, force)
         HOLY_LOADOUT_RUNTIME.CurrentLoadoutId = ""
         HOLY_LOADOUT_RUNTIME.CurrentTargetSignature = ""
         HOLY_LOADOUT_RUNTIME.Busy = false
+
+        if type(HolyLoadoutAutoFillSchedule) == "function" then
+
+            HolyLoadoutAutoFillSchedule(
+                "loadout finished",
+                0.20
+            )
+        end
     end)
 
     return true
@@ -163137,6 +163194,10 @@ function HolyLoadoutStop(reason)
 
     HOLY_LOADOUT_RUNTIME.Running = false
     HOLY_LOADOUT_RUNTIME.Token = nil
+    HOLY_LOADOUT_RUNTIME.AutoFillToken = nil
+    HOLY_LOADOUT_RUNTIME.AutoFillBusy = false
+    HOLY_LOADOUT_RUNTIME.AutoFillRerun = false
+    HOLY_LOADOUT_RUNTIME.AutoFillScheduleGeneration += 1
     HOLY_LOADOUT_RUNTIME.RequestGeneration += 1
     HOLY_LOADOUT_RUNTIME.PendingLoadoutId = ""
     HOLY_LOADOUT_RUNTIME.PendingReason = ""
@@ -163200,6 +163261,35 @@ function HolyLoadoutRebuildProtection(snapshot)
                 protected[pet.PetId] =
                     loadout.Name
             end
+        end
+    end
+
+    if HOLY_LOADOUT_STATE.AutoFillSlots == true then
+
+        local fillCandidates =
+            HolyLoadoutAutoFillBuildCandidates(
+                snapshot,
+                HOLY_LOADOUT_RUNTIME.ActivePetIds,
+                true
+            )
+
+        for index = 1, math.min(
+            6,
+            #fillCandidates
+        ) do
+
+            local pet =
+                fillCandidates[
+                    index
+                ]
+
+            protected[
+                pet.PetId
+            ] =
+                protected[
+                    pet.PetId
+                ]
+                or "Auto Fill Slots"
         end
     end
 
@@ -163320,7 +163410,8 @@ function HolyLoadoutOnServerPetState(petId, equipped)
 
     HOLY_LOADOUT_RUNTIME.ActiveServerReadable = true
 
-    if HOLY_LOADOUT_RUNTIME.Busy ~= true then
+    if HOLY_LOADOUT_RUNTIME.Busy ~= true
+    and HOLY_LOADOUT_RUNTIME.AutoFillBusy ~= true then
 
         HOLY_LOADOUT_RUNTIME.ActiveResolvedSignature =
             HolyLoadoutCurrentSignature(
@@ -163730,6 +163821,11 @@ function HolyLoadoutScheduleRefresh(reason)
                     HolyLoadoutRefreshActivityUI()
                 end
             end
+
+            HolyLoadoutAutoFillSchedule(
+                reason,
+                0.10
+            )
         end
     )
 
@@ -163853,6 +163949,11 @@ function HolyLoadoutStart()
         snapshot
     )
 
+    HolyLoadoutAutoFillSchedule(
+        "startup",
+        0.75
+    )
+
     if type(HolyLoadoutRefreshAllUI) == "function" then
 
         HolyLoadoutRefreshAllUI(
@@ -163883,6 +163984,891 @@ HOLY_LOADOUT_RUNTIME.Stop =
     HolyLoadoutStop
 
 HolyLoadoutLoadSettings()
+
+--==================================================
+-- HOLY LOADOUTS · AUTO FILL SLOTS V1
+--==================================================
+
+function HolyLoadoutAutoFillNameKey(value)
+
+    if type(HolySniperPetAliasKey) == "function" then
+
+        return HolySniperPetAliasKey(
+            value
+        )
+    end
+
+    return tostring(
+        value
+        or ""
+    ):lower():gsub(
+        "[^%w]",
+        ""
+    )
+end
+
+function HolyLoadoutAutoFillSelectionMap()
+
+    local selected = {}
+
+    for _, petName in ipairs(
+        HOLY_LOADOUT_STATE.AutoFillPets
+        or {}
+    ) do
+
+        local key =
+            HolyLoadoutAutoFillNameKey(
+                petName
+            )
+
+        if key ~= "" then
+            selected[key] = true
+        end
+    end
+
+    return selected
+end
+
+function HolyLoadoutAutoFillAddPetValue(
+    values,
+    seen,
+    value
+)
+
+    local display =
+        type(HolyPetSellPrettyName) == "function"
+        and HolyPetSellPrettyName(
+            value
+        )
+        or HolyLoadoutTrim(
+            value
+        )
+
+    local key =
+        HolyLoadoutAutoFillNameKey(
+            display
+        )
+
+    if display == ""
+    or key == ""
+    or key == "any"
+    or key == "anypet"
+    or key == "allpets"
+    or seen[key] == true then
+
+        return false
+    end
+
+    seen[key] = true
+
+    table.insert(
+        values,
+        display
+    )
+
+    return true
+end
+
+function HolyLoadoutBuildAutoFillPetValues(snapshot)
+
+    local values = {}
+    local seen = {}
+
+    HolyLoadoutAutoFillAddPetValue(
+        values,
+        seen,
+        "Bunny"
+    )
+
+    if type(HolySniperGetPetValues) == "function" then
+
+        for _, petName in ipairs(
+            HolySniperGetPetValues()
+        ) do
+
+            HolyLoadoutAutoFillAddPetValue(
+                values,
+                seen,
+                petName
+            )
+        end
+    end
+
+    for _, pet in ipairs(
+        type(snapshot) == "table"
+        and snapshot.Pets
+        or {}
+    ) do
+
+        HolyLoadoutAutoFillAddPetValue(
+            values,
+            seen,
+            pet.PetName
+        )
+    end
+
+    for _, petName in ipairs(
+        HOLY_LOADOUT_STATE.AutoFillPets
+        or {}
+    ) do
+
+        HolyLoadoutAutoFillAddPetValue(
+            values,
+            seen,
+            petName
+        )
+    end
+
+    table.sort(
+        values,
+        function(left, right)
+
+            return tostring(
+                left
+            ):lower()
+                < tostring(
+                    right
+                ):lower()
+        end
+    )
+
+    return values
+end
+
+function HolyLoadoutAutoFillRank(pet)
+
+    local sizeKey =
+        HolyLoadoutAutoFillNameKey(
+            type(pet) == "table"
+            and pet.Size
+            or "Normal"
+        )
+
+    local variantKey =
+        HolyLoadoutAutoFillNameKey(
+            type(pet) == "table"
+            and pet.Variant
+            or "Normal"
+        )
+
+    local huge =
+        sizeKey == "huge"
+        or sizeKey == "mega"
+
+    local big =
+        sizeKey == "big"
+
+    local rainbow =
+        variantKey == "rainbow"
+
+    if huge == true
+    and rainbow == true then
+        return 1
+    end
+
+    if huge == true then
+        return 2
+    end
+
+    if big == true
+    and rainbow == true then
+        return 3
+    end
+
+    if big == true then
+        return 4
+    end
+
+    if rainbow == true then
+        return 5
+    end
+
+    return 6
+end
+
+function HolyLoadoutAutoFillBuildCandidates(
+    snapshot,
+    activeIds,
+    includeActive
+)
+
+    local selected =
+        HolyLoadoutAutoFillSelectionMap()
+
+    local candidates = {}
+
+    if next(
+        selected
+    ) == nil then
+        return candidates
+    end
+
+    for _, pet in ipairs(
+        type(snapshot) == "table"
+        and snapshot.Pets
+        or {}
+    ) do
+
+        local petId =
+            HolyLoadoutTrim(
+                pet.PetId
+            )
+
+        local nameKey =
+            HolyLoadoutAutoFillNameKey(
+                pet.PetName
+            )
+
+        local active =
+            type(activeIds) == "table"
+            and activeIds[petId] == true
+
+        if petId ~= ""
+        and selected[nameKey] == true
+        and (
+            includeActive == true
+            or active ~= true
+        ) then
+
+            table.insert(
+                candidates,
+                pet
+            )
+        end
+    end
+
+    table.sort(
+        candidates,
+        function(left, right)
+
+            local leftRank =
+                HolyLoadoutAutoFillRank(
+                    left
+                )
+
+            local rightRank =
+                HolyLoadoutAutoFillRank(
+                    right
+                )
+
+            if leftRank ~= rightRank then
+                return leftRank < rightRank
+            end
+
+            local leftName =
+                tostring(
+                    left.PetName
+                    or ""
+                ):lower()
+
+            local rightName =
+                tostring(
+                    right.PetName
+                    or ""
+                ):lower()
+
+            if leftName ~= rightName then
+                return leftName < rightName
+            end
+
+            return tostring(
+                left.PetId
+                or ""
+            ) < tostring(
+                right.PetId
+                or ""
+            )
+        end
+    )
+
+    return candidates
+end
+
+function HolyLoadoutAutoFillReadMaxSlots()
+
+    local attributeNames = {
+        "MaxEquippedPets",
+        "MaxPetsEquipped",
+        "PetEquipSlots",
+        "PetSlots",
+    }
+
+    for _, name in ipairs(
+        attributeNames
+    ) do
+
+        local value =
+            tonumber(
+                LocalPlayer:GetAttribute(
+                    name
+                )
+            )
+
+        if value
+        and value > 0 then
+
+            return math.clamp(
+                math.floor(
+                    value
+                ),
+                1,
+                6
+            ),
+                true
+        end
+    end
+
+    for _, descendant in ipairs(
+        LocalPlayer:GetDescendants()
+    ) do
+
+        if descendant:IsA(
+            "IntValue"
+        )
+        or descendant:IsA(
+            "NumberValue"
+        ) then
+
+            for _, name in ipairs(
+                attributeNames
+            ) do
+
+                if descendant.Name == name
+                and tonumber(
+                    descendant.Value
+                )
+                and descendant.Value > 0 then
+
+                    return math.clamp(
+                        math.floor(
+                            descendant.Value
+                        ),
+                        1,
+                        6
+                    ),
+                        true
+                end
+            end
+        end
+    end
+
+    return 6,
+        false
+end
+
+function HolyLoadoutAutoFillOperationCurrent(token)
+
+    return HOLY_LOADOUT_RUNTIME.Running == true
+        and HOLY_LOADOUT_STATE.AutoFillSlots == true
+        and HOLY_LOADOUT_RUNTIME.AutoFillToken == token
+        and HOLY_LOADOUT_RUNTIME.Busy ~= true
+end
+
+function HolyLoadoutAutoFillWaitForPet(
+    petId,
+    packets,
+    token,
+    timeout
+)
+
+    local deadline =
+        os.clock()
+        + (
+            tonumber(
+                timeout
+            )
+            or 3
+        )
+
+    local lastIds =
+        nil
+
+    local lastError =
+        nil
+
+    repeat
+
+        if HolyLoadoutAutoFillOperationCurrent(
+            token
+        ) ~= true then
+
+            return false,
+                "cancelled",
+                lastIds
+        end
+
+        if HOLY_LOADOUT_RUNTIME.ActivePetIds[
+            petId
+        ] == true then
+
+            return true,
+                "event confirmed",
+                HOLY_LOADOUT_RUNTIME.ActivePetIds
+        end
+
+        local activeIds,
+            queryError =
+            HolyLoadoutQueryEquipped(
+                packets
+            )
+
+        if type(activeIds) == "table" then
+
+            lastIds =
+                activeIds
+
+            if activeIds[
+                petId
+            ] == true then
+
+                return true,
+                    "server confirmed",
+                    activeIds
+            end
+
+        else
+
+            lastError =
+                queryError
+        end
+
+        task.wait(
+            0.12
+        )
+
+    until os.clock() >= deadline
+
+    if type(lastIds) == "table" then
+
+        return false,
+            "server confirmed inactive",
+            lastIds
+    end
+
+    return false,
+        tostring(
+            lastError
+            or "could not read the server team"
+        ),
+        nil
+end
+
+function HolyLoadoutAutoFillEquipOne(
+    pet,
+    packets,
+    token,
+    allowRetry
+)
+
+    local petId =
+        HolyLoadoutTrim(
+            pet.RawPetId
+            or pet.PetId
+        )
+
+    if petId == "" then
+
+        return false,
+            "pet record has no PetId",
+            nil
+    end
+
+    local sent,
+        sendReason =
+        HolyLoadoutFirePacket(
+            packets.RequestToggleFollower,
+            pet.RawPetId
+            or pet.PetId
+        )
+
+    if sent ~= true then
+
+        return false,
+            tostring(
+                sendReason
+            ),
+            nil
+    end
+
+    local confirmed,
+        confirmReason,
+        activeIds =
+        HolyLoadoutAutoFillWaitForPet(
+            petId,
+            packets,
+            token,
+            3
+        )
+
+    if confirmed == true then
+
+        task.wait(
+            0.08
+        )
+
+        return true,
+            confirmReason,
+            activeIds
+    end
+
+    if confirmReason == "cancelled"
+    or allowRetry ~= true
+    or confirmReason ~= "server confirmed inactive" then
+
+        return false,
+            confirmReason,
+            activeIds
+    end
+
+    sent,
+        sendReason =
+        HolyLoadoutFirePacket(
+            packets.RequestToggleFollower,
+            pet.RawPetId
+            or pet.PetId
+        )
+
+    if sent ~= true then
+
+        return false,
+            tostring(
+                sendReason
+            ),
+            activeIds
+    end
+
+    confirmed,
+        confirmReason,
+        activeIds =
+        HolyLoadoutAutoFillWaitForPet(
+            petId,
+            packets,
+            token,
+            3
+        )
+
+    return confirmed == true,
+        confirmReason,
+        activeIds
+end
+
+function HolyLoadoutRunAutoFill(reason)
+
+    if HOLY_LOADOUT_RUNTIME.Running ~= true
+    or HOLY_LOADOUT_STATE.AutoFillSlots ~= true then
+
+        return false
+    end
+
+    if HOLY_LOADOUT_RUNTIME.Busy == true
+    or HOLY_LOADOUT_RUNTIME.AutoFillBusy == true then
+
+        HOLY_LOADOUT_RUNTIME.AutoFillRerun =
+            true
+
+        return false
+    end
+
+    HOLY_LOADOUT_RUNTIME.AutoFillBusy =
+        true
+
+    HOLY_LOADOUT_RUNTIME.AutoFillRerun =
+        false
+
+    local token = {}
+
+    HOLY_LOADOUT_RUNTIME.AutoFillToken =
+        token
+
+    task.spawn(function()
+
+        local filled =
+            0
+
+        local finalCount =
+            0
+
+        local targetSlots =
+            6
+
+        local runOk =
+            pcall(function()
+
+                local packets =
+                    HolyLoadoutResolvePackets(
+                        false
+                    )
+
+                if HolyLoadoutPacketCanFire(
+                    packets.GetEquipped
+                ) ~= true
+                or HolyLoadoutPacketCanFire(
+                    packets.RequestToggleFollower
+                ) ~= true then
+
+                    packets =
+                        HolyLoadoutResolvePackets(
+                            true
+                        )
+                end
+
+                if HolyLoadoutPacketCanFire(
+                    packets.GetEquipped
+                ) ~= true
+                or HolyLoadoutPacketCanFire(
+                    packets.RequestToggleFollower
+                ) ~= true then
+
+                    return
+                end
+
+                local activeIds =
+                    HolyLoadoutQueryEquipped(
+                        packets
+                    )
+
+                if type(activeIds) ~= "table" then
+                    return
+                end
+
+                local capacityKnown =
+                    false
+
+                targetSlots,
+                    capacityKnown =
+                    HolyLoadoutAutoFillReadMaxSlots()
+
+                finalCount =
+                    HolyLoadoutCountPetIds(
+                        activeIds
+                    )
+
+                if finalCount >= targetSlots then
+                    return
+                end
+
+                local snapshot =
+                    HolyLoadoutScanInventory()
+
+                local candidates =
+                    HolyLoadoutAutoFillBuildCandidates(
+                        snapshot,
+                        activeIds,
+                        false
+                    )
+
+                for _, pet in ipairs(
+                    candidates
+                ) do
+
+                    if HolyLoadoutAutoFillOperationCurrent(
+                        token
+                    ) ~= true then
+                        return
+                    end
+
+                    activeIds =
+                        HolyLoadoutQueryEquipped(
+                            packets
+                        )
+
+                    if type(activeIds) ~= "table" then
+                        return
+                    end
+
+                    finalCount =
+                        HolyLoadoutCountPetIds(
+                            activeIds
+                        )
+
+                    if finalCount >= targetSlots then
+                        break
+                    end
+
+                    if activeIds[
+                        pet.PetId
+                    ] ~= true then
+
+                        local equipped,
+                            _equipReason,
+                            confirmedIds =
+                            HolyLoadoutAutoFillEquipOne(
+                                pet,
+                                packets,
+                                token,
+                                capacityKnown == true
+                            )
+
+                        if equipped ~= true then
+                            break
+                        end
+
+                        filled +=
+                            1
+
+                        activeIds =
+                            type(confirmedIds) == "table"
+                            and confirmedIds
+                            or activeIds
+
+                        finalCount =
+                            HolyLoadoutCountPetIds(
+                                activeIds
+                            )
+                    end
+                end
+            end)
+
+        if runOk ~= true then
+            filled = 0
+        end
+
+        if HOLY_LOADOUT_RUNTIME.AutoFillToken
+            == token then
+
+            HOLY_LOADOUT_RUNTIME.AutoFillToken =
+                nil
+        end
+
+        HOLY_LOADOUT_RUNTIME.AutoFillBusy =
+            false
+
+        if HOLY_LOADOUT_RUNTIME.Running ~= true then
+            return
+        end
+
+        if filled > 0 then
+
+            local snapshot =
+                HolyLoadoutScanInventory()
+
+            HOLY_LOADOUT_RUNTIME.LastInventorySignature =
+                HolyLoadoutInventorySignature(
+                    snapshot
+                )
+
+            HOLY_LOADOUT_RUNTIME.LastPetPoolSignature =
+                HolyLoadoutPetPoolSignature(
+                    snapshot
+                )
+
+            HOLY_LOADOUT_RUNTIME.ActiveResolvedSignature =
+                HolyLoadoutCurrentSignature(
+                    HOLY_LOADOUT_RUNTIME.ActivePetIds
+                )
+
+            HolyLoadoutRebuildProtection(
+                snapshot
+            )
+
+            HolyLoadoutSetStatus(
+                "Auto Fill Slots",
+                "Equipped "
+                    .. tostring(
+                        filled
+                    )
+                    .. " pet(s) · team "
+                    .. tostring(
+                        finalCount
+                    )
+                    .. "/"
+                    .. tostring(
+                        targetSlots
+                    )
+                    .. "."
+            )
+
+            HolyLoadoutAddActivity(
+                "Auto Fill Slots · equipped "
+                    .. tostring(
+                        filled
+                    )
+                    .. " · team "
+                    .. tostring(
+                        finalCount
+                    )
+                    .. "/"
+                    .. tostring(
+                        targetSlots
+                    )
+            )
+
+            if type(HolyLoadoutRefreshPreview) == "function" then
+
+                HolyLoadoutRefreshPreview(
+                    snapshot
+                )
+            end
+        end
+
+        if HOLY_LOADOUT_RUNTIME.AutoFillRerun == true
+        and HOLY_LOADOUT_STATE.AutoFillSlots == true then
+
+            HOLY_LOADOUT_RUNTIME.AutoFillRerun =
+                false
+
+            HolyLoadoutAutoFillSchedule(
+                "queued change",
+                0.25
+            )
+        end
+    end)
+
+    return true
+end
+
+function HolyLoadoutAutoFillSchedule(
+    reason,
+    delaySeconds
+)
+
+    if HOLY_LOADOUT_RUNTIME.Running ~= true
+    or HOLY_LOADOUT_STATE.AutoFillSlots ~= true then
+
+        return false
+    end
+
+    HOLY_LOADOUT_RUNTIME.AutoFillScheduleGeneration +=
+        1
+
+    local generation =
+        HOLY_LOADOUT_RUNTIME.AutoFillScheduleGeneration
+
+    task.delay(
+        math.max(
+            tonumber(
+                delaySeconds
+            )
+            or 0.25,
+            0
+        ),
+        function()
+
+            if HOLY_LOADOUT_RUNTIME.Running ~= true
+            or HOLY_LOADOUT_STATE.AutoFillSlots ~= true
+            or HOLY_LOADOUT_RUNTIME.AutoFillScheduleGeneration
+                ~= generation then
+
+                return
+            end
+
+            if HOLY_LOADOUT_RUNTIME.Busy == true
+            or HOLY_LOADOUT_RUNTIME.AutoFillBusy == true then
+
+                HOLY_LOADOUT_RUNTIME.AutoFillRerun =
+                    true
+
+                return
+            end
+
+            HolyLoadoutRunAutoFill(
+                reason
+            )
+        end
+    )
+
+    return true
+end
 
 --==================================================
 -- [4] WINDOW
@@ -164011,7 +164997,7 @@ local Tabs = {
     Loadouts =
         Window:AddTab({
             Name = "Loadouts",
-            Icon = "layers-3",
+            Icon = "gallery-thumbnails",
             Description = "Build and automate reusable setups.",
         }),
 
@@ -165221,6 +166207,14 @@ function HolyLoadoutRefreshAllUI(force, snapshot)
         HOLY_LOADOUT_UI.ManualDropdown,
         manualValues,
         manualDisplay
+    )
+
+    HolyLoadoutSetDropdownValues(
+        HOLY_LOADOUT_UI.AutoFillPetsDropdown,
+        HolyLoadoutBuildAutoFillPetValues(
+            snapshot
+        ),
+        HOLY_LOADOUT_STATE.AutoFillPets
     )
 
     local petValues =
@@ -167062,6 +168056,104 @@ HOLY_LOADOUT_UI.PreviewBox:AddUIPassthrough(
         Visible = true,
     }
 )
+
+HOLY_LOADOUT_UI.AutoFillToggle =
+    HOLY_LOADOUT_UI.AutomationBox:AddToggle(
+        "HolyLoadoutAutoFillSlots",
+        {
+            Text = "Auto Fill Slots",
+            Default =
+                HOLY_LOADOUT_STATE.AutoFillSlots == true,
+            Tooltip = "Fills empty pet slots with the strongest selected pets without replacing or unequipping the current team.",
+        }
+    )
+
+HOLY_LOADOUT_UI.AutoFillToggle:OnChanged(function(value)
+
+    HOLY_LOADOUT_STATE.AutoFillSlots =
+        value == true
+
+    HOLY_LOADOUT_RUNTIME.AutoFillToken =
+        nil
+
+    HOLY_LOADOUT_RUNTIME.AutoFillScheduleGeneration +=
+        1
+
+    HolyLoadoutQueueSave()
+    HolyLoadoutRebuildProtection()
+
+    if value == true then
+
+        HolyLoadoutAutoFillSchedule(
+            "toggle on",
+            0.05
+        )
+
+    else
+
+        HolyLoadoutSetStatus(
+            "Auto Fill Slots off",
+            "Current pets were kept equipped."
+        )
+    end
+end)
+
+HOLY_LOADOUT_UI.AutoFillPetsDropdown =
+    HOLY_LOADOUT_UI.AutomationBox:AddDropdown(
+        "HolyLoadoutAutoFillPets",
+        {
+            Text = "Fill Pets",
+            Values = {
+                "Bunny",
+            },
+            Default =
+                HOLY_LOADOUT_STATE.AutoFillPets,
+            Multi = true,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 8,
+            Tooltip = "Selected pet types can fill empty slots. Priority: Huge Rainbow, Huge, Big Rainbow, Big, Rainbow, then Normal.",
+        }
+    )
+
+HOLY_LOADOUT_UI.AutoFillPetsDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local selected =
+        HolyLoadoutArray(
+            value
+        )
+
+    if #selected <= 0 then
+
+        selected = {
+            "Bunny",
+        }
+    end
+
+    HOLY_LOADOUT_STATE.AutoFillPets =
+        selected
+
+    HOLY_LOADOUT_RUNTIME.AutoFillToken =
+        nil
+
+    HOLY_LOADOUT_RUNTIME.AutoFillScheduleGeneration +=
+        1
+
+    HolyLoadoutQueueSave()
+    HolyLoadoutRebuildProtection()
+
+    if HOLY_LOADOUT_STATE.AutoFillSlots == true then
+
+        HolyLoadoutAutoFillSchedule(
+            "fill pets changed",
+            0.05
+        )
+    end
+end)
 
 HOLY_LOADOUT_UI.AutoToggle =
     HOLY_LOADOUT_UI.AutomationBox:AddToggle(
