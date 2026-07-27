@@ -267,24 +267,48 @@ local function HolyPublicCompile(source)
         )
     end
 
-    local success,
-        chunkOrError =
+    if type(source) ~= "string"
+    or source == "" then
+
+        error(
+            "[HOLY] Compile source is empty.",
+            0
+        )
+    end
+
+    local callSuccess,
+        chunk,
+        compileError =
         pcall(
             compiler,
             source
         )
 
-    if success ~= true
-    or type(chunkOrError) ~= "function" then
+    if callSuccess ~= true then
 
         error(
-            "[HOLY] Compile failed: "
-            .. tostring(chunkOrError),
+            "[HOLY] Compiler call failed: "
+            .. tostring(chunk),
             0
         )
     end
 
-    return chunkOrError
+    if type(chunk) ~= "function" then
+
+        error(
+            "[HOLY] Compile failed: "
+            .. tostring(
+                compileError
+                or chunk
+                or "compiler returned nil without an error"
+            )
+            .. "\nSource bytes: "
+            .. tostring(#source),
+            0
+        )
+    end
+
+    return chunk
 end
 
 local function HolyPublicRun()
