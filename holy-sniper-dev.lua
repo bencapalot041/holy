@@ -123815,6 +123815,119 @@ function HolyMailStorePosition(position)
     return true
 end
 
+function HolyMailClampHudPosition(
+    savePosition
+)
+    local window =
+        HOLY_MAIL_RUNTIME.Window
+
+    if typeof(window) ~= "Instance"
+        or window.Parent == nil
+    then
+        return false
+    end
+
+    local camera =
+        workspace.CurrentCamera
+
+    local viewport =
+        camera
+        and camera.ViewportSize
+        or Vector2.new(
+            1920,
+            1080
+        )
+
+    if viewport.X <= 0
+        or viewport.Y <= 0
+    then
+        return false
+    end
+
+    local absolutePosition =
+        window.AbsolutePosition
+
+    local absoluteSize =
+        window.AbsoluteSize
+
+    local margin =
+        12
+
+    local maximumLeft =
+        viewport.X
+        - absoluteSize.X
+        - margin
+
+    local maximumTop =
+        viewport.Y
+        - absoluteSize.Y
+        - margin
+
+    local targetLeft
+
+    if maximumLeft >= margin then
+        targetLeft =
+            math.clamp(
+                absolutePosition.X,
+                margin,
+                maximumLeft
+            )
+    else
+        targetLeft =
+            (
+                viewport.X
+                - absoluteSize.X
+            ) / 2
+    end
+
+    local targetTop
+
+    if maximumTop >= margin then
+        targetTop =
+            math.clamp(
+                absolutePosition.Y,
+                margin,
+                maximumTop
+            )
+    else
+        targetTop =
+            (
+                viewport.Y
+                - absoluteSize.Y
+            ) / 2
+    end
+
+    local deltaX =
+        targetLeft
+        - absolutePosition.X
+
+    local deltaY =
+        targetTop
+        - absolutePosition.Y
+
+    if math.abs(deltaX) > 0.25
+        or math.abs(deltaY) > 0.25
+    then
+        window.Position =
+            UDim2.new(
+                window.Position.X.Scale,
+                window.Position.X.Offset
+                    + deltaX,
+                window.Position.Y.Scale,
+                window.Position.Y.Offset
+                    + deltaY
+            )
+    end
+
+    if savePosition == true then
+        HolyMailStorePosition(
+            window.Position
+        )
+    end
+
+    return true
+end
+
 function HolyMailRefreshControlUI()
     HolyMailCheckDay()
 
@@ -125096,6 +125209,16 @@ function HolyMailCreateHud()
             responsiveScale
             * selectedScale
 
+        task.defer(function()
+            if HOLY_MAIL_RUNTIME.Window
+                == window
+            then
+                HolyMailClampHudPosition(
+                    true
+                )
+            end
+        end)
+
         return true
     end
 
@@ -125114,13 +125237,43 @@ function HolyMailCreateHud()
                     1080
                 )
 
+        local _,
+            selectedScale =
+            HolyMailNormalizeScale(
+                HOLY_MAIL_STATE.HudScale
+                or "100%"
+            )
+
+        local safeWidth =
+            math.max(
+                1,
+                viewport.X
+                - 24
+            )
+
+        local safeHeight =
+            math.max(
+                1,
+                viewport.Y
+                - 24
+            )
+
         responsiveScale =
             math.clamp(
                 math.min(
-                    viewport.X / 980,
-                    viewport.Y / 770
+                    safeWidth
+                        / (
+                            920
+                            * selectedScale
+                        ),
+                    safeHeight
+                        / (
+                            700
+                            * selectedScale
+                        ),
+                    1
                 ),
-                0.62,
+                0.1,
                 1
             )
 
@@ -134677,6 +134830,19 @@ function HolyMailCreateHud()
         end
 
         updateQuota()
+
+        task.delay(
+            0.14,
+            function()
+                if HOLY_MAIL_RUNTIME.Window
+                    == window
+                then
+                    HolyMailClampHudPosition(
+                        true
+                    )
+                end
+            end
+        )
     end
 
     HOLY_MAIL_RUNTIME.SetMinimized =
@@ -134736,8 +134902,8 @@ function HolyMailCreateHud()
                 dragging =
                     false
 
-                HolyMailStorePosition(
-                    window.Position
+                HolyMailClampHudPosition(
+                    true
                 )
             end
         end)
@@ -134762,6 +134928,10 @@ function HolyMailCreateHud()
                         startPosition.Y.Offset
                             + delta.Y
                     )
+
+                HolyMailClampHudPosition(
+                    false
+                )
             end
         end)
     end
@@ -144785,9 +144955,19 @@ function HolyMailResetPosition()
                 0.5,
                 0.5
             )
-    end
 
-    HolyMailSaveSettings()
+        task.defer(function()
+            if HOLY_MAIL_RUNTIME.Window
+                == window
+            then
+                HolyMailClampHudPosition(
+                    true
+                )
+            end
+        end)
+    else
+        HolyMailSaveSettings()
+    end
 
     return true
 end
