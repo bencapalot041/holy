@@ -163149,19 +163149,734 @@ function HolyLoadoutStop(reason)
     return true
 end
 
-HOLY_LOADOUT_RECONNECT_BASE =
-    HolyLoadoutReconnect
+--==================================================
+-- HOLY LOADOUTS · STABLE INVENTORY + STARTUP V3
+--==================================================
+
+HOLY_LOADOUT_RUNTIME.StartupSynchronized = false
+HOLY_LOADOUT_RUNTIME.LastWinningLoadoutId = ""
+HOLY_LOADOUT_RUNTIME.LastWinningRuleId = ""
+HOLY_LOADOUT_RUNTIME.LastWinningReason = "None"
+
+function HolyLoadoutRebuildProtection(snapshot)
+
+    local protected = {}
+
+    snapshot =
+        type(snapshot) == "table"
+        and snapshot
+        or HolyLoadoutScanInventory()
+
+    for _, loadout in ipairs(
+        HOLY_LOADOUT_STATE.Loadouts
+        or {}
+    ) do
+
+        for _, petId in ipairs(
+            loadout.ExactPetIds
+            or {}
+        ) do
+
+            protected[petId] =
+                loadout.Name
+        end
+
+        if loadout.Enabled ~= false
+        and (
+            loadout.Mode == "Smart"
+            or loadout.Mode == "Hybrid"
+        ) then
+
+            local resolved =
+                HolyLoadoutResolve(
+                    loadout,
+                    snapshot
+                )
+
+            for _, pet in ipairs(
+                resolved.Pets
+            ) do
+
+                protected[pet.PetId] =
+                    loadout.Name
+            end
+        end
+    end
+
+    for petId, enabled in pairs(
+        HOLY_LOADOUT_RUNTIME.ActivePetIds
+        or {}
+    ) do
+
+        if enabled == true then
+
+            protected[petId] =
+                protected[petId]
+                or "Active Team"
+        end
+    end
+
+    HOLY_LOADOUT_RUNTIME.ProtectedPetIds =
+        protected
+
+    return protected
+end
+
+function HolyLoadoutToolLooksLikePet(instance)
+
+    if typeof(instance) ~= "Instance"
+    or instance:IsA("Tool") ~= true then
+        return false
+    end
+
+    if HolyLoadoutReadPetId(instance) ~= "" then
+        return true
+    end
+
+    for _, attributeName in ipairs({
+        "Pet",
+        "PetName",
+    }) do
+
+        if HolyLoadoutTrim(
+            instance:GetAttribute(
+                attributeName
+            )
+        ) ~= "" then
+            return true
+        end
+    end
+
+    return false
+end
+
+function HolyLoadoutConnectContainer(container)
+
+    if typeof(container) ~= "Instance" then
+        return false
+    end
+
+    HolyLoadoutAddConnection(
+        container.ChildAdded:Connect(function(child)
+
+            if child:IsA("Tool") ~= true then
+                return
+            end
+
+            if HolyLoadoutToolLooksLikePet(child) == true then
+
+                HolyLoadoutScheduleRefresh(
+                    "pet added"
+                )
+
+                return
+            end
+
+            task.delay(
+                0.20,
+                function()
+
+                    if HOLY_LOADOUT_RUNTIME.Running == true
+                    and HolyLoadoutToolLooksLikePet(child) == true then
+
+                        HolyLoadoutScheduleRefresh(
+                            "pet initialized"
+                        )
+                    end
+                end
+            )
+        end)
+    )
+
+    HolyLoadoutAddConnection(
+        container.ChildRemoved:Connect(function(child)
+
+            if HolyLoadoutToolLooksLikePet(child) == true then
+
+                HolyLoadoutScheduleRefresh(
+                    "pet removed"
+                )
+            end
+        end)
+    )
+
+    return true
+end
+
+function HolyLoadoutOnServerPetState(petId, equipped)
+
+    petId =
+        HolyLoadoutTrim(petId)
+
+    if petId == "" then
+        return
+    end
+
+    if equipped == true then
+        HOLY_LOADOUT_RUNTIME.ActivePetIds[petId] = true
+    else
+        HOLY_LOADOUT_RUNTIME.ActivePetIds[petId] = nil
+    end
+
+    HOLY_LOADOUT_RUNTIME.ActiveServerReadable = true
+
+    if HOLY_LOADOUT_RUNTIME.Busy ~= true then
+
+        HOLY_LOADOUT_RUNTIME.ActiveResolvedSignature =
+            HolyLoadoutCurrentSignature(
+                HOLY_LOADOUT_RUNTIME.ActivePetIds
+            )
+
+        HOLY_LOADOUT_RUNTIME.TeamDirty = false
+        HOLY_LOADOUT_RUNTIME.ResolutionDirty = false
+
+        HolyLoadoutScheduleRefresh(
+            "server team changed"
+        )
+    end
+end
+
+function HolyLoadoutChooseAutomationWinner()
+
+    if HOLY_LOADOUT_STATE.AutoEnabled ~= true
+    and HOLY_LOADOUT_STATE.ManualOverrideId == "" then
+
+        return "",
+            "",
+            nil
+    end
+
+    local winningLoadoutId = ""
+    local winningReason = ""
+    local winningRule = nil
+
+    if HOLY_LOADOUT_STATE.ManualOverrideId ~= ""
+    and HolyLoadoutGetById(
+        HOLY_LOADOUT_STATE.ManualOverrideId
+    ) ~= nil then
+
+        winningLoadoutId =
+            HOLY_LOADOUT_STATE.ManualOverrideId
+
+        winningReason =
+            "Manual Override"
+
+    elseif HOLY_LOADOUT_STATE.AutoEnabled == true then
+
+        for _, rule in ipairs(
+            HOLY_LOADOUT_STATE.AutomationRules
+            or {}
+        ) do
+
+            if HolyLoadoutAutomationRuleActive(rule) == true
+            and (
+                winningRule == nil
+                or rule.Priority > winningRule.Priority
+            ) then
+                winningRule = rule
+            end
+        end
+
+        if type(winningRule) == "table" then
+
+            winningLoadoutId =
+                winningRule.LoadoutId
+
+            winningReason =
+                winningRule.Name
+
+        elseif HolyLoadoutGetById(
+            HOLY_LOADOUT_STATE.DefaultLoadoutId
+        ) ~= nil then
+
+            winningLoadoutId =
+                HOLY_LOADOUT_STATE.DefaultLoadoutId
+
+            winningReason =
+                "Default"
+        end
+    end
+
+    return winningLoadoutId,
+        winningReason,
+        winningRule
+end
+
+function HolyLoadoutWriteWinningState(
+    winningLoadoutId,
+    winningReason,
+    winningRule
+)
+
+    HOLY_LOADOUT_RUNTIME.WinningRuleId =
+        type(winningRule) == "table"
+        and winningRule.Id
+        or ""
+
+    HOLY_LOADOUT_RUNTIME.WinningRuleName =
+        winningReason ~= ""
+        and winningReason
+        or "None"
+
+    return true
+end
+
+function HolyLoadoutAdoptStartupTeam()
+
+    local winningLoadoutId,
+        winningReason,
+        winningRule =
+        HolyLoadoutChooseAutomationWinner()
+
+    HolyLoadoutWriteWinningState(
+        winningLoadoutId,
+        winningReason,
+        winningRule
+    )
+
+    local activeIds =
+        HOLY_LOADOUT_RUNTIME.ActiveServerReadable == true
+        and HOLY_LOADOUT_RUNTIME.ActivePetIds
+        or nil
+
+    local activeError = nil
+
+    if type(activeIds) ~= "table" then
+
+        activeIds,
+            activeError =
+            HolyLoadoutQueryEquipped(
+                HolyLoadoutResolvePackets(false)
+            )
+    end
+
+    HOLY_LOADOUT_RUNTIME.StartupSynchronized = true
+    HOLY_LOADOUT_RUNTIME.LastWinningLoadoutId =
+        winningLoadoutId
+    HOLY_LOADOUT_RUNTIME.LastWinningRuleId =
+        type(winningRule) == "table"
+        and winningRule.Id
+        or ""
+    HOLY_LOADOUT_RUNTIME.LastWinningReason =
+        winningReason ~= ""
+        and winningReason
+        or "None"
+
+    HOLY_LOADOUT_RUNTIME.TeamDirty = false
+    HOLY_LOADOUT_RUNTIME.ResolutionDirty = false
+    HOLY_LOADOUT_RUNTIME.FailedKey = ""
+
+    if winningLoadoutId ~= "" then
+
+        local loadout =
+            HolyLoadoutGetById(
+                winningLoadoutId
+            )
+
+        HOLY_LOADOUT_RUNTIME.ActiveLoadoutId =
+            winningLoadoutId
+        HOLY_LOADOUT_RUNTIME.ActiveReason =
+            winningReason
+        HOLY_LOADOUT_RUNTIME.ActiveResolvedSignature =
+            HolyLoadoutCurrentSignature(
+                activeIds
+                or {}
+            )
+        HOLY_LOADOUT_RUNTIME.Phase = "Active"
+
+        HolyLoadoutSetStatus(
+            "Synced: "
+                .. (
+                    type(loadout) == "table"
+                    and loadout.Name
+                    or "Current Team"
+                ),
+            type(activeIds) == "table"
+            and (
+                "Kept the current server team · "
+                .. tostring(
+                    HolyLoadoutCountPetIds(
+                        activeIds
+                    )
+                )
+                .. " active pet(s)."
+            )
+            or (
+                "Skipped the startup rebuild: "
+                .. tostring(
+                    activeError
+                    or "server team unavailable"
+                )
+            )
+        )
+
+    elseif HOLY_LOADOUT_STATE.AutoEnabled == true then
+
+        HOLY_LOADOUT_RUNTIME.Phase = "Idle"
+
+        HolyLoadoutSetStatus(
+            "Automation ready",
+            "No valid default or active rule is selected."
+        )
+
+    else
+
+        HOLY_LOADOUT_RUNTIME.Phase = "Idle"
+
+        HolyLoadoutSetStatus(
+            "Automation paused",
+            "Kept the current server team."
+        )
+    end
+
+    return true
+end
+
+function HolyLoadoutEvaluateAutomation(force)
+
+    if HOLY_LOADOUT_RUNTIME.Running ~= true then
+        return false
+    end
+
+    if HOLY_LOADOUT_RUNTIME.StartupSynchronized ~= true then
+        return HolyLoadoutAdoptStartupTeam()
+    end
+
+    local winningLoadoutId,
+        winningReason,
+        winningRule =
+        HolyLoadoutChooseAutomationWinner()
+
+    HolyLoadoutWriteWinningState(
+        winningLoadoutId,
+        winningReason,
+        winningRule
+    )
+
+    if winningLoadoutId == "" then
+
+        HOLY_LOADOUT_RUNTIME.LastWinningLoadoutId = ""
+        HOLY_LOADOUT_RUNTIME.LastWinningRuleId = ""
+        HOLY_LOADOUT_RUNTIME.LastWinningReason = "None"
+
+        return false
+    end
+
+    local winningRuleId =
+        type(winningRule) == "table"
+        and winningRule.Id
+        or ""
+
+    local previousLoadoutId =
+        HOLY_LOADOUT_RUNTIME.LastWinningLoadoutId
+
+    local previousRuleId =
+        HOLY_LOADOUT_RUNTIME.LastWinningRuleId
+
+    local previousReason =
+        HOLY_LOADOUT_RUNTIME.LastWinningReason
+
+    local loadoutChanged =
+        previousLoadoutId
+        ~= winningLoadoutId
+
+    local activeLoadoutChanged =
+        HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+        ~= winningLoadoutId
+
+    local ruleChanged =
+        previousRuleId
+        ~= winningRuleId
+        or previousReason ~= winningReason
+
+    HOLY_LOADOUT_RUNTIME.LastWinningLoadoutId =
+        winningLoadoutId
+    HOLY_LOADOUT_RUNTIME.LastWinningRuleId =
+        winningRuleId
+    HOLY_LOADOUT_RUNTIME.LastWinningReason =
+        winningReason
+
+    if loadoutChanged == true
+    or activeLoadoutChanged == true then
+
+        HOLY_LOADOUT_RUNTIME.FailedKey = ""
+
+        HolyLoadoutRequestApply(
+            winningLoadoutId,
+            winningReason,
+            false
+        )
+
+        if type(winningRule) == "table"
+        and winningRule.Notify == true
+        and ruleChanged == true then
+
+            HolyNotify(
+                "HOLY Loadouts",
+                "Activated by "
+                    .. winningReason
+                    .. ".",
+                3
+            )
+        end
+
+        return true
+    end
+
+    if HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+        == winningLoadoutId then
+
+        HOLY_LOADOUT_RUNTIME.ActiveReason =
+            winningReason
+    end
+
+    if type(winningRule) == "table"
+    and winningRule.Notify == true
+    and ruleChanged == true then
+
+        HolyNotify(
+            "HOLY Loadouts",
+            "Activated by "
+                .. winningReason
+                .. " · team already active.",
+            3
+        )
+    end
+
+    return false
+end
+
+function HolyLoadoutScheduleRefresh(reason)
+
+    if HOLY_LOADOUT_RUNTIME.Running ~= true then
+        return false
+    end
+
+    HOLY_LOADOUT_RUNTIME.RefreshGeneration += 1
+
+    local generation =
+        HOLY_LOADOUT_RUNTIME.RefreshGeneration
+
+    HOLY_LOADOUT_RUNTIME.RefreshQueued = true
+
+    local refreshDelay =
+        reason == "manual refresh"
+        and 0.05
+        or 0.60
+
+    task.delay(
+        refreshDelay,
+        function()
+
+            if HOLY_LOADOUT_RUNTIME.RefreshGeneration ~= generation
+            or HOLY_LOADOUT_RUNTIME.Running ~= true then
+                return
+            end
+
+            HOLY_LOADOUT_RUNTIME.RefreshQueued = false
+
+            if HOLY_LOADOUT_RUNTIME.Busy == true then
+                return
+            end
+
+            local snapshot =
+                HolyLoadoutScanInventory()
+
+            local signature =
+                HolyLoadoutInventorySignature(
+                    snapshot
+                )
+
+            local changed =
+                signature
+                ~= HOLY_LOADOUT_RUNTIME.LastInventorySignature
+
+            HOLY_LOADOUT_RUNTIME.LastInventorySignature =
+                signature
+            HOLY_LOADOUT_RUNTIME.LastPetPoolSignature =
+                HolyLoadoutPetPoolSignature(
+                    snapshot
+                )
+            HOLY_LOADOUT_RUNTIME.TeamDirty = false
+            HOLY_LOADOUT_RUNTIME.ResolutionDirty = false
+
+            if changed ~= true
+            and reason ~= "manual refresh" then
+                return
+            end
+
+            HolyLoadoutRebuildProtection(
+                snapshot
+            )
+
+            if reason == "manual refresh"
+            and type(HolyLoadoutRefreshAllUI) == "function" then
+
+                HolyLoadoutRefreshAllUI(
+                    false,
+                    snapshot
+                )
+
+            else
+
+                if type(HolyLoadoutRefreshPreview) == "function" then
+
+                    HolyLoadoutRefreshPreview(
+                        snapshot
+                    )
+                end
+
+                if type(HolyLoadoutRefreshActivityUI) == "function" then
+                    HolyLoadoutRefreshActivityUI()
+                end
+            end
+        end
+    )
+
+    return true
+end
 
 function HolyLoadoutReconnect()
 
-    local result =
-        HOLY_LOADOUT_RECONNECT_BASE()
+    HolyLoadoutDisconnect()
+
+    HolyLoadoutConnectContainer(
+        LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+    )
+
+    HolyLoadoutConnectContainer(
+        LocalPlayer.Character
+    )
+
+    HolyLoadoutAddConnection(
+        LocalPlayer.CharacterAdded:Connect(function()
+
+            task.delay(
+                0.75,
+                function()
+
+                    if HOLY_LOADOUT_RUNTIME.Running == true then
+
+                        HolyLoadoutReconnect()
+
+                        HolyLoadoutScheduleRefresh(
+                            "character added"
+                        )
+                    end
+                end
+            )
+        end)
+    )
+
+    HolyLoadoutAddConnection(
+        LocalPlayer.ChildAdded:Connect(function(child)
+
+            if child:IsA("Backpack") then
+
+                task.delay(
+                    0.25,
+                    function()
+
+                        if HOLY_LOADOUT_RUNTIME.Running == true
+                        and child.Parent == LocalPlayer then
+
+                            HolyLoadoutReconnect()
+
+                            HolyLoadoutScheduleRefresh(
+                                "backpack added"
+                            )
+                        end
+                    end
+                )
+            end
+        end)
+    )
+
+    HolyLoadoutAddConnection(
+        workspace:GetAttributeChangedSignal(
+            "ActiveWeather"
+        ):Connect(function()
+
+            HolyLoadoutEvaluateAutomation(
+                false
+            )
+        end)
+    )
+
+    HolyLoadoutConnectPetEvents()
+
+    return true
+end
+
+function HolyLoadoutStart()
 
     if HOLY_LOADOUT_RUNTIME.Running == true then
-        HolyLoadoutConnectPetEvents()
+
+        HolyLoadoutStop(
+            "restart"
+        )
     end
 
-    return result
+    HOLY_LOADOUT_RUNTIME.Running = true
+    HOLY_LOADOUT_RUNTIME.StartupSynchronized = false
+    HOLY_LOADOUT_RUNTIME.LastWinningLoadoutId = ""
+    HOLY_LOADOUT_RUNTIME.LastWinningRuleId = ""
+    HOLY_LOADOUT_RUNTIME.LastWinningReason = "None"
+    HOLY_LOADOUT_RUNTIME.TeamDirty = false
+    HOLY_LOADOUT_RUNTIME.ResolutionDirty = false
+    HOLY_LOADOUT_RUNTIME.FailedKey = ""
+
+    local token = {}
+
+    HOLY_LOADOUT_RUNTIME.Token =
+        token
+
+    HolyLoadoutReconnect()
+    HolyLoadoutAdoptStartupTeam()
+
+    local snapshot =
+        HolyLoadoutScanInventory()
+
+    HOLY_LOADOUT_RUNTIME.LastInventorySignature =
+        HolyLoadoutInventorySignature(
+            snapshot
+        )
+
+    HOLY_LOADOUT_RUNTIME.LastPetPoolSignature =
+        HolyLoadoutPetPoolSignature(
+            snapshot
+        )
+
+    HolyLoadoutRebuildProtection(
+        snapshot
+    )
+
+    if type(HolyLoadoutRefreshAllUI) == "function" then
+
+        HolyLoadoutRefreshAllUI(
+            true,
+            snapshot
+        )
+    end
+
+    task.spawn(function()
+
+        while HOLY_LOADOUT_RUNTIME.Running == true
+        and HOLY_LOADOUT_RUNTIME.Token == token do
+
+            HolyLoadoutEvaluateAutomation(
+                false
+            )
+
+            task.wait(
+                0.35
+            )
+        end
+    end)
+
+    return true
 end
 
 HOLY_LOADOUT_RUNTIME.Stop =
@@ -166322,7 +167037,7 @@ HOLY_LOADOUT_UI.RemoveSmartRuleButton =
 
 HOLY_LOADOUT_UI.RemoveSmartRuleButton:AddButton({
     Text = "Refresh Inventory",
-    Tooltip = "Rescan pets and rebuild the preview.",
+    Tooltip = "Rescan pets and rebuild the full inventory list and preview.",
 
     Func = function()
 
@@ -166330,8 +167045,9 @@ HOLY_LOADOUT_UI.RemoveSmartRuleButton:AddButton({
             "manual refresh"
         )
 
-        HolyLoadoutRefreshAllUI(
-            true
+        HolyLoadoutSetStatus(
+            "Refreshing inventory",
+            "Rebuilding the full pet list and preview..."
         )
     end,
 })
@@ -166652,10 +167368,6 @@ HOLY_LOADOUT_UI.ActivityActions:AddButton({
         )
     end,
 })
-
-HolyLoadoutRefreshAllUI(
-    true
-)
 
 HolyLoadoutStart()
 
