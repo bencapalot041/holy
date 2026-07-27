@@ -47922,6 +47922,14 @@ function HolyPetSellScan()
                                 equipped == true
                                 or favorite == true
                                 or locked == true
+                                or (
+                                    type(
+                                        HolyLoadoutPetIsProtected
+                                    ) == "function"
+                                    and HolyLoadoutPetIsProtected(
+                                        petId
+                                    ) == true
+                                )
 
                             local record = {
                                 PetId = petId,
@@ -108073,6 +108081,17 @@ if type(Library.OnUnload) == "function" then
                 end)
             end
 
+            if type(HolyLoadoutStop) == "function" then
+
+                pcall(function()
+
+                    HolyLoadoutStop(
+                        "UI unloaded."
+                    )
+                end)
+            end
+
+
             if type(HOLY_MAIL_RUNTIME) == "table"
             and type(HOLY_MAIL_RUNTIME.Stop) == "function" then
 
@@ -158014,6 +158033,3567 @@ function HolyGuildStart()
 end
 
 --==================================================
+-- HOLY LOADOUTS BACKEND
+-- Place this entire block directly above:
+--
+-- --==================================================
+-- -- [4] WINDOW
+-- --==================================================
+--==================================================
+
+if type(HOLY_LOADOUT_RUNTIME) == "table"
+and type(HOLY_LOADOUT_RUNTIME.Stop) == "function" then
+
+    pcall(function()
+
+        HOLY_LOADOUT_RUNTIME.Stop(
+            "reload"
+        )
+    end)
+end
+
+HOLY_LOADOUT_SETTINGS_FILE =
+    UI_SETTINGS_FOLDER
+    .. "/HolyPremiumLoadouts_"
+    .. tostring(
+        LocalPlayer.UserId
+    )
+    .. ".json"
+
+HOLY_LOADOUT_TRIGGER_VALUES = {
+    "Pet Defense",
+    "Sniper Active",
+    "Pet Purchased",
+    "Farm Collecting",
+    "Day",
+    "Sunset",
+    "Night",
+    "Moon",
+    "Gold Moon",
+    "Rainbow Moon",
+    "Blood Moon",
+    "Mega Moon",
+}
+
+HOLY_LOADOUT_STATE = {
+    Version = 1,
+
+    AutoEnabled = false,
+    DefaultLoadoutId = "",
+    ManualOverrideId = "",
+    SelectedLoadoutId = "",
+    SwitchCooldown = 0.50,
+
+    Loadouts = {},
+    AutomationRules = {},
+}
+
+HOLY_LOADOUT_RUNTIME = {
+    Running = false,
+    Token = nil,
+    Connections = {},
+
+    Busy = false,
+    PendingLoadoutId = "",
+    PendingReason = "",
+
+    ActiveLoadoutId = "",
+    ActiveReason = "None",
+    WinningRuleId = "",
+    WinningRuleName = "None",
+
+    LastSwitchAt = 0,
+    LastInventorySignature = "",
+
+    RefreshQueued = false,
+    RefreshGeneration = 0,
+    SaveGeneration = 0,
+
+    PacketCache = nil,
+    ProtectedPetIds = {},
+    RuleActiveUntil = {},
+
+    Activity = {},
+    Status = "Ready",
+    Detail = "Create or select a loadout.",
+
+    UpdatingUI = false,
+    Stop = nil,
+}
+
+HOLY_LOADOUT_UI = {
+    LibraryBox = nil,
+    BuilderBox = nil,
+    PreviewBox = nil,
+    AutomationBox = nil,
+    ActivityBox = nil,
+
+    LoadoutDropdown = nil,
+    ModeDropdown = nil,
+    ExactPetsDropdown = nil,
+    SmartRuleDropdown = nil,
+
+    AutoToggle = nil,
+    DefaultDropdown = nil,
+    ManualDropdown = nil,
+    SwitchCooldownInput = nil,
+    AutomationRuleDropdown = nil,
+
+    LoadoutDisplayToId = {},
+    LoadoutIdToDisplay = {},
+    PetDisplayToId = {},
+    PetIdToDisplay = {},
+    SmartRuleDisplayToId = {},
+    AutomationRuleDisplayToId = {},
+
+    PreviewSurface = nil,
+    PreviewHeader = nil,
+    PreviewSummary = nil,
+    PreviewRows = {},
+
+    StatusLabel = nil,
+    DetailLabel = nil,
+    ActivityLabels = {},
+}
+
+function HolyLoadoutTrim(value)
+
+    return tostring(
+        value
+        or ""
+    )
+        :gsub(
+            "^%s+",
+            ""
+        )
+        :gsub(
+            "%s+$",
+            ""
+        )
+end
+
+function HolyLoadoutMakeId(prefix)
+
+    prefix =
+        HolyLoadoutTrim(
+            prefix
+        )
+
+    if prefix == "" then
+        prefix = "loadout"
+    end
+
+    local ok,
+        guid =
+        pcall(function()
+
+            return HttpService:GenerateGUID(
+                false
+            )
+        end)
+
+    if ok == true
+    and type(guid) == "string"
+    and guid ~= "" then
+
+        return prefix
+            .. "_"
+            .. guid
+    end
+
+    return prefix
+        .. "_"
+        .. tostring(
+            os.time()
+        )
+        .. "_"
+        .. tostring(
+            math.random(
+                100000,
+                999999
+            )
+        )
+end
+
+function HolyLoadoutArray(value)
+
+    local output =
+        {}
+
+    local seen =
+        {}
+
+    if type(value) == "table" then
+
+        for key, item in pairs(
+            value
+        ) do
+
+            local selected =
+                nil
+
+            if type(key) == "number" then
+
+                selected =
+                    item
+
+            elseif item == true then
+
+                selected =
+                    key
+            end
+
+            selected =
+                HolyLoadoutTrim(
+                    selected
+                )
+
+            local selectedKey =
+                selected:lower()
+
+            if selected ~= ""
+            and seen[selectedKey] ~= true then
+
+                seen[selectedKey] =
+                    true
+
+                table.insert(
+                    output,
+                    selected
+                )
+            end
+        end
+    end
+
+    return output
+end
+
+function HolyLoadoutArrayMap(value)
+
+    local map =
+        {}
+
+    for _, item in ipairs(
+        HolyLoadoutArray(
+            value
+        )
+    ) do
+
+        map[
+            item:lower()
+        ] =
+            true
+    end
+
+    return map
+end
+
+function HolyLoadoutNormalizeMode(value)
+
+    value =
+        HolyLoadoutTrim(
+            value
+        )
+
+    if value == "Smart"
+    or value == "Hybrid" then
+
+        return value
+    end
+
+    return "Exact"
+end
+
+function HolyLoadoutNormalizePriorityOrder(
+    value,
+    fallback
+)
+
+    local output =
+        HolyLoadoutArray(
+            value
+        )
+
+    if #output <= 0 then
+
+        output =
+            HolyLoadoutArray(
+                fallback
+            )
+    end
+
+    return output
+end
+
+function HolyLoadoutNormalizeSmartRule(rule)
+
+    rule =
+        type(rule) == "table"
+        and rule
+        or {}
+
+    local names =
+        HolyLoadoutArray(
+            rule.PetNames
+            or rule.Names
+        )
+
+    local sizes =
+        HolyLoadoutArray(
+            rule.Sizes
+        )
+
+    local variants =
+        HolyLoadoutArray(
+            rule.Variants
+        )
+
+    if #sizes <= 0 then
+
+        sizes = {
+            "Any",
+        }
+    end
+
+    if #variants <= 0 then
+
+        variants = {
+            "Any",
+        }
+    end
+
+    return {
+        Id =
+            HolyLoadoutTrim(
+                rule.Id
+            ) ~= ""
+            and HolyLoadoutTrim(
+                rule.Id
+            )
+            or HolyLoadoutMakeId(
+                "smart"
+            ),
+
+        PetNames =
+            names,
+
+        Amount =
+            math.clamp(
+                math.floor(
+                    tonumber(
+                        rule.Amount
+                    )
+                    or 1
+                ),
+                1,
+                6
+            ),
+
+        Sizes =
+            sizes,
+
+        Variants =
+            variants,
+
+        SizePriority =
+            HolyLoadoutNormalizePriorityOrder(
+                rule.SizePriority,
+                {
+                    "Huge",
+                    "Big",
+                    "Normal",
+                }
+            ),
+
+        VariantPriority =
+            HolyLoadoutNormalizePriorityOrder(
+                rule.VariantPriority,
+                {
+                    "Rainbow",
+                    "Normal",
+                }
+            ),
+
+        AllowFavorite =
+            rule.AllowFavorite ~= false,
+
+        PreferActive =
+            rule.PreferActive ~= false,
+    }
+end
+
+function HolyLoadoutNormalizeLoadout(loadout, index)
+
+    loadout =
+        type(loadout) == "table"
+        and loadout
+        or {}
+
+    local petModule =
+        type(loadout.Modules) == "table"
+        and type(loadout.Modules.Pets) == "table"
+        and loadout.Modules.Pets
+        or {}
+
+    local hasDirectPetFields =
+        loadout.Mode ~= nil
+        or loadout.ExactPetIds ~= nil
+        or loadout.PetIds ~= nil
+        or loadout.Pets ~= nil
+        or loadout.SmartRules ~= nil
+
+    local petSource =
+        hasDirectPetFields == true
+        and loadout
+        or petModule
+
+    local name =
+        HolyLoadoutTrim(
+            loadout.Name
+        )
+
+    if name == "" then
+
+        name =
+            "Loadout "
+            .. tostring(
+                index
+                or 1
+            )
+    end
+
+    if #name > 40 then
+
+        name =
+            name:sub(
+                1,
+                40
+            )
+    end
+
+    local smartRules =
+        {}
+
+    for _, rule in ipairs(
+        type(petSource.SmartRules) == "table"
+        and petSource.SmartRules
+        or {}
+    ) do
+
+        table.insert(
+            smartRules,
+            HolyLoadoutNormalizeSmartRule(
+                rule
+            )
+        )
+    end
+
+    local normalizedPetModule = {
+        Enabled =
+            petSource.Enabled ~= false,
+
+        Mode =
+            HolyLoadoutNormalizeMode(
+                petSource.Mode
+            ),
+
+        ExactPetIds =
+            HolyLoadoutArray(
+                petSource.ExactPetIds
+                or petSource.PetIds
+                or petSource.Pets
+            ),
+
+        SmartRules =
+            smartRules,
+    }
+
+    return {
+        Id =
+            HolyLoadoutTrim(
+                loadout.Id
+            ) ~= ""
+            and HolyLoadoutTrim(
+                loadout.Id
+            )
+            or HolyLoadoutMakeId(
+                "loadout"
+            ),
+
+        Name =
+            name,
+
+        Enabled =
+            loadout.Enabled ~= false,
+
+        Mode =
+            normalizedPetModule.Mode,
+
+        ExactPetIds =
+            normalizedPetModule.ExactPetIds,
+
+        SmartRules =
+            normalizedPetModule.SmartRules,
+
+        Modules = {
+            Pets =
+                normalizedPetModule,
+        },
+    }
+end
+
+function HolyLoadoutNormalizeAutomationRule(rule, index)
+
+    rule =
+        type(rule) == "table"
+        and rule
+        or {}
+
+    local name =
+        HolyLoadoutTrim(
+            rule.Name
+        )
+
+    if name == "" then
+
+        name =
+            "Automation "
+            .. tostring(
+                index
+                or 1
+            )
+    end
+
+    return {
+        Id =
+            HolyLoadoutTrim(
+                rule.Id
+            ) ~= ""
+            and HolyLoadoutTrim(
+                rule.Id
+            )
+            or HolyLoadoutMakeId(
+                "automation"
+            ),
+
+        Name =
+            name,
+
+        Enabled =
+            rule.Enabled ~= false,
+
+        LoadoutId =
+            HolyLoadoutTrim(
+                rule.LoadoutId
+            ),
+
+        Match =
+            HolyLoadoutTrim(
+                rule.Match
+            ) == "All"
+            and "All"
+            or "Any",
+
+        Triggers =
+            HolyLoadoutArray(
+                rule.Triggers
+                or rule.Conditions
+            ),
+
+        Priority =
+            math.clamp(
+                math.floor(
+                    tonumber(
+                        rule.Priority
+                    )
+                    or 50
+                ),
+                0,
+                100
+            ),
+
+        MinimumDuration =
+            math.clamp(
+                tonumber(
+                    rule.MinimumDuration
+                )
+                or 0,
+                0,
+                300
+            ),
+
+        Notify =
+            rule.Notify == true,
+    }
+end
+
+function HolyLoadoutEnsureState()
+
+    HOLY_LOADOUT_STATE.Loadouts =
+        type(
+            HOLY_LOADOUT_STATE.Loadouts
+        ) == "table"
+        and HOLY_LOADOUT_STATE.Loadouts
+        or {}
+
+    HOLY_LOADOUT_STATE.AutomationRules =
+        type(
+            HOLY_LOADOUT_STATE.AutomationRules
+        ) == "table"
+        and HOLY_LOADOUT_STATE.AutomationRules
+        or {}
+
+    local normalizedLoadouts =
+        {}
+
+    local seenLoadoutIds =
+        {}
+
+    for index, loadout in ipairs(
+        HOLY_LOADOUT_STATE.Loadouts
+    ) do
+
+        local normalized =
+            HolyLoadoutNormalizeLoadout(
+                loadout,
+                index
+            )
+
+        if seenLoadoutIds[
+            normalized.Id
+        ] == true then
+
+            normalized.Id =
+                HolyLoadoutMakeId(
+                    "loadout"
+                )
+        end
+
+        seenLoadoutIds[
+            normalized.Id
+        ] =
+            true
+
+        table.insert(
+            normalizedLoadouts,
+            normalized
+        )
+    end
+
+    if #normalizedLoadouts <= 0 then
+
+        table.insert(
+            normalizedLoadouts,
+            HolyLoadoutNormalizeLoadout(
+                {
+                    Name = "Default",
+                    Mode = "Exact",
+                },
+                1
+            )
+        )
+    end
+
+    HOLY_LOADOUT_STATE.Loadouts =
+        normalizedLoadouts
+
+    local normalizedAutomation =
+        {}
+
+    local seenAutomationIds =
+        {}
+
+    for index, rule in ipairs(
+        HOLY_LOADOUT_STATE.AutomationRules
+    ) do
+
+        local normalized =
+            HolyLoadoutNormalizeAutomationRule(
+                rule,
+                index
+            )
+
+        if seenAutomationIds[
+            normalized.Id
+        ] == true then
+
+            normalized.Id =
+                HolyLoadoutMakeId(
+                    "automation"
+                )
+        end
+
+        seenAutomationIds[
+            normalized.Id
+        ] =
+            true
+
+        table.insert(
+            normalizedAutomation,
+            normalized
+        )
+    end
+
+    HOLY_LOADOUT_STATE.AutomationRules =
+        normalizedAutomation
+
+    HOLY_LOADOUT_STATE.AutoEnabled =
+        HOLY_LOADOUT_STATE.AutoEnabled == true
+
+    HOLY_LOADOUT_STATE.SwitchCooldown =
+        math.clamp(
+            tonumber(
+                HOLY_LOADOUT_STATE.SwitchCooldown
+            )
+            or 0.50,
+            0,
+            10
+        )
+
+    if seenLoadoutIds[
+        HOLY_LOADOUT_STATE.SelectedLoadoutId
+    ] ~= true then
+
+        HOLY_LOADOUT_STATE.SelectedLoadoutId =
+            normalizedLoadouts[1].Id
+    end
+
+    if seenLoadoutIds[
+        HOLY_LOADOUT_STATE.DefaultLoadoutId
+    ] ~= true then
+
+        HOLY_LOADOUT_STATE.DefaultLoadoutId =
+            normalizedLoadouts[1].Id
+    end
+
+    if seenLoadoutIds[
+        HOLY_LOADOUT_STATE.ManualOverrideId
+    ] ~= true then
+
+        HOLY_LOADOUT_STATE.ManualOverrideId =
+            ""
+    end
+
+    return HOLY_LOADOUT_STATE
+end
+
+function HolyLoadoutGetById(loadoutId)
+
+    loadoutId =
+        HolyLoadoutTrim(
+            loadoutId
+        )
+
+    for _, loadout in ipairs(
+        HOLY_LOADOUT_STATE.Loadouts
+        or {}
+    ) do
+
+        if loadout.Id == loadoutId then
+            return loadout
+        end
+    end
+
+    return nil
+end
+
+function HolyLoadoutGetAutomationRuleById(ruleId)
+
+    ruleId =
+        HolyLoadoutTrim(
+            ruleId
+        )
+
+    for _, rule in ipairs(
+        HOLY_LOADOUT_STATE.AutomationRules
+        or {}
+    ) do
+
+        if rule.Id == ruleId then
+            return rule
+        end
+    end
+
+    return nil
+end
+
+function HolyLoadoutGetSelected()
+
+    return HolyLoadoutGetById(
+        HOLY_LOADOUT_STATE.SelectedLoadoutId
+    )
+end
+
+function HolyLoadoutSaveNow()
+
+    if HolyCanUseFiles() ~= true then
+        return false
+    end
+
+    HolyLoadoutEnsureState()
+    HolyEnsureFolder()
+
+    local payload = {
+        Version = 1,
+
+        AutoEnabled =
+            HOLY_LOADOUT_STATE.AutoEnabled == true,
+
+        DefaultLoadoutId =
+            HOLY_LOADOUT_STATE.DefaultLoadoutId,
+
+        ManualOverrideId =
+            HOLY_LOADOUT_STATE.ManualOverrideId,
+
+        SelectedLoadoutId =
+            HOLY_LOADOUT_STATE.SelectedLoadoutId,
+
+        SwitchCooldown =
+            HOLY_LOADOUT_STATE.SwitchCooldown,
+
+        Loadouts =
+            HOLY_LOADOUT_STATE.Loadouts,
+
+        AutomationRules =
+            HOLY_LOADOUT_STATE.AutomationRules,
+    }
+
+    local encodeOk,
+        encoded =
+        pcall(function()
+
+            return HttpService:JSONEncode(
+                payload
+            )
+        end)
+
+    if encodeOk ~= true
+    or type(encoded) ~= "string" then
+
+        return false
+    end
+
+    local writeOk =
+        pcall(function()
+
+            writefile(
+                HOLY_LOADOUT_SETTINGS_FILE,
+                encoded
+            )
+        end)
+
+    return writeOk == true
+end
+
+function HolyLoadoutQueueSave()
+
+    HOLY_LOADOUT_RUNTIME.SaveGeneration +=
+        1
+
+    local generation =
+        HOLY_LOADOUT_RUNTIME.SaveGeneration
+
+    task.delay(
+        0.35,
+        function()
+
+            if HOLY_LOADOUT_RUNTIME.SaveGeneration
+                ~= generation then
+
+                return
+            end
+
+            HolyLoadoutSaveNow()
+        end
+    )
+
+    return true
+end
+
+function HolyLoadoutReadJsonFile(path)
+
+    if HolyCanUseFiles() ~= true then
+        return nil
+    end
+
+    local exists =
+        false
+
+    pcall(function()
+
+        exists =
+            isfile(
+                path
+            )
+    end)
+
+    if exists ~= true then
+        return nil
+    end
+
+    local readOk,
+        raw =
+        pcall(function()
+
+            return readfile(
+                path
+            )
+        end)
+
+    if readOk ~= true
+    or type(raw) ~= "string"
+    or raw == "" then
+
+        return nil
+    end
+
+    local decodeOk,
+        data =
+        pcall(function()
+
+            return HttpService:JSONDecode(
+                raw
+            )
+        end)
+
+    if decodeOk == true
+    and type(data) == "table" then
+
+        return data
+    end
+
+    return nil
+end
+
+function HolyLoadoutMigrateLegacy()
+
+    local candidates = {
+        UI_SETTINGS_FOLDER
+            .. "/PetTeams.json",
+
+        UI_SETTINGS_FOLDER
+            .. "/HolyPremiumPetTeams.json",
+
+        "PetTeams.json",
+    }
+
+    for _, path in ipairs(
+        candidates
+    ) do
+
+        local data =
+            HolyLoadoutReadJsonFile(
+                path
+            )
+
+        if type(data) == "table" then
+
+            local teams =
+                type(data.Teams) == "table"
+                and data.Teams
+                or data
+
+            local migrated =
+                {}
+
+            for index, team in ipairs(
+                teams
+            ) do
+
+                if type(team) == "table" then
+
+                    table.insert(
+                        migrated,
+                        HolyLoadoutNormalizeLoadout(
+                            {
+                                Name =
+                                    team.Name
+                                    or team.TeamName
+                                    or (
+                                        "Imported "
+                                        .. tostring(
+                                            index
+                                        )
+                                    ),
+
+                                Mode = "Exact",
+
+                                ExactPetIds =
+                                    team.ExactPetIds
+                                    or team.PetIds
+                                    or team.Pets,
+                            },
+                            index
+                        )
+                    )
+                end
+            end
+
+            if #migrated > 0 then
+
+                HOLY_LOADOUT_STATE.Loadouts =
+                    migrated
+
+                HOLY_LOADOUT_STATE.SelectedLoadoutId =
+                    migrated[1].Id
+
+                HOLY_LOADOUT_STATE.DefaultLoadoutId =
+                    migrated[1].Id
+
+                HolyLoadoutEnsureState()
+                HolyLoadoutSaveNow()
+
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function HolyLoadoutLoadSettings()
+
+    local data =
+        HolyLoadoutReadJsonFile(
+            HOLY_LOADOUT_SETTINGS_FILE
+        )
+
+    if type(data) ~= "table" then
+
+        HolyLoadoutEnsureState()
+
+        if HolyLoadoutMigrateLegacy()
+            ~= true then
+
+            HolyLoadoutSaveNow()
+        end
+
+        return false
+    end
+
+    HOLY_LOADOUT_STATE.Version =
+        tonumber(
+            data.Version
+        )
+        or 1
+
+    HOLY_LOADOUT_STATE.AutoEnabled =
+        data.AutoEnabled == true
+
+    HOLY_LOADOUT_STATE.DefaultLoadoutId =
+        HolyLoadoutTrim(
+            data.DefaultLoadoutId
+        )
+
+    HOLY_LOADOUT_STATE.ManualOverrideId =
+        HolyLoadoutTrim(
+            data.ManualOverrideId
+        )
+
+    HOLY_LOADOUT_STATE.SelectedLoadoutId =
+        HolyLoadoutTrim(
+            data.SelectedLoadoutId
+        )
+
+    HOLY_LOADOUT_STATE.SwitchCooldown =
+        tonumber(
+            data.SwitchCooldown
+        )
+        or 0.50
+
+    HOLY_LOADOUT_STATE.Loadouts =
+        type(data.Loadouts) == "table"
+        and data.Loadouts
+        or {}
+
+    HOLY_LOADOUT_STATE.AutomationRules =
+        type(data.AutomationRules) == "table"
+        and data.AutomationRules
+        or {}
+
+    HolyLoadoutEnsureState()
+
+    return true
+end
+
+function HolyLoadoutEscapeRichText(value)
+
+    return tostring(
+        value
+        or ""
+    )
+        :gsub(
+            "&",
+            "&amp;"
+        )
+        :gsub(
+            "<",
+            "&lt;"
+        )
+        :gsub(
+            ">",
+            "&gt;"
+        )
+end
+
+function HolyLoadoutShortId(value)
+
+    value =
+        HolyLoadoutTrim(
+            value
+        )
+
+    if #value <= 10 then
+        return value
+    end
+
+    return value:sub(
+        1,
+        6
+    )
+        .. "…"
+        .. value:sub(
+            -4
+        )
+end
+
+function HolyLoadoutReadPetId(instance)
+
+    if typeof(instance) ~= "Instance" then
+        return ""
+    end
+
+    local names = {
+        "PetId",
+        "PetID",
+        "PetUUID",
+        "UUID",
+        "Uuid",
+    }
+
+    for _, name in ipairs(
+        names
+    ) do
+
+        local value =
+            instance:GetAttribute(
+                name
+            )
+
+        if value ~= nil
+        and HolyLoadoutTrim(
+            value
+        ) ~= "" then
+
+            return HolyLoadoutTrim(
+                value
+            )
+        end
+    end
+
+    return ""
+end
+
+function HolyLoadoutFlagTrue(instance, names)
+
+    if typeof(instance) ~= "Instance" then
+        return false
+    end
+
+    for _, name in ipairs(
+        names
+        or {}
+    ) do
+
+        local value =
+            instance:GetAttribute(
+                name
+            )
+
+        if value == true
+        or value == 1
+        or tostring(
+            value
+        ):lower() == "true" then
+
+            return true
+        end
+    end
+
+    return false
+end
+
+function HolyLoadoutReadActivePetIds(snapshot)
+
+    local activeIds =
+        {}
+
+    local activeCount =
+        0
+
+    local readable =
+        false
+
+    local root =
+        workspace:FindFirstChild(
+            "PlayerPetReferences"
+        )
+
+    local folder =
+        root
+        and (
+            root:FindFirstChild(
+                LocalPlayer.Name
+            )
+            or root:FindFirstChild(
+                tostring(
+                    LocalPlayer.UserId
+                )
+            )
+        )
+        or nil
+
+    if typeof(folder) == "Instance" then
+
+        local objects = {
+            folder,
+        }
+
+        local descendants =
+            folder:GetDescendants()
+
+        if #descendants <= 0 then
+
+            readable =
+                true
+        end
+
+        for _, descendant in ipairs(
+            descendants
+        ) do
+
+            table.insert(
+                objects,
+                descendant
+            )
+        end
+
+        for _, object in ipairs(
+            objects
+        ) do
+
+            local petId =
+                HolyLoadoutReadPetId(
+                    object
+                )
+
+            if petId ~= ""
+            and activeIds[
+                petId
+            ] ~= true then
+
+                readable =
+                    true
+
+                activeIds[
+                    petId
+                ] =
+                    true
+
+                activeCount +=
+                    1
+            end
+        end
+    end
+
+    for _, pet in ipairs(
+        type(snapshot) == "table"
+        and snapshot.Pets
+        or {}
+    ) do
+
+        if HolyLoadoutFlagTrue(
+            pet.Ref,
+            {
+                "Equipped",
+                "IsEquipped",
+                "PetEquipped",
+                "ActivePet",
+            }
+        ) == true then
+
+            readable =
+                true
+
+            if activeIds[
+                pet.PetId
+            ] ~= true then
+
+                activeIds[
+                    pet.PetId
+                ] =
+                    true
+
+                activeCount +=
+                    1
+            end
+        end
+    end
+
+    return activeIds,
+        activeCount,
+        readable
+end
+
+function HolyLoadoutScanInventory()
+
+    local snapshot =
+        HolyPetSellScan()
+
+    local activeIds,
+        activeCount,
+        activeReadable =
+        HolyLoadoutReadActivePetIds(
+            snapshot
+        )
+
+    snapshot.ActiveIds =
+        activeIds
+
+    snapshot.ActiveCount =
+        activeCount
+
+    snapshot.ActiveReadable =
+        activeReadable
+
+    for _, pet in ipairs(
+        snapshot.Pets
+    ) do
+
+        pet.Active =
+            activeIds[
+                pet.PetId
+            ] == true
+    end
+
+    return snapshot
+end
+
+function HolyLoadoutReadMaxSlots()
+
+    local attributeNames = {
+        "MaxEquippedPets",
+        "MaxPetsEquipped",
+        "PetEquipSlots",
+        "PetSlots",
+    }
+
+    for _, name in ipairs(
+        attributeNames
+    ) do
+
+        local value =
+            tonumber(
+                LocalPlayer:GetAttribute(
+                    name
+                )
+            )
+
+        if value
+        and value > 0 then
+
+            return math.clamp(
+                math.floor(
+                    value
+                ),
+                1,
+                6
+            )
+        end
+    end
+
+    for _, descendant in ipairs(
+        LocalPlayer:GetDescendants()
+    ) do
+
+        if descendant:IsA(
+            "IntValue"
+        )
+        or descendant:IsA(
+            "NumberValue"
+        ) then
+
+            for _, name in ipairs(
+                attributeNames
+            ) do
+
+                if descendant.Name == name
+                and tonumber(
+                    descendant.Value
+                )
+                and descendant.Value > 0 then
+
+                    return math.clamp(
+                        math.floor(
+                            descendant.Value
+                        ),
+                        1,
+                        6
+                    )
+                end
+            end
+        end
+    end
+
+    return 3
+end
+
+function HolyLoadoutInventorySignature(snapshot)
+
+    local parts =
+        {}
+
+    for _, pet in ipairs(
+        type(snapshot) == "table"
+        and snapshot.Pets
+        or {}
+    ) do
+
+        table.insert(
+            parts,
+            table.concat(
+                {
+                    pet.PetId,
+                    pet.GroupKey,
+                    pet.Active == true
+                        and "1"
+                        or "0",
+                    pet.Favorite == true
+                        and "1"
+                        or "0",
+                    pet.Locked == true
+                        and "1"
+                        or "0",
+                },
+                ":"
+            )
+        )
+    end
+
+    table.sort(
+        parts
+    )
+
+    return table.concat(
+        parts,
+        "|"
+    )
+end
+
+function HolyLoadoutSmartRuleMatches(pet, rule)
+
+    if type(pet) ~= "table"
+    or type(rule) ~= "table" then
+
+        return false
+    end
+
+    if pet.Locked == true then
+        return false
+    end
+
+    if pet.Favorite == true
+    and rule.AllowFavorite ~= true then
+
+        return false
+    end
+
+    local nameMap =
+        HolyLoadoutArrayMap(
+            rule.PetNames
+        )
+
+    local sizeMap =
+        HolyLoadoutArrayMap(
+            rule.Sizes
+        )
+
+    local variantMap =
+        HolyLoadoutArrayMap(
+            rule.Variants
+        )
+
+    local nameKey =
+        tostring(
+            pet.PetName
+            or ""
+        ):lower()
+
+    local sizeKey =
+        tostring(
+            pet.Size
+            or "Normal"
+        ):lower()
+
+    local variantKey =
+        tostring(
+            pet.Variant
+            or "Normal"
+        ):lower()
+
+    local nameMatches =
+        next(
+            nameMap
+        ) == nil
+        or nameMap.any == true
+        or nameMap[
+            nameKey
+        ] == true
+
+    local sizeMatches =
+        sizeMap.any == true
+        or sizeMap[
+            sizeKey
+        ] == true
+
+    local variantMatches =
+        variantMap.any == true
+        or variantMap[
+            variantKey
+        ] == true
+
+    return nameMatches == true
+        and sizeMatches == true
+        and variantMatches == true
+end
+
+function HolyLoadoutPriorityRank(value, order)
+
+    local wanted =
+        tostring(
+            value
+            or ""
+        ):lower()
+
+    for index, name in ipairs(
+        order
+        or {}
+    ) do
+
+        if tostring(
+            name
+        ):lower() == wanted then
+
+            return index
+        end
+    end
+
+    return 999
+end
+
+function HolyLoadoutSortSmartCandidates(
+    candidates,
+    rule
+)
+
+    table.sort(
+        candidates,
+        function(left, right)
+
+            if rule.PreferActive == true
+            and left.Active ~= right.Active then
+
+                return left.Active == true
+            end
+
+            local leftSize =
+                HolyLoadoutPriorityRank(
+                    left.Size,
+                    rule.SizePriority
+                )
+
+            local rightSize =
+                HolyLoadoutPriorityRank(
+                    right.Size,
+                    rule.SizePriority
+                )
+
+            if leftSize ~= rightSize then
+                return leftSize < rightSize
+            end
+
+            local leftVariant =
+                HolyLoadoutPriorityRank(
+                    left.Variant,
+                    rule.VariantPriority
+                )
+
+            local rightVariant =
+                HolyLoadoutPriorityRank(
+                    right.Variant,
+                    rule.VariantPriority
+                )
+
+            if leftVariant ~= rightVariant then
+                return leftVariant < rightVariant
+            end
+
+            if tostring(
+                left.PetName
+            ) ~= tostring(
+                right.PetName
+            ) then
+
+                return tostring(
+                    left.PetName
+                ) < tostring(
+                    right.PetName
+                )
+            end
+
+            return tostring(
+                left.PetId
+            ) < tostring(
+                right.PetId
+            )
+        end
+    )
+end
+
+function HolyLoadoutResolve(loadout, snapshot)
+
+    loadout =
+        type(loadout) == "table"
+        and loadout
+        or HolyLoadoutGetSelected()
+
+    snapshot =
+        type(snapshot) == "table"
+        and snapshot
+        or HolyLoadoutScanInventory()
+
+    local maxSlots =
+        HolyLoadoutReadMaxSlots()
+
+    local result = {
+        Loadout = loadout,
+        Snapshot = snapshot,
+        MaxSlots = maxSlots,
+        Pets = {},
+        MissingExact = {},
+        MissingSmart = {},
+        DuplicateExact = {},
+        Signature = "",
+    }
+
+    if type(loadout) ~= "table" then
+        return result
+    end
+
+    local used =
+        {}
+
+    local mode =
+        HolyLoadoutNormalizeMode(
+            loadout.Mode
+        )
+
+    if mode == "Exact"
+    or mode == "Hybrid" then
+
+        for _, petId in ipairs(
+            loadout.ExactPetIds
+            or {}
+        ) do
+
+            if #result.Pets >= maxSlots then
+                break
+            end
+
+            if used[
+                petId
+            ] == true then
+
+                table.insert(
+                    result.DuplicateExact,
+                    petId
+                )
+
+                continue
+            end
+
+            local pet =
+                snapshot.ById[
+                    petId
+                ]
+
+            if type(pet) == "table" then
+
+                used[
+                    petId
+                ] =
+                    true
+
+                table.insert(
+                    result.Pets,
+                    pet
+                )
+
+            else
+
+                table.insert(
+                    result.MissingExact,
+                    petId
+                )
+            end
+        end
+    end
+
+    if mode == "Smart"
+    or mode == "Hybrid" then
+
+        for _, rule in ipairs(
+            loadout.SmartRules
+            or {}
+        ) do
+
+            if #result.Pets >= maxSlots then
+                break
+            end
+
+            local candidates =
+                {}
+
+            for _, pet in ipairs(
+                snapshot.Pets
+            ) do
+
+                if used[
+                    pet.PetId
+                ] ~= true
+                and HolyLoadoutSmartRuleMatches(
+                    pet,
+                    rule
+                ) == true then
+
+                    table.insert(
+                        candidates,
+                        pet
+                    )
+                end
+            end
+
+            HolyLoadoutSortSmartCandidates(
+                candidates,
+                rule
+            )
+
+            local wanted =
+                math.min(
+                    rule.Amount,
+                    maxSlots
+                        - #result.Pets
+                )
+
+            local added =
+                0
+
+            for _, pet in ipairs(
+                candidates
+            ) do
+
+                if added >= wanted then
+                    break
+                end
+
+                used[
+                    pet.PetId
+                ] =
+                    true
+
+                table.insert(
+                    result.Pets,
+                    pet
+                )
+
+                added +=
+                    1
+            end
+
+            if added < wanted then
+
+                table.insert(
+                    result.MissingSmart,
+                    {
+                        RuleId =
+                            rule.Id,
+
+                        Missing =
+                            wanted
+                            - added,
+                    }
+                )
+            end
+        end
+    end
+
+    local signatureParts =
+        {}
+
+    for _, pet in ipairs(
+        result.Pets
+    ) do
+
+        table.insert(
+            signatureParts,
+            pet.PetId
+        )
+    end
+
+    table.sort(
+        signatureParts
+    )
+
+    result.Signature =
+        table.concat(
+            signatureParts,
+            "|"
+        )
+
+    return result
+end
+
+function HolyLoadoutRebuildProtection()
+
+    local protected =
+        {}
+
+    local snapshot =
+        HolyLoadoutScanInventory()
+
+    for _, loadout in ipairs(
+        HOLY_LOADOUT_STATE.Loadouts
+        or {}
+    ) do
+
+        for _, petId in ipairs(
+            loadout.ExactPetIds
+            or {}
+        ) do
+
+            protected[
+                petId
+            ] =
+                loadout.Name
+        end
+
+        if loadout.Enabled ~= false
+        and (
+            loadout.Mode == "Smart"
+            or loadout.Mode == "Hybrid"
+        ) then
+
+            local resolved =
+                HolyLoadoutResolve(
+                    loadout,
+                    snapshot
+                )
+
+            for _, pet in ipairs(
+                resolved.Pets
+            ) do
+
+                protected[
+                    pet.PetId
+                ] =
+                    loadout.Name
+            end
+        end
+    end
+
+    HOLY_LOADOUT_RUNTIME.ProtectedPetIds =
+        protected
+
+    return protected
+end
+
+function HolyLoadoutPetIsProtected(petId)
+
+    petId =
+        HolyLoadoutTrim(
+            petId
+        )
+
+    if petId == "" then
+        return false
+    end
+
+    return type(
+        HOLY_LOADOUT_RUNTIME
+    ) == "table"
+        and type(
+            HOLY_LOADOUT_RUNTIME.ProtectedPetIds
+        ) == "table"
+        and HOLY_LOADOUT_RUNTIME.ProtectedPetIds[
+            petId
+        ] ~= nil
+end
+
+function HolyLoadoutDeepGet(root, path)
+
+    local current =
+        root
+
+    for part in tostring(
+        path
+        or ""
+    ):gmatch(
+        "[^%.]+"
+    ) do
+
+        if type(current) ~= "table" then
+            return nil
+        end
+
+        current =
+            current[
+                part
+            ]
+    end
+
+    return current
+end
+
+function HolyLoadoutPacketCanFire(value)
+
+    return type(value) == "table"
+        and type(value.Fire) == "function"
+end
+
+function HolyLoadoutFindPacketByPaths(
+    networking,
+    paths
+)
+
+    for _, path in ipairs(
+        paths
+        or {}
+    ) do
+
+        local packet =
+            HolyLoadoutDeepGet(
+                networking,
+                path
+            )
+
+        if HolyLoadoutPacketCanFire(
+            packet
+        ) == true then
+
+            return packet,
+                path
+        end
+    end
+
+    return nil,
+        ""
+end
+
+function HolyLoadoutDiscoverPacket(
+    root,
+    wanted,
+    visited,
+    depth,
+    path
+)
+
+    if type(root) ~= "table"
+    or depth > 4 then
+
+        return nil,
+            ""
+    end
+
+    visited =
+        type(visited) == "table"
+        and visited
+        or {}
+
+    if visited[
+        root
+    ] == true then
+
+        return nil,
+            ""
+    end
+
+    visited[
+        root
+    ] =
+        true
+
+    for key, value in pairs(
+        root
+    ) do
+
+        local keyText =
+            tostring(
+                key
+            )
+
+        local lower =
+            keyText:lower()
+
+        local nextPath =
+            path == ""
+            and keyText
+            or (
+                path
+                .. "."
+                .. keyText
+            )
+
+        local looksLikePet =
+            lower:find(
+                "pet",
+                1,
+                true
+            ) ~= nil
+            or path:lower():find(
+                "pet",
+                1,
+                true
+            ) ~= nil
+
+        local matches =
+            false
+
+        if wanted == "unequipall" then
+
+            matches =
+                lower:find(
+                    "unequip",
+                    1,
+                    true
+                ) ~= nil
+                and lower:find(
+                    "all",
+                    1,
+                    true
+                ) ~= nil
+
+        elseif wanted == "unequip" then
+
+            matches =
+                lower:find(
+                    "unequip",
+                    1,
+                    true
+                ) ~= nil
+                and lower:find(
+                    "all",
+                    1,
+                    true
+                ) == nil
+
+        elseif wanted == "toggle" then
+
+            matches =
+                lower:find(
+                    "toggle",
+                    1,
+                    true
+                ) ~= nil
+                and lower:find(
+                    "equip",
+                    1,
+                    true
+                ) ~= nil
+
+        elseif wanted == "set" then
+
+            matches =
+                lower:find(
+                    "set",
+                    1,
+                    true
+                ) ~= nil
+                and lower:find(
+                    "equip",
+                    1,
+                    true
+                ) ~= nil
+
+        elseif wanted == "equip" then
+
+            matches =
+                lower:find(
+                    "equip",
+                    1,
+                    true
+                ) ~= nil
+                and lower:find(
+                    "unequip",
+                    1,
+                    true
+                ) == nil
+                and lower:find(
+                    "toggle",
+                    1,
+                    true
+                ) == nil
+                and lower:find(
+                    "set",
+                    1,
+                    true
+                ) == nil
+        end
+
+        if looksLikePet == true
+        and matches == true
+        and HolyLoadoutPacketCanFire(
+            value
+        ) == true then
+
+            return value,
+                nextPath
+        end
+
+        if type(value) == "table" then
+
+            local packet,
+                foundPath =
+                HolyLoadoutDiscoverPacket(
+                    value,
+                    wanted,
+                    visited,
+                    depth + 1,
+                    nextPath
+                )
+
+            if packet ~= nil then
+
+                return packet,
+                    foundPath
+            end
+        end
+    end
+
+    return nil,
+        ""
+end
+
+function HolyLoadoutResolvePackets(force)
+
+    if force ~= true
+    and type(
+        HOLY_LOADOUT_RUNTIME.PacketCache
+    ) == "table" then
+
+        return HOLY_LOADOUT_RUNTIME.PacketCache
+    end
+
+    local networking =
+        type(HolyDefenseGetNetworking) == "function"
+        and HolyDefenseGetNetworking()
+        or nil
+
+    local packets = {
+        Equip = nil,
+        EquipPath = "",
+
+        Unequip = nil,
+        UnequipPath = "",
+
+        UnequipAll = nil,
+        UnequipAllPath = "",
+
+        Set = nil,
+        SetPath = "",
+
+        Toggle = nil,
+        TogglePath = "",
+    }
+
+    if type(networking) ~= "table" then
+
+        HOLY_LOADOUT_RUNTIME.PacketCache =
+            packets
+
+        return packets
+    end
+
+    packets.Equip,
+        packets.EquipPath =
+        HolyLoadoutFindPacketByPaths(
+            networking,
+            {
+                "Pets.EquipPet",
+                "Pets.PetEquip",
+                "Pets.Equip",
+                "Inventory.EquipPet",
+                "PetInventory.EquipPet",
+            }
+        )
+
+    packets.Unequip,
+        packets.UnequipPath =
+        HolyLoadoutFindPacketByPaths(
+            networking,
+            {
+                "Pets.UnequipPet",
+                "Pets.PetUnequip",
+                "Pets.Unequip",
+                "Inventory.UnequipPet",
+                "PetInventory.UnequipPet",
+            }
+        )
+
+    packets.UnequipAll,
+        packets.UnequipAllPath =
+        HolyLoadoutFindPacketByPaths(
+            networking,
+            {
+                "Pets.UnequipAllPets",
+                "Pets.UnequipAll",
+                "Pets.ClearEquippedPets",
+                "Inventory.UnequipAllPets",
+                "PetInventory.UnequipAllPets",
+            }
+        )
+
+    packets.Set,
+        packets.SetPath =
+        HolyLoadoutFindPacketByPaths(
+            networking,
+            {
+                "Pets.SetPetEquipped",
+                "Pets.SetEquippedPet",
+                "Pets.SetEquipped",
+                "Inventory.SetPetEquipped",
+            }
+        )
+
+    packets.Toggle,
+        packets.TogglePath =
+        HolyLoadoutFindPacketByPaths(
+            networking,
+            {
+                "Pets.TogglePetEquipped",
+                "Pets.ToggleEquipPet",
+                "Pets.TogglePet",
+                "Inventory.TogglePetEquipped",
+            }
+        )
+
+    for _, wanted in ipairs({
+        "equip",
+        "unequip",
+        "unequipall",
+        "set",
+        "toggle",
+    }) do
+
+        local field =
+            wanted == "unequipall"
+            and "UnequipAll"
+            or (
+                wanted:sub(
+                    1,
+                    1
+                ):upper()
+                .. wanted:sub(
+                    2
+                )
+            )
+
+        if packets[
+            field
+        ] == nil then
+
+            packets[field],
+                packets[
+                    field
+                    .. "Path"
+                ] =
+                HolyLoadoutDiscoverPacket(
+                    networking,
+                    wanted,
+                    {},
+                    0,
+                    ""
+                )
+        end
+    end
+
+    HOLY_LOADOUT_RUNTIME.PacketCache =
+        packets
+
+    return packets
+end
+
+function HolyLoadoutFirePacket(packet, ...)
+
+    if HolyLoadoutPacketCanFire(
+        packet
+    ) ~= true then
+
+        return false,
+            "packet unavailable"
+    end
+
+    local ok,
+        result =
+        pcall(function(...)
+
+            return packet:Fire(
+                ...
+            )
+        end, ...)
+
+    if ok ~= true then
+
+        return false,
+            tostring(
+                result
+            )
+    end
+
+    if result == false then
+
+        return false,
+            "server rejected request"
+    end
+
+    if type(result) == "table"
+    and result.Success == false then
+
+        return false,
+            tostring(
+                result.Message
+                or result.Reason
+                or result.Error
+                or "server rejected request"
+            )
+    end
+
+    return true,
+        result
+end
+
+function HolyLoadoutSetPetEquipped(
+    pet,
+    enabled,
+    packets
+)
+
+    if type(pet) ~= "table" then
+
+        return false,
+            "pet record missing"
+    end
+
+    packets =
+        type(packets) == "table"
+        and packets
+        or HolyLoadoutResolvePackets()
+
+    if HolyLoadoutPacketCanFire(
+        packets.Set
+    ) == true then
+
+        return HolyLoadoutFirePacket(
+            packets.Set,
+            pet.RawPetId,
+            enabled == true
+        )
+    end
+
+    if enabled == true
+    and HolyLoadoutPacketCanFire(
+        packets.Equip
+    ) == true then
+
+        return HolyLoadoutFirePacket(
+            packets.Equip,
+            pet.RawPetId
+        )
+    end
+
+    if enabled ~= true
+    and HolyLoadoutPacketCanFire(
+        packets.Unequip
+    ) == true then
+
+        return HolyLoadoutFirePacket(
+            packets.Unequip,
+            pet.RawPetId
+        )
+    end
+
+    if HolyLoadoutPacketCanFire(
+        packets.Toggle
+    ) == true then
+
+        return HolyLoadoutFirePacket(
+            packets.Toggle,
+            pet.RawPetId
+        )
+    end
+
+    return false,
+        enabled == true
+        and "pet equip packet was not found"
+        or "pet unequip packet was not found"
+end
+
+function HolyLoadoutSetStatus(status, detail)
+
+    HOLY_LOADOUT_RUNTIME.Status =
+        tostring(
+            status
+            or "Ready"
+        )
+
+    HOLY_LOADOUT_RUNTIME.Detail =
+        tostring(
+            detail
+            or ""
+        )
+
+    if type(HolyLoadoutRefreshActivityUI)
+        == "function" then
+
+        HolyLoadoutRefreshActivityUI()
+    end
+end
+
+function HolyLoadoutAddActivity(text)
+
+    table.insert(
+        HOLY_LOADOUT_RUNTIME.Activity,
+        1,
+        os.date(
+            "%H:%M:%S"
+        )
+            .. "  "
+            .. tostring(
+                text
+            )
+    )
+
+    while #HOLY_LOADOUT_RUNTIME.Activity > 6 do
+
+        table.remove(
+            HOLY_LOADOUT_RUNTIME.Activity
+        )
+    end
+
+    if type(HolyLoadoutRefreshActivityUI)
+        == "function" then
+
+        HolyLoadoutRefreshActivityUI()
+    end
+end
+
+function HolyLoadoutCurrentSignature(
+    activeIds
+)
+
+    local ids =
+        {}
+
+    for petId, enabled in pairs(
+        activeIds
+        or {}
+    ) do
+
+        if enabled == true then
+
+            table.insert(
+                ids,
+                petId
+            )
+        end
+    end
+
+    table.sort(
+        ids
+    )
+
+    return table.concat(
+        ids,
+        "|"
+    )
+end
+
+function HolyLoadoutApplyResolved(
+    loadout,
+    resolved,
+    reason
+)
+
+    if type(loadout) ~= "table"
+    or type(resolved) ~= "table" then
+
+        return false,
+            "loadout could not be resolved"
+    end
+
+    if loadout.Enabled == false then
+
+        return false,
+            "loadout is disabled"
+    end
+
+    if #resolved.Pets <= 0 then
+
+        return false,
+            "no available pets matched this loadout"
+    end
+
+    local packets =
+        HolyLoadoutResolvePackets(
+            false
+        )
+
+    local canEquip =
+        HolyLoadoutPacketCanFire(
+            packets.Equip
+        ) == true
+        or HolyLoadoutPacketCanFire(
+            packets.Set
+        ) == true
+        or HolyLoadoutPacketCanFire(
+            packets.Toggle
+        ) == true
+
+    if canEquip ~= true then
+
+        packets =
+            HolyLoadoutResolvePackets(
+                true
+            )
+
+        canEquip =
+            HolyLoadoutPacketCanFire(
+                packets.Equip
+            ) == true
+            or HolyLoadoutPacketCanFire(
+                packets.Set
+            ) == true
+            or HolyLoadoutPacketCanFire(
+                packets.Toggle
+            ) == true
+    end
+
+    if canEquip ~= true then
+
+        return false,
+            "no pet equip packet was found in SharedModules.Networking"
+    end
+
+    local desired =
+        {}
+
+    for _, pet in ipairs(
+        resolved.Pets
+    ) do
+
+        desired[
+            pet.PetId
+        ] =
+            pet
+    end
+
+    local snapshot =
+        resolved.Snapshot
+
+    local activeIds =
+        snapshot.ActiveIds
+        or {}
+
+    local currentSignature =
+        HolyLoadoutCurrentSignature(
+            activeIds
+        )
+
+    if snapshot.ActiveReadable == true
+    and currentSignature == resolved.Signature then
+
+        return true,
+            "already equipped"
+    end
+
+    local resetAll =
+        false
+
+    if HolyLoadoutPacketCanFire(
+        packets.UnequipAll
+    ) == true
+    and (
+        snapshot.ActiveReadable ~= true
+        or HolyLoadoutPacketCanFire(
+            packets.Unequip
+        ) ~= true
+        and HolyLoadoutPacketCanFire(
+            packets.Set
+        ) ~= true
+    ) then
+
+        local resetOk,
+            resetReason =
+            HolyLoadoutFirePacket(
+                packets.UnequipAll
+            )
+
+        if resetOk ~= true then
+
+            return false,
+                "could not clear current pets: "
+                .. tostring(
+                    resetReason
+                )
+        end
+
+        resetAll =
+            true
+
+        task.wait(
+            0.15
+        )
+    end
+
+    if resetAll ~= true
+    and snapshot.ActiveReadable == true then
+
+        for petId in pairs(
+            activeIds
+        ) do
+
+            if desired[
+                petId
+            ] == nil then
+
+                local pet =
+                    snapshot.ById[
+                        petId
+                    ]
+
+                if type(pet) == "table" then
+
+                    local removeOk,
+                        removeReason =
+                        HolyLoadoutSetPetEquipped(
+                            pet,
+                            false,
+                            packets
+                        )
+
+                    if removeOk ~= true then
+
+                        return false,
+                            "could not unequip "
+                            .. tostring(
+                                pet.PetName
+                            )
+                            .. ": "
+                            .. tostring(
+                                removeReason
+                            )
+                    end
+
+                    task.wait(
+                        0.10
+                    )
+                end
+            end
+        end
+    end
+
+    for _, pet in ipairs(
+        resolved.Pets
+    ) do
+
+        if resetAll == true
+        or activeIds[
+            pet.PetId
+        ] ~= true then
+
+            local equipOk,
+                equipReason =
+                HolyLoadoutSetPetEquipped(
+                    pet,
+                    true,
+                    packets
+                )
+
+            if equipOk ~= true then
+
+                return false,
+                    "could not equip "
+                    .. tostring(
+                        pet.PetName
+                    )
+                    .. ": "
+                    .. tostring(
+                        equipReason
+                    )
+            end
+
+            task.wait(
+                0.12
+            )
+        end
+    end
+
+    local deadline =
+        os.clock()
+        + 4
+
+    repeat
+
+        task.wait(
+            0.20
+        )
+
+        local verification =
+            HolyLoadoutScanInventory()
+
+        if verification.ActiveReadable == true then
+
+            local verifiedSignature =
+                HolyLoadoutCurrentSignature(
+                    verification.ActiveIds
+                )
+
+            if verifiedSignature
+                == resolved.Signature then
+
+                return true,
+                    "verified"
+            end
+        end
+
+    until os.clock() >= deadline
+
+    if snapshot.ActiveReadable ~= true then
+
+        return true,
+            "requests sent; exact active PetIds are not exposed"
+    end
+
+    return false,
+        "the game did not confirm the requested active team"
+end
+
+function HolyLoadoutRequestApply(
+    loadoutId,
+    reason,
+    force
+)
+
+    local loadout =
+        HolyLoadoutGetById(
+            loadoutId
+        )
+
+    if type(loadout) ~= "table" then
+
+        HolyLoadoutSetStatus(
+            "Apply failed",
+            "The selected loadout no longer exists."
+        )
+
+        return false
+    end
+
+    HOLY_LOADOUT_RUNTIME.PendingLoadoutId =
+        loadout.Id
+
+    HOLY_LOADOUT_RUNTIME.PendingReason =
+        tostring(
+            reason
+            or "Manual"
+        )
+
+    if HOLY_LOADOUT_RUNTIME.Busy == true then
+
+        HolyLoadoutSetStatus(
+            "Queued",
+            loadout.Name
+                .. " will apply after the current switch."
+        )
+
+        return true
+    end
+
+    HOLY_LOADOUT_RUNTIME.Busy =
+        true
+
+    task.spawn(function()
+
+        while HOLY_LOADOUT_RUNTIME.PendingLoadoutId
+            ~= "" do
+
+            local nextId =
+                HOLY_LOADOUT_RUNTIME.PendingLoadoutId
+
+            local nextReason =
+                HOLY_LOADOUT_RUNTIME.PendingReason
+
+            HOLY_LOADOUT_RUNTIME.PendingLoadoutId =
+                ""
+
+            HOLY_LOADOUT_RUNTIME.PendingReason =
+                ""
+
+            local nextLoadout =
+                HolyLoadoutGetById(
+                    nextId
+                )
+
+            if type(nextLoadout) ~= "table" then
+                continue
+            end
+
+            local cooldown =
+                HOLY_LOADOUT_STATE.SwitchCooldown
+
+            local waitFor =
+                cooldown
+                - (
+                    os.clock()
+                    - HOLY_LOADOUT_RUNTIME.LastSwitchAt
+                )
+
+            if force ~= true
+            and waitFor > 0 then
+
+                task.wait(
+                    waitFor
+                )
+            end
+
+            HolyLoadoutSetStatus(
+                "Applying "
+                    .. nextLoadout.Name,
+                "Resolving the best available pets..."
+            )
+
+            local snapshot =
+                HolyLoadoutScanInventory()
+
+            local resolved =
+                HolyLoadoutResolve(
+                    nextLoadout,
+                    snapshot
+                )
+
+            local success,
+                applyReason =
+                HolyLoadoutApplyResolved(
+                    nextLoadout,
+                    resolved,
+                    nextReason
+                )
+
+            HOLY_LOADOUT_RUNTIME.LastSwitchAt =
+                os.clock()
+
+            if success == true then
+
+                local oldLoadout =
+                    HolyLoadoutGetById(
+                        HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+                    )
+
+                HOLY_LOADOUT_RUNTIME.ActiveLoadoutId =
+                    nextLoadout.Id
+
+                HOLY_LOADOUT_RUNTIME.ActiveReason =
+                    nextReason
+
+                HolyLoadoutSetStatus(
+                    "Active: "
+                        .. nextLoadout.Name,
+                    tostring(
+                        applyReason
+                    )
+                )
+
+                HolyLoadoutAddActivity(
+                    (
+                        type(oldLoadout) == "table"
+                        and oldLoadout.Name
+                        or "None"
+                    )
+                        .. " → "
+                        .. nextLoadout.Name
+                        .. " · "
+                        .. tostring(
+                            nextReason
+                        )
+                )
+
+            else
+
+                HolyLoadoutSetStatus(
+                    "Apply failed",
+                    tostring(
+                        applyReason
+                    )
+                )
+
+                HolyLoadoutAddActivity(
+                    "Failed "
+                        .. nextLoadout.Name
+                        .. " · "
+                        .. tostring(
+                            applyReason
+                        )
+                )
+
+                HolyNotify(
+                    "HOLY Loadouts",
+                    tostring(
+                        applyReason
+                    ),
+                    5
+                )
+            end
+
+            HolyLoadoutRebuildProtection()
+
+            if type(HolyLoadoutRefreshAllUI)
+                == "function" then
+
+                HolyLoadoutRefreshAllUI(
+                    false
+                )
+            end
+
+            force =
+                false
+        end
+
+        HOLY_LOADOUT_RUNTIME.Busy =
+            false
+    end)
+
+    return true
+end
+
+function HolyLoadoutTriggerActive(trigger)
+
+    trigger =
+        HolyLoadoutTrim(
+            trigger
+        )
+
+    local weather =
+        HolyLoadoutTrim(
+            workspace:GetAttribute(
+                "ActiveWeather"
+            )
+        )
+
+    local weatherKey =
+        weather:lower()
+            :gsub(
+                "[%s_%-]",
+                ""
+            )
+
+    if trigger == "Pet Defense" then
+
+        return type(
+            HOLY_SNIPER_RUNTIME
+        ) == "table"
+            and type(
+                HOLY_SNIPER_RUNTIME.Defense
+            ) == "table"
+            and HOLY_SNIPER_RUNTIME.Defense.Active == true
+            or (
+                type(HolyDefenseEnsureRuntime) == "function"
+                and HolyDefenseEnsureRuntime().Active == true
+            )
+    end
+
+    if trigger == "Sniper Active" then
+
+        return type(
+            HOLY_SNIPER_RUNTIME
+        ) == "table"
+            and HOLY_SNIPER_RUNTIME.Running == true
+            and (
+                HOLY_SNIPER_RUNTIME.CurrentTarget ~= nil
+                or HOLY_SNIPER_RUNTIME.TargetLockActive == true
+                or HOLY_SNIPER_RUNTIME.Buying == true
+            )
+    end
+
+    if trigger == "Pet Purchased" then
+
+        return type(
+            HOLY_SNIPER_RUNTIME
+        ) == "table"
+            and (
+                os.clock()
+                - (
+                    tonumber(
+                        HOLY_SNIPER_RUNTIME.LastBuyAt
+                    )
+                    or -1000
+                )
+            ) <= 15
+    end
+
+    if trigger == "Farm Collecting" then
+
+        return type(
+            HOLY_FARM_STATE
+        ) == "table"
+            and (
+                HOLY_FARM_STATE.AutoCollectFruits == true
+                or HOLY_FARM_STATE.ProFruitCollector == true
+                or HOLY_FARM_STATE.AutoEclipseCollection == true
+            )
+    end
+
+    if trigger == "Day" then
+        return weatherKey == "day"
+    end
+
+    if trigger == "Sunset" then
+        return weatherKey == "sunset"
+    end
+
+    if trigger == "Night" then
+
+        return weatherKey ~= ""
+            and weatherKey ~= "day"
+            and weatherKey ~= "sunset"
+    end
+
+    local triggerWeatherKey =
+        trigger:lower()
+            :gsub(
+                "[%s_%-]",
+                ""
+            )
+
+    return weatherKey ~= ""
+        and weatherKey == triggerWeatherKey
+end
+
+function HolyLoadoutAutomationRuleActive(rule)
+
+    if type(rule) ~= "table"
+    or rule.Enabled ~= true
+    or HolyLoadoutGetById(
+        rule.LoadoutId
+    ) == nil
+    or #(
+        rule.Triggers
+        or {}
+    ) <= 0 then
+
+        HOLY_LOADOUT_RUNTIME.RuleActiveUntil[
+            rule
+            and rule.Id
+            or ""
+        ] =
+            nil
+
+        return false
+    end
+
+    local activeCount =
+        0
+
+    for _, trigger in ipairs(
+        rule.Triggers
+    ) do
+
+        if HolyLoadoutTriggerActive(
+            trigger
+        ) == true then
+
+            activeCount +=
+                1
+        end
+    end
+
+    local conditionActive =
+        rule.Match == "All"
+        and activeCount == #rule.Triggers
+        or rule.Match ~= "All"
+        and activeCount > 0
+
+    local now =
+        os.clock()
+
+    if conditionActive == true then
+
+        HOLY_LOADOUT_RUNTIME.RuleActiveUntil[
+            rule.Id
+        ] =
+            math.max(
+                tonumber(
+                    HOLY_LOADOUT_RUNTIME.RuleActiveUntil[
+                        rule.Id
+                    ]
+                )
+                or 0,
+                now
+                    + (
+                        tonumber(
+                            rule.MinimumDuration
+                        )
+                        or 0
+                    )
+            )
+
+        return true
+    end
+
+    return (
+        tonumber(
+            HOLY_LOADOUT_RUNTIME.RuleActiveUntil[
+                rule.Id
+            ]
+        )
+        or 0
+    ) > now
+end
+
+function HolyLoadoutEvaluateAutomation(force)
+
+    if HOLY_LOADOUT_STATE.AutoEnabled ~= true
+    and HOLY_LOADOUT_STATE.ManualOverrideId == "" then
+
+        HOLY_LOADOUT_RUNTIME.WinningRuleId =
+            ""
+
+        HOLY_LOADOUT_RUNTIME.WinningRuleName =
+            "None"
+
+        return false
+    end
+
+    local winningLoadoutId =
+        ""
+
+    local winningReason =
+        ""
+
+    local winningRule =
+        nil
+
+    if HOLY_LOADOUT_STATE.ManualOverrideId
+        ~= ""
+    and HolyLoadoutGetById(
+        HOLY_LOADOUT_STATE.ManualOverrideId
+    ) ~= nil then
+
+        winningLoadoutId =
+            HOLY_LOADOUT_STATE.ManualOverrideId
+
+        winningReason =
+            "Manual Override"
+
+    elseif HOLY_LOADOUT_STATE.AutoEnabled == true then
+
+        for _, rule in ipairs(
+            HOLY_LOADOUT_STATE.AutomationRules
+            or {}
+        ) do
+
+            if HolyLoadoutAutomationRuleActive(
+                rule
+            ) == true
+            and (
+                winningRule == nil
+                or rule.Priority
+                    > winningRule.Priority
+            ) then
+
+                winningRule =
+                    rule
+            end
+        end
+
+        if type(winningRule) == "table" then
+
+            winningLoadoutId =
+                winningRule.LoadoutId
+
+            winningReason =
+                winningRule.Name
+
+        elseif HolyLoadoutGetById(
+            HOLY_LOADOUT_STATE.DefaultLoadoutId
+        ) ~= nil then
+
+            winningLoadoutId =
+                HOLY_LOADOUT_STATE.DefaultLoadoutId
+
+            winningReason =
+                "Default"
+        end
+    end
+
+    HOLY_LOADOUT_RUNTIME.WinningRuleId =
+        type(winningRule) == "table"
+        and winningRule.Id
+        or ""
+
+    HOLY_LOADOUT_RUNTIME.WinningRuleName =
+        winningReason ~= ""
+        and winningReason
+        or "None"
+
+    if winningLoadoutId == "" then
+        return false
+    end
+
+    if force == true
+    or HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+        ~= winningLoadoutId then
+
+        local previousReason =
+            HOLY_LOADOUT_RUNTIME.ActiveReason
+
+        HolyLoadoutRequestApply(
+            winningLoadoutId,
+            winningReason,
+            force == true
+        )
+
+        if type(winningRule) == "table"
+        and winningRule.Notify == true
+        and previousReason ~= winningReason then
+
+            HolyNotify(
+                "HOLY Loadouts",
+                "Activated by "
+                    .. winningReason
+                    .. ".",
+                3
+            )
+        end
+
+        return true
+    end
+
+    return false
+end
+
+function HolyLoadoutScheduleRefresh(reason)
+
+    HOLY_LOADOUT_RUNTIME.RefreshGeneration +=
+        1
+
+    local generation =
+        HOLY_LOADOUT_RUNTIME.RefreshGeneration
+
+    HOLY_LOADOUT_RUNTIME.RefreshQueued =
+        true
+
+    task.delay(
+        0.25,
+        function()
+
+            if HOLY_LOADOUT_RUNTIME.RefreshGeneration
+                ~= generation
+            or HOLY_LOADOUT_RUNTIME.Running ~= true then
+
+                return
+            end
+
+            HOLY_LOADOUT_RUNTIME.RefreshQueued =
+                false
+
+            local snapshot =
+                HolyLoadoutScanInventory()
+
+            local signature =
+                HolyLoadoutInventorySignature(
+                    snapshot
+                )
+
+            if signature
+                ~= HOLY_LOADOUT_RUNTIME.LastInventorySignature then
+
+                HOLY_LOADOUT_RUNTIME.LastInventorySignature =
+                    signature
+
+                HolyLoadoutRebuildProtection()
+
+                if type(HolyLoadoutRefreshAllUI)
+                    == "function" then
+
+                    HolyLoadoutRefreshAllUI(
+                        false,
+                        snapshot
+                    )
+                end
+            end
+
+            if HOLY_LOADOUT_STATE.AutoEnabled == true
+            and HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+                ~= "" then
+
+                local active =
+                    HolyLoadoutGetById(
+                        HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+                    )
+
+                if type(active) == "table"
+                and (
+                    active.Mode == "Smart"
+                    or active.Mode == "Hybrid"
+                ) then
+
+                    HolyLoadoutEvaluateAutomation(
+                        false
+                    )
+                end
+            end
+        end
+    )
+
+    return true
+end
+
+function HolyLoadoutDisconnect()
+
+    for _, connection in ipairs(
+        HOLY_LOADOUT_RUNTIME.Connections
+        or {}
+    ) do
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+
+    HOLY_LOADOUT_RUNTIME.Connections =
+        {}
+end
+
+function HolyLoadoutAddConnection(connection)
+
+    if connection ~= nil then
+
+        table.insert(
+            HOLY_LOADOUT_RUNTIME.Connections,
+            connection
+        )
+    end
+
+    return connection
+end
+
+function HolyLoadoutConnectContainer(container)
+
+    if typeof(container) ~= "Instance" then
+        return false
+    end
+
+    HolyLoadoutAddConnection(
+        container.ChildAdded:Connect(function(child)
+
+            if child:IsA(
+                "Tool"
+            ) then
+
+                HolyLoadoutScheduleRefresh(
+                    "inventory added"
+                )
+            end
+        end)
+    )
+
+    HolyLoadoutAddConnection(
+        container.ChildRemoved:Connect(function(child)
+
+            if child:IsA(
+                "Tool"
+            ) then
+
+                HolyLoadoutScheduleRefresh(
+                    "inventory removed"
+                )
+            end
+        end)
+    )
+
+    return true
+end
+
+function HolyLoadoutReconnect()
+
+    HolyLoadoutDisconnect()
+
+    HolyLoadoutConnectContainer(
+        LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+    )
+
+    HolyLoadoutConnectContainer(
+        LocalPlayer.Character
+    )
+
+    HolyLoadoutAddConnection(
+        LocalPlayer.CharacterAdded:Connect(function()
+
+            task.delay(
+                0.50,
+                function()
+
+                    if HOLY_LOADOUT_RUNTIME.Running == true then
+
+                        HolyLoadoutReconnect()
+
+                        HolyLoadoutScheduleRefresh(
+                            "character added"
+                        )
+                    end
+                end
+            )
+        end)
+    )
+
+    HolyLoadoutAddConnection(
+        workspace:GetAttributeChangedSignal(
+            "ActiveWeather"
+        ):Connect(function()
+
+            HolyLoadoutEvaluateAutomation(
+                false
+            )
+        end)
+    )
+
+    local petReferences =
+        workspace:FindFirstChild(
+            "PlayerPetReferences"
+        )
+
+    if typeof(petReferences) == "Instance" then
+
+        HolyLoadoutAddConnection(
+            petReferences.DescendantAdded:Connect(function()
+
+                HolyLoadoutScheduleRefresh(
+                    "active pet added"
+                )
+            end)
+        )
+
+        HolyLoadoutAddConnection(
+            petReferences.DescendantRemoving:Connect(function()
+
+                HolyLoadoutScheduleRefresh(
+                    "active pet removed"
+                )
+            end)
+        )
+    end
+
+    HolyLoadoutAddConnection(
+        workspace.ChildAdded:Connect(function(child)
+
+            if child.Name == "PlayerPetReferences" then
+
+                task.delay(
+                    0.25,
+                    function()
+
+                        if HOLY_LOADOUT_RUNTIME.Running == true then
+
+                            HolyLoadoutReconnect()
+                            HolyLoadoutScheduleRefresh(
+                                "pet references added"
+                            )
+                        end
+                    end
+                )
+            end
+        end)
+    )
+
+    return true
+end
+
+function HolyLoadoutStop(reason)
+
+    HOLY_LOADOUT_RUNTIME.Running =
+        false
+
+    HOLY_LOADOUT_RUNTIME.Token =
+        nil
+
+    HOLY_LOADOUT_RUNTIME.PendingLoadoutId =
+        ""
+
+    HolyLoadoutDisconnect()
+
+    return true
+end
+
+function HolyLoadoutStart()
+
+    if HOLY_LOADOUT_RUNTIME.Running == true then
+
+        HolyLoadoutStop(
+            "restart"
+        )
+    end
+
+    HOLY_LOADOUT_RUNTIME.Running =
+        true
+
+    local token =
+        {}
+
+    HOLY_LOADOUT_RUNTIME.Token =
+        token
+
+    HolyLoadoutReconnect()
+    HolyLoadoutRebuildProtection()
+    HolyLoadoutScheduleRefresh(
+        "startup"
+    )
+
+    task.spawn(function()
+
+        while HOLY_LOADOUT_RUNTIME.Running == true
+        and HOLY_LOADOUT_RUNTIME.Token == token do
+
+            HolyLoadoutEvaluateAutomation(
+                false
+            )
+
+            task.wait(
+                0.35
+            )
+        end
+    end)
+
+    return true
+end
+
+HOLY_LOADOUT_RUNTIME.Stop =
+    HolyLoadoutStop
+
+HolyLoadoutLoadSettings()
+
+--==================================================
 -- [4] WINDOW
 --==================================================
 
@@ -158137,11 +161717,11 @@ local Tabs = {
             Description = "Wild pet sniper.",
         }),
 
-    PetTeams =
+    Loadouts =
         Window:AddTab({
-            Name = "Pet Teams",
-            Icon = "paw-print",
-            Description = "Pet team automation.",
+            Name = "Loadouts",
+            Icon = "layers-3",
+            Description = "Build and automate reusable setups.",
         }),
 
     Visual =
@@ -158194,6 +161774,3314 @@ if HolyAuthIsAdmin() == true then
                 "Developer tools.",
         })
 end
+
+--==================================================
+-- HOLY LOADOUTS UI
+-- Place this entire block directly above:
+--
+-- local MainQuickBox =
+--     HolyAddLeftGroupbox(
+--==================================================
+
+HOLY_LOADOUT_UI.LibraryBox =
+    HolyAddLeftGroupbox(
+        Tabs.Loadouts,
+        "Loadouts.Library",
+        "Loadout Library",
+        "library"
+    )
+
+HOLY_LOADOUT_UI.BuilderBox =
+    HolyAddLeftGroupbox(
+        Tabs.Loadouts,
+        "Loadouts.Builder",
+        "Pet Builder",
+        "paw-print"
+    )
+
+HOLY_LOADOUT_UI.PreviewBox =
+    HolyAddRightGroupbox(
+        Tabs.Loadouts,
+        "Loadouts.Preview",
+        "Resolved Preview",
+        "scan-eye"
+    )
+
+HOLY_LOADOUT_UI.AutomationBox =
+    HolyAddRightGroupbox(
+        Tabs.Loadouts,
+        "Loadouts.Automation",
+        "Automation",
+        "workflow"
+    )
+
+HOLY_LOADOUT_UI.ActivityBox =
+    HolyAddRightGroupbox(
+        Tabs.Loadouts,
+        "Loadouts.Activity",
+        "Live Activity",
+        "activity"
+    )
+
+function HolyLoadoutUniqueName(name, ignoreId)
+
+    name =
+        HolyLoadoutTrim(
+            name
+        )
+
+    if name == "" then
+        name = "New Loadout"
+    end
+
+    local base =
+        name
+
+    local number =
+        2
+
+    local function isTaken(value)
+
+        for _, loadout in ipairs(
+            HOLY_LOADOUT_STATE.Loadouts
+            or {}
+        ) do
+
+            if loadout.Id ~= ignoreId
+            and tostring(
+                loadout.Name
+            ):lower() == tostring(
+                value
+            ):lower() then
+
+                return true
+            end
+        end
+
+        return false
+    end
+
+    while isTaken(
+        name
+    ) == true do
+
+        name =
+            base
+            .. " "
+            .. tostring(
+                number
+            )
+
+        number +=
+            1
+    end
+
+    return name
+end
+
+function HolyLoadoutReadSingleDropdownValue(value)
+
+    if type(value) ~= "table" then
+
+        return HolyLoadoutTrim(
+            value
+        )
+    end
+
+    for key, enabled in pairs(
+        value
+    ) do
+
+        if type(key) ~= "number"
+        and enabled == true then
+
+            return HolyLoadoutTrim(
+                key
+            )
+        end
+    end
+
+    return HolyLoadoutTrim(
+        value[1]
+    )
+end
+
+function HolyLoadoutSetDropdownValues(
+    dropdown,
+    values,
+    selected
+)
+
+    if type(dropdown) ~= "table" then
+        return false
+    end
+
+    HOLY_LOADOUT_RUNTIME.UpdatingUI =
+        true
+
+    if type(dropdown.SetValues) == "function" then
+
+        pcall(function()
+
+            dropdown:SetValues(
+                values
+            )
+        end)
+    end
+
+    if type(dropdown.SetValue) == "function"
+    and selected ~= nil then
+
+        pcall(function()
+
+            dropdown:SetValue(
+                selected,
+                true
+            )
+        end)
+    end
+
+    HOLY_LOADOUT_RUNTIME.UpdatingUI =
+        false
+
+    return true
+end
+
+function HolyLoadoutSetControlDisabled(control, disabled)
+
+    if type(control) == "table"
+    and type(control.SetDisabled) == "function" then
+
+        pcall(function()
+
+            control:SetDisabled(
+                disabled == true
+            )
+        end)
+    end
+end
+
+function HolyLoadoutBuildLoadoutMappings()
+
+    HOLY_LOADOUT_UI.LoadoutDisplayToId =
+        {}
+
+    HOLY_LOADOUT_UI.LoadoutIdToDisplay =
+        {}
+
+    local values =
+        {}
+
+    for _, loadout in ipairs(
+        HOLY_LOADOUT_STATE.Loadouts
+        or {}
+    ) do
+
+        local display =
+            tostring(
+                loadout.Name
+            )
+
+        if HOLY_LOADOUT_UI.LoadoutDisplayToId[
+            display
+        ] ~= nil then
+
+            display =
+                display
+                .. " · "
+                .. HolyLoadoutShortId(
+                    loadout.Id
+                )
+        end
+
+        HOLY_LOADOUT_UI.LoadoutDisplayToId[
+            display
+        ] =
+            loadout.Id
+
+        HOLY_LOADOUT_UI.LoadoutIdToDisplay[
+            loadout.Id
+        ] =
+            display
+
+        table.insert(
+            values,
+            display
+        )
+    end
+
+    return values
+end
+
+function HolyLoadoutPetDisplay(pet)
+
+    local details =
+        {}
+
+    if HolyLoadoutTrim(
+        pet.Size
+    ) ~= ""
+    and pet.Size ~= "Normal" then
+
+        table.insert(
+            details,
+            pet.Size
+        )
+    end
+
+    if HolyLoadoutTrim(
+        pet.Variant
+    ) ~= ""
+    and pet.Variant ~= "Normal" then
+
+        table.insert(
+            details,
+            pet.Variant
+        )
+    end
+
+    if pet.Active == true then
+
+        table.insert(
+            details,
+            "Active"
+        )
+    end
+
+    if pet.Favorite == true then
+
+        table.insert(
+            details,
+            "Favorite"
+        )
+    end
+
+    if pet.Locked == true then
+
+        table.insert(
+            details,
+            "Locked"
+        )
+    end
+
+    local display =
+        tostring(
+            pet.PetName
+        )
+
+    if #details > 0 then
+
+        display =
+            display
+            .. " · "
+            .. table.concat(
+                details,
+                " · "
+            )
+    end
+
+    return display
+        .. " · "
+        .. HolyLoadoutShortId(
+            pet.PetId
+        )
+end
+
+function HolyLoadoutBuildPetMappings(snapshot)
+
+    HOLY_LOADOUT_UI.PetDisplayToId =
+        {}
+
+    HOLY_LOADOUT_UI.PetIdToDisplay =
+        {}
+
+    local values =
+        {}
+
+    for _, pet in ipairs(
+        snapshot.Pets
+        or {}
+    ) do
+
+        local display =
+            HolyLoadoutPetDisplay(
+                pet
+            )
+
+        if HOLY_LOADOUT_UI.PetDisplayToId[
+            display
+        ] ~= nil then
+
+            display =
+                display
+                .. " · "
+                .. tostring(
+                    #values + 1
+                )
+        end
+
+        HOLY_LOADOUT_UI.PetDisplayToId[
+            display
+        ] =
+            pet.PetId
+
+        HOLY_LOADOUT_UI.PetIdToDisplay[
+            pet.PetId
+        ] =
+            display
+
+        table.insert(
+            values,
+            display
+        )
+    end
+
+    return values
+end
+
+function HolyLoadoutSelectedExactDisplays(loadout)
+
+    local values =
+        {}
+
+    for _, petId in ipairs(
+        type(loadout) == "table"
+        and loadout.ExactPetIds
+        or {}
+    ) do
+
+        local display =
+            HOLY_LOADOUT_UI.PetIdToDisplay[
+                petId
+            ]
+
+        if display == nil then
+
+            display =
+                "Missing Pet · "
+                .. HolyLoadoutShortId(
+                    petId
+                )
+
+            HOLY_LOADOUT_UI.PetDisplayToId[
+                display
+            ] =
+                petId
+
+            HOLY_LOADOUT_UI.PetIdToDisplay[
+                petId
+            ] =
+                display
+        end
+
+        table.insert(
+            values,
+            display
+        )
+    end
+
+    return values
+end
+
+function HolyLoadoutBuildSmartRuleMappings(loadout)
+
+    HOLY_LOADOUT_UI.SmartRuleDisplayToId =
+        {}
+
+    local values =
+        {}
+
+    for index, rule in ipairs(
+        type(loadout) == "table"
+        and loadout.SmartRules
+        or {}
+    ) do
+
+        local petText =
+            #(
+                rule.PetNames
+                or {}
+            ) > 0
+            and table.concat(
+                rule.PetNames,
+                ", "
+            )
+            or "Any Pet"
+
+        local display =
+            tostring(
+                index
+            )
+            .. ". "
+            .. petText
+            .. " ×"
+            .. tostring(
+                rule.Amount
+            )
+
+        HOLY_LOADOUT_UI.SmartRuleDisplayToId[
+            display
+        ] =
+            rule.Id
+
+        table.insert(
+            values,
+            display
+        )
+    end
+
+    if #values <= 0 then
+
+        table.insert(
+            values,
+            "No smart rules"
+        )
+    end
+
+    return values
+end
+
+function HolyLoadoutBuildAutomationRuleMappings()
+
+    HOLY_LOADOUT_UI.AutomationRuleDisplayToId =
+        {}
+
+    local values =
+        {}
+
+    for index, rule in ipairs(
+        HOLY_LOADOUT_STATE.AutomationRules
+        or {}
+    ) do
+
+        local loadout =
+            HolyLoadoutGetById(
+                rule.LoadoutId
+            )
+
+        local display =
+            tostring(
+                index
+            )
+            .. ". "
+            .. tostring(
+                rule.Name
+            )
+            .. " · "
+            .. (
+                type(loadout) == "table"
+                and loadout.Name
+                or "Missing Loadout"
+            )
+            .. " · P"
+            .. tostring(
+                rule.Priority
+            )
+
+        if rule.Enabled ~= true then
+
+            display =
+                display
+                .. " · OFF"
+        end
+
+        HOLY_LOADOUT_UI.AutomationRuleDisplayToId[
+            display
+        ] =
+            rule.Id
+
+        table.insert(
+            values,
+            display
+        )
+    end
+
+    if #values <= 0 then
+
+        table.insert(
+            values,
+            "No automation rules"
+        )
+    end
+
+    return values
+end
+
+function HolyLoadoutCreatePreviewSurface()
+
+    local surface =
+        Instance.new(
+            "Frame"
+        )
+
+    surface.Name =
+        "HolyLoadoutPreviewSurface"
+
+    surface.BackgroundTransparency =
+        1
+
+    surface.BorderSizePixel =
+        0
+
+    surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            222
+        )
+
+    local header =
+        Instance.new(
+            "TextLabel"
+        )
+
+    header.Name =
+        "Header"
+
+    header.BackgroundTransparency =
+        1
+
+    header.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            20
+        )
+
+    header.Text =
+        "No loadout selected"
+
+    header.TextColor3 =
+        Library.Scheme.FontColor
+
+    header.TextSize =
+        13
+
+    header.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    header.FontFace =
+        Library.Scheme.Font
+
+    header.Parent =
+        surface
+
+    local summary =
+        Instance.new(
+            "TextLabel"
+        )
+
+    summary.Name =
+        "Summary"
+
+    summary.BackgroundTransparency =
+        1
+
+    summary.Position =
+        UDim2.fromOffset(
+            0,
+            21
+        )
+
+    summary.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            18
+        )
+
+    summary.Text =
+        "Saved 0 · Available 0 · Slots 0"
+
+    summary.TextColor3 =
+        Library.Scheme.FontColor
+
+    summary.TextTransparency =
+        0.35
+
+    summary.TextSize =
+        11
+
+    summary.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    summary.FontFace =
+        Library.Scheme.Font
+
+    summary.Parent =
+        surface
+
+    HOLY_LOADOUT_UI.PreviewRows =
+        {}
+
+    for index = 1, 6 do
+
+        local row =
+            Instance.new(
+                "Frame"
+            )
+
+        row.Name =
+            "Slot"
+            .. tostring(
+                index
+            )
+
+        row.BackgroundColor3 =
+            Color3.fromRGB(
+                255,
+                255,
+                255
+            )
+
+        row.BackgroundTransparency =
+            0.965
+
+        row.BorderSizePixel =
+            0
+
+        row.Position =
+            UDim2.fromOffset(
+                0,
+                43
+                    + (
+                        index - 1
+                    )
+                    * 29
+            )
+
+        row.Size =
+            UDim2.new(
+                1,
+                0,
+                0,
+                25
+            )
+
+        row.Parent =
+            surface
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                5
+            )
+
+        corner.Parent =
+            row
+
+        local slotLabel =
+            Instance.new(
+                "TextLabel"
+            )
+
+        slotLabel.BackgroundTransparency =
+            1
+
+        slotLabel.Position =
+            UDim2.fromOffset(
+                7,
+                0
+            )
+
+        slotLabel.Size =
+            UDim2.fromOffset(
+                24,
+                25
+            )
+
+        slotLabel.Text =
+            tostring(
+                index
+            )
+
+        slotLabel.TextColor3 =
+            Library.Scheme.AccentColor
+
+        slotLabel.TextSize =
+            11
+
+        slotLabel.TextXAlignment =
+            Enum.TextXAlignment.Left
+
+        slotLabel.FontFace =
+            Library.Scheme.Font
+
+        slotLabel.Parent =
+            row
+
+        local petLabel =
+            Instance.new(
+                "TextLabel"
+            )
+
+        petLabel.BackgroundTransparency =
+            1
+
+        petLabel.Position =
+            UDim2.fromOffset(
+                31,
+                0
+            )
+
+        petLabel.Size =
+            UDim2.new(
+                1,
+                -92,
+                1,
+                0
+            )
+
+        petLabel.Text =
+            "Empty"
+
+        petLabel.TextColor3 =
+            Library.Scheme.FontColor
+
+        petLabel.TextSize =
+            11
+
+        petLabel.TextTruncate =
+            Enum.TextTruncate.AtEnd
+
+        petLabel.TextXAlignment =
+            Enum.TextXAlignment.Left
+
+        petLabel.FontFace =
+            Library.Scheme.Font
+
+        petLabel.Parent =
+            row
+
+        local stateLabel =
+            Instance.new(
+                "TextLabel"
+            )
+
+        stateLabel.BackgroundTransparency =
+            1
+
+        stateLabel.Position =
+            UDim2.new(
+                1,
+                -60,
+                0,
+                0
+            )
+
+        stateLabel.Size =
+            UDim2.fromOffset(
+                55,
+                25
+            )
+
+        stateLabel.Text =
+            "Empty"
+
+        stateLabel.TextColor3 =
+            Library.Scheme.FontColor
+
+        stateLabel.TextTransparency =
+            0.35
+
+        stateLabel.TextSize =
+            10
+
+        stateLabel.TextXAlignment =
+            Enum.TextXAlignment.Right
+
+        stateLabel.FontFace =
+            Library.Scheme.Font
+
+        stateLabel.Parent =
+            row
+
+        HOLY_LOADOUT_UI.PreviewRows[
+            index
+        ] = {
+            Frame = row,
+            PetLabel = petLabel,
+            StateLabel = stateLabel,
+        }
+    end
+
+    HOLY_LOADOUT_UI.PreviewSurface =
+        surface
+
+    HOLY_LOADOUT_UI.PreviewHeader =
+        header
+
+    HOLY_LOADOUT_UI.PreviewSummary =
+        summary
+
+    return surface
+end
+
+function HolyLoadoutRefreshPreview(snapshot)
+
+    local loadout =
+        HolyLoadoutGetSelected()
+
+    snapshot =
+        type(snapshot) == "table"
+        and snapshot
+        or HolyLoadoutScanInventory()
+
+    local resolved =
+        HolyLoadoutResolve(
+            loadout,
+            snapshot
+        )
+
+    if typeof(
+        HOLY_LOADOUT_UI.PreviewHeader
+    ) == "Instance" then
+
+        HOLY_LOADOUT_UI.PreviewHeader.Text =
+            type(loadout) == "table"
+            and (
+                loadout.Name
+                .. " · "
+                .. loadout.Mode
+            )
+            or "No loadout selected"
+    end
+
+    if typeof(
+        HOLY_LOADOUT_UI.PreviewSummary
+    ) == "Instance" then
+
+        local saved =
+            0
+
+        if type(loadout) == "table" then
+
+            saved =
+                #(
+                    loadout.ExactPetIds
+                    or {}
+                )
+
+            for _, rule in ipairs(
+                loadout.SmartRules
+                or {}
+            ) do
+
+                saved +=
+                    tonumber(
+                        rule.Amount
+                    )
+                    or 0
+            end
+        end
+
+        local warnings =
+            #resolved.MissingExact
+            + #resolved.MissingSmart
+            + #resolved.DuplicateExact
+
+        HOLY_LOADOUT_UI.PreviewSummary.Text =
+            "Saved "
+            .. tostring(
+                saved
+            )
+            .. " · Available "
+            .. tostring(
+                #resolved.Pets
+            )
+            .. " · Slots "
+            .. tostring(
+                resolved.MaxSlots
+            )
+            .. "/6"
+            .. (
+                warnings > 0
+                and (
+                    " · "
+                    .. tostring(
+                        warnings
+                    )
+                    .. " warning(s)"
+                )
+                or ""
+            )
+    end
+
+    for index = 1, 6 do
+
+        local uiRow =
+            HOLY_LOADOUT_UI.PreviewRows[
+                index
+            ]
+
+        if type(uiRow) == "table" then
+
+            local pet =
+                resolved.Pets[
+                    index
+                ]
+
+            if index > resolved.MaxSlots then
+
+                uiRow.PetLabel.Text =
+                    "Locked pet slot"
+
+                uiRow.PetLabel.TextTransparency =
+                    0.45
+
+                uiRow.StateLabel.Text =
+                    "Locked"
+
+                uiRow.StateLabel.TextColor3 =
+                    Color3.fromRGB(
+                        251,
+                        191,
+                        36
+                    )
+
+            elseif type(pet) == "table" then
+
+                local details =
+                    {}
+
+                if pet.Size ~= "Normal" then
+
+                    table.insert(
+                        details,
+                        pet.Size
+                    )
+                end
+
+                if pet.Variant ~= "Normal" then
+
+                    table.insert(
+                        details,
+                        pet.Variant
+                    )
+                end
+
+                uiRow.PetLabel.Text =
+                    tostring(
+                        pet.PetName
+                    )
+                    .. (
+                        #details > 0
+                        and (
+                            " · "
+                            .. table.concat(
+                                details,
+                                " · "
+                            )
+                        )
+                        or ""
+                    )
+
+                uiRow.PetLabel.TextTransparency =
+                    0
+
+                uiRow.StateLabel.Text =
+                    pet.Active == true
+                    and "Active"
+                    or "Ready"
+
+                uiRow.StateLabel.TextColor3 =
+                    pet.Active == true
+                    and Color3.fromRGB(
+                        74,
+                        222,
+                        128
+                    )
+                    or Library.Scheme.FontColor
+
+            else
+
+                uiRow.PetLabel.Text =
+                    "Empty"
+
+                uiRow.PetLabel.TextTransparency =
+                    0.45
+
+                uiRow.StateLabel.Text =
+                    "Empty"
+
+                uiRow.StateLabel.TextColor3 =
+                    Library.Scheme.FontColor
+            end
+        end
+    end
+
+    return resolved
+end
+
+function HolyLoadoutRefreshActivityUI()
+
+    HolySniperSetLabel(
+        HOLY_LOADOUT_UI.StatusLabel,
+        "Status: "
+            .. tostring(
+                HOLY_LOADOUT_RUNTIME.Status
+            )
+    )
+
+    HolySniperSetLabel(
+        HOLY_LOADOUT_UI.DetailLabel,
+        tostring(
+            HOLY_LOADOUT_RUNTIME.Detail
+        )
+    )
+
+    for index = 1, 4 do
+
+        HolySniperSetLabel(
+            HOLY_LOADOUT_UI.ActivityLabels[
+                index
+            ],
+            HOLY_LOADOUT_RUNTIME.Activity[
+                index
+            ]
+            or (
+                index == 1
+                and "No switches yet."
+                or ""
+            )
+        )
+    end
+
+    return true
+end
+
+function HolyLoadoutRefreshAllUI(force, snapshot)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true
+    and force ~= true then
+
+        return false
+    end
+
+    HolyLoadoutEnsureState()
+
+    snapshot =
+        type(snapshot) == "table"
+        and snapshot
+        or HolyLoadoutScanInventory()
+
+    local loadoutValues =
+        HolyLoadoutBuildLoadoutMappings()
+
+    local selectedLoadout =
+        HolyLoadoutGetSelected()
+
+    local selectedDisplay =
+        type(selectedLoadout) == "table"
+        and HOLY_LOADOUT_UI.LoadoutIdToDisplay[
+            selectedLoadout.Id
+        ]
+        or loadoutValues[1]
+
+    HolyLoadoutSetDropdownValues(
+        HOLY_LOADOUT_UI.LoadoutDropdown,
+        loadoutValues,
+        selectedDisplay
+    )
+
+    local defaultDisplay =
+        HOLY_LOADOUT_UI.LoadoutIdToDisplay[
+            HOLY_LOADOUT_STATE.DefaultLoadoutId
+        ]
+        or loadoutValues[1]
+
+    HolyLoadoutSetDropdownValues(
+        HOLY_LOADOUT_UI.DefaultDropdown,
+        loadoutValues,
+        defaultDisplay
+    )
+
+    local manualValues = {
+        "None",
+    }
+
+    for _, display in ipairs(
+        loadoutValues
+    ) do
+
+        table.insert(
+            manualValues,
+            display
+        )
+    end
+
+    local manualDisplay =
+        HOLY_LOADOUT_STATE.ManualOverrideId
+            ~= ""
+        and HOLY_LOADOUT_UI.LoadoutIdToDisplay[
+            HOLY_LOADOUT_STATE.ManualOverrideId
+        ]
+        or "None"
+
+    HolyLoadoutSetDropdownValues(
+        HOLY_LOADOUT_UI.ManualDropdown,
+        manualValues,
+        manualDisplay
+    )
+
+    local petValues =
+        HolyLoadoutBuildPetMappings(
+            snapshot
+        )
+
+    local exactDisplays =
+        HolyLoadoutSelectedExactDisplays(
+            selectedLoadout
+        )
+
+    for _, display in ipairs(
+        exactDisplays
+    ) do
+
+        local exists =
+            false
+
+        for _, value in ipairs(
+            petValues
+        ) do
+
+            if value == display then
+                exists = true
+                break
+            end
+        end
+
+        if exists ~= true then
+
+            table.insert(
+                petValues,
+                display
+            )
+        end
+    end
+
+    if #petValues <= 0 then
+
+        table.insert(
+            petValues,
+            "No pets found"
+        )
+    end
+
+    HolyLoadoutSetDropdownValues(
+        HOLY_LOADOUT_UI.ExactPetsDropdown,
+        petValues,
+        exactDisplays
+    )
+
+    if type(
+        HOLY_LOADOUT_UI.ModeDropdown
+    ) == "table"
+    and type(
+        HOLY_LOADOUT_UI.ModeDropdown.SetValue
+    ) == "function"
+    and type(selectedLoadout) == "table" then
+
+        HOLY_LOADOUT_RUNTIME.UpdatingUI =
+            true
+
+        pcall(function()
+
+            HOLY_LOADOUT_UI.ModeDropdown:SetValue(
+                selectedLoadout.Mode,
+                true
+            )
+        end)
+
+        HOLY_LOADOUT_RUNTIME.UpdatingUI =
+            false
+    end
+
+    local smartValues =
+        HolyLoadoutBuildSmartRuleMappings(
+            selectedLoadout
+        )
+
+    local currentSmartValue =
+        smartValues[1]
+
+    if HOLY_LOADOUT_UI.SelectedSmartRuleId then
+
+        for display, ruleId in pairs(
+            HOLY_LOADOUT_UI.SmartRuleDisplayToId
+        ) do
+
+            if ruleId
+                == HOLY_LOADOUT_UI.SelectedSmartRuleId then
+
+                currentSmartValue =
+                    display
+
+                break
+            end
+        end
+    end
+
+    HolyLoadoutSetDropdownValues(
+        HOLY_LOADOUT_UI.SmartRuleDropdown,
+        smartValues,
+        currentSmartValue
+    )
+
+    local automationValues =
+        HolyLoadoutBuildAutomationRuleMappings()
+
+    local currentAutomationValue =
+        automationValues[1]
+
+    if HOLY_LOADOUT_UI.SelectedAutomationRuleId then
+
+        for display, ruleId in pairs(
+            HOLY_LOADOUT_UI.AutomationRuleDisplayToId
+        ) do
+
+            if ruleId
+                == HOLY_LOADOUT_UI.SelectedAutomationRuleId then
+
+                currentAutomationValue =
+                    display
+
+                break
+            end
+        end
+    end
+
+    HolyLoadoutSetDropdownValues(
+        HOLY_LOADOUT_UI.AutomationRuleDropdown,
+        automationValues,
+        currentAutomationValue
+    )
+
+    local mode =
+        type(selectedLoadout) == "table"
+        and selectedLoadout.Mode
+        or "Exact"
+
+    HolyLoadoutSetControlDisabled(
+        HOLY_LOADOUT_UI.ExactPetsDropdown,
+        mode == "Smart"
+    )
+
+    HolyLoadoutSetControlDisabled(
+        HOLY_LOADOUT_UI.SmartRuleDropdown,
+        mode == "Exact"
+    )
+
+    HolyLoadoutRefreshPreview(
+        snapshot
+    )
+
+    HolyLoadoutRefreshActivityUI()
+
+    return true
+end
+
+function HolyLoadoutCommitChange(reason)
+
+    HolyLoadoutEnsureState()
+    HolyLoadoutQueueSave()
+    HolyLoadoutRebuildProtection()
+    HolyLoadoutRefreshAllUI(
+        true
+    )
+
+    HolyLoadoutSetStatus(
+        "Saved",
+        tostring(
+            reason
+            or "Loadout updated."
+        )
+    )
+
+    return true
+end
+
+function HolyLoadoutCreate(name)
+
+    local loadout =
+        HolyLoadoutNormalizeLoadout(
+            {
+                Name =
+                    HolyLoadoutUniqueName(
+                        name
+                    ),
+
+                Mode = "Exact",
+            },
+            #HOLY_LOADOUT_STATE.Loadouts
+                + 1
+        )
+
+    table.insert(
+        HOLY_LOADOUT_STATE.Loadouts,
+        loadout
+    )
+
+    HOLY_LOADOUT_STATE.SelectedLoadoutId =
+        loadout.Id
+
+    HolyLoadoutCommitChange(
+        "Created "
+            .. loadout.Name
+            .. "."
+    )
+
+    return loadout
+end
+
+function HolyLoadoutDuplicateSelected()
+
+    local source =
+        HolyLoadoutGetSelected()
+
+    if type(source) ~= "table" then
+        return false
+    end
+
+    local copy =
+        HolyLoadoutNormalizeLoadout(
+            {
+                Name =
+                    HolyLoadoutUniqueName(
+                        source.Name
+                        .. " Copy"
+                    ),
+
+                Enabled =
+                    source.Enabled,
+
+                Mode =
+                    source.Mode,
+
+                ExactPetIds =
+                    source.ExactPetIds,
+
+                SmartRules =
+                    source.SmartRules,
+            },
+            #HOLY_LOADOUT_STATE.Loadouts
+                + 1
+        )
+
+    copy.Id =
+        HolyLoadoutMakeId(
+            "loadout"
+        )
+
+    for _, rule in ipairs(
+        copy.SmartRules
+    ) do
+
+        rule.Id =
+            HolyLoadoutMakeId(
+                "smart"
+            )
+    end
+
+    table.insert(
+        HOLY_LOADOUT_STATE.Loadouts,
+        copy
+    )
+
+    HOLY_LOADOUT_STATE.SelectedLoadoutId =
+        copy.Id
+
+    HolyLoadoutCommitChange(
+        "Duplicated "
+            .. source.Name
+            .. "."
+    )
+
+    return true
+end
+
+function HolyLoadoutDeleteSelected()
+
+    local selected =
+        HolyLoadoutGetSelected()
+
+    if type(selected) ~= "table" then
+        return false
+    end
+
+    if #HOLY_LOADOUT_STATE.Loadouts <= 1 then
+
+        HolyNotify(
+            "HOLY Loadouts",
+            "Keep at least one loadout.",
+            3
+        )
+
+        return false
+    end
+
+    for index, loadout in ipairs(
+        HOLY_LOADOUT_STATE.Loadouts
+    ) do
+
+        if loadout.Id == selected.Id then
+
+            table.remove(
+                HOLY_LOADOUT_STATE.Loadouts,
+                index
+            )
+
+            break
+        end
+    end
+
+    for index =
+        #HOLY_LOADOUT_STATE.AutomationRules,
+        1,
+        -1
+    do
+
+        if HOLY_LOADOUT_STATE.AutomationRules[
+            index
+        ].LoadoutId == selected.Id then
+
+            table.remove(
+                HOLY_LOADOUT_STATE.AutomationRules,
+                index
+            )
+        end
+    end
+
+    if HOLY_LOADOUT_STATE.DefaultLoadoutId
+        == selected.Id then
+
+        HOLY_LOADOUT_STATE.DefaultLoadoutId =
+            HOLY_LOADOUT_STATE.Loadouts[1].Id
+    end
+
+    if HOLY_LOADOUT_STATE.ManualOverrideId
+        == selected.Id then
+
+        HOLY_LOADOUT_STATE.ManualOverrideId =
+            ""
+    end
+
+    HOLY_LOADOUT_STATE.SelectedLoadoutId =
+        HOLY_LOADOUT_STATE.Loadouts[1].Id
+
+    HolyLoadoutCommitChange(
+        "Deleted "
+            .. selected.Name
+            .. "."
+    )
+
+    return true
+end
+
+function HolyLoadoutCaptureActivePets()
+
+    local loadout =
+        HolyLoadoutGetSelected()
+
+    if type(loadout) ~= "table" then
+        return false
+    end
+
+    local snapshot =
+        HolyLoadoutScanInventory()
+
+    if snapshot.ActiveReadable ~= true
+    or snapshot.ActiveCount <= 0 then
+
+        HolyNotify(
+            "HOLY Loadouts",
+            "The game is not exposing any active PetIds right now.",
+            4
+        )
+
+        return false
+    end
+
+    local ids =
+        {}
+
+    for _, pet in ipairs(
+        snapshot.Pets
+    ) do
+
+        if pet.Active == true then
+
+            table.insert(
+                ids,
+                pet.PetId
+            )
+        end
+    end
+
+    loadout.ExactPetIds =
+        ids
+
+    if loadout.Mode == "Smart" then
+
+        loadout.Mode =
+            "Hybrid"
+    end
+
+    HolyLoadoutCommitChange(
+        "Captured "
+            .. tostring(
+                #ids
+            )
+            .. " active pet(s)."
+    )
+
+    return true
+end
+
+function HolyLoadoutOpenNameDialog(mode)
+
+    local selected =
+        HolyLoadoutGetSelected()
+
+    local enteredName =
+        mode == "Rename"
+        and type(selected) == "table"
+        and selected.Name
+        or "New Loadout"
+
+    local dialog
+
+    dialog =
+        Window:AddDialog(
+            "HolyLoadoutNameDialog",
+            {
+                Title =
+                    mode == "Rename"
+                    and "Rename Loadout"
+                    or "Create Loadout",
+
+                Description =
+                    "Use a short name that explains what this setup is for.",
+
+                AutoDismiss = false,
+                OutsideClickDismiss = true,
+
+                FooterButtons = {
+                    Cancel = {
+                        Title = "Cancel",
+                        Variant = "Ghost",
+                        Order = 1,
+
+                        Callback = function()
+
+                            dialog:Dismiss()
+                        end,
+                    },
+
+                    Save = {
+                        Title =
+                            mode == "Rename"
+                            and "Rename"
+                            or "Create",
+
+                        Variant = "Primary",
+                        Order = 2,
+
+                        Callback = function()
+
+                            local cleanName =
+                                HolyLoadoutTrim(
+                                    enteredName
+                                )
+
+                            if cleanName == "" then
+
+                                dialog:SetDescription(
+                                    "Enter a loadout name first."
+                                )
+
+                                return
+                            end
+
+                            if mode == "Rename"
+                            and type(selected) == "table" then
+
+                                selected.Name =
+                                    HolyLoadoutUniqueName(
+                                        cleanName,
+                                        selected.Id
+                                    )
+
+                                HolyLoadoutCommitChange(
+                                    "Renamed the selected loadout."
+                                )
+
+                            else
+
+                                HolyLoadoutCreate(
+                                    cleanName
+                                )
+                            end
+
+                            dialog:Dismiss()
+                        end,
+                    },
+                },
+            }
+        )
+
+    dialog:AddInput(
+        "HolyLoadoutNameInput",
+        {
+            Text = "Name",
+            Default = enteredName,
+            Placeholder = "Example: Pet Defense",
+            Numeric = false,
+            Finished = false,
+            ClearTextOnFocus = false,
+        }
+    ):OnChanged(function(value)
+
+        enteredName =
+            tostring(
+                value
+                or ""
+            )
+
+        dialog:SetButtonDisabled(
+            "Save",
+            HolyLoadoutTrim(
+                enteredName
+            ) == ""
+        )
+    end)
+end
+
+function HolyLoadoutOpenDeleteDialog()
+
+    local selected =
+        HolyLoadoutGetSelected()
+
+    if type(selected) ~= "table" then
+        return
+    end
+
+    local dialog
+
+    dialog =
+        Window:AddDialog(
+            "HolyLoadoutDeleteDialog",
+            {
+                Title =
+                    "Delete "
+                    .. selected.Name
+                    .. "?",
+
+                Description =
+                    "Automation rules using this loadout will also be removed.",
+
+                AutoDismiss = false,
+                OutsideClickDismiss = true,
+
+                FooterButtons = {
+                    Cancel = {
+                        Title = "Cancel",
+                        Variant = "Ghost",
+                        Order = 1,
+
+                        Callback = function()
+
+                            dialog:Dismiss()
+                        end,
+                    },
+
+                    Delete = {
+                        Title = "Delete",
+                        Variant = "Destructive",
+                        WaitTime = 1,
+                        Order = 2,
+
+                        Callback = function()
+
+                            HolyLoadoutDeleteSelected()
+                            dialog:Dismiss()
+                        end,
+                    },
+                },
+            }
+        )
+end
+
+function HolyLoadoutSizePriorityFromDisplay(value)
+
+    if value == "Big > Huge > Normal" then
+
+        return {
+            "Big",
+            "Huge",
+            "Normal",
+        }
+    end
+
+    if value == "Normal > Big > Huge" then
+
+        return {
+            "Normal",
+            "Big",
+            "Huge",
+        }
+    end
+
+    return {
+        "Huge",
+        "Big",
+        "Normal",
+    }
+end
+
+function HolyLoadoutSizePriorityDisplay(value)
+
+    return table.concat(
+        HolyLoadoutNormalizePriorityOrder(
+            value,
+            {
+                "Huge",
+                "Big",
+                "Normal",
+            }
+        ),
+        " > "
+    )
+end
+
+function HolyLoadoutVariantPriorityFromDisplay(value)
+
+    if value == "Normal > Rainbow" then
+
+        return {
+            "Normal",
+            "Rainbow",
+        }
+    end
+
+    return {
+        "Rainbow",
+        "Normal",
+    }
+end
+
+function HolyLoadoutVariantPriorityDisplay(value)
+
+    local normalized =
+        HolyLoadoutNormalizePriorityOrder(
+            value,
+            {
+                "Rainbow",
+                "Normal",
+            }
+        )
+
+    if normalized[1] == "Normal" then
+        return "Normal > Rainbow"
+    end
+
+    return "Rainbow > Normal"
+end
+
+function HolyLoadoutOpenSmartRuleDialog(existingRuleId)
+
+    local loadout =
+        HolyLoadoutGetSelected()
+
+    if type(loadout) ~= "table" then
+        return
+    end
+
+    local existing =
+        nil
+
+    for _, rule in ipairs(
+        loadout.SmartRules
+        or {}
+    ) do
+
+        if rule.Id == existingRuleId then
+
+            existing =
+                rule
+
+            break
+        end
+    end
+
+    local petNames =
+        HolyPetSellGetPetNameValues()
+
+    if #petNames <= 0 then
+
+        petNames = {
+            "Any",
+        }
+    end
+
+    local selectedNames =
+        type(existing) == "table"
+        and HolyLoadoutArray(
+            existing.PetNames
+        )
+        or {}
+
+    local amount =
+        type(existing) == "table"
+        and existing.Amount
+        or 1
+
+    local selectedSizes =
+        type(existing) == "table"
+        and HolyLoadoutArray(
+            existing.Sizes
+        )
+        or {
+            "Any",
+        }
+
+    local selectedVariants =
+        type(existing) == "table"
+        and HolyLoadoutArray(
+            existing.Variants
+        )
+        or {
+            "Any",
+        }
+
+    local sizePriority =
+        type(existing) == "table"
+        and HolyLoadoutSizePriorityDisplay(
+            existing.SizePriority
+        )
+        or "Huge > Big > Normal"
+
+    local variantPriority =
+        type(existing) == "table"
+        and HolyLoadoutVariantPriorityDisplay(
+            existing.VariantPriority
+        )
+        or "Rainbow > Normal"
+
+    local allowFavorite =
+        type(existing) ~= "table"
+        or existing.AllowFavorite ~= false
+
+    local preferActive =
+        type(existing) ~= "table"
+        or existing.PreferActive ~= false
+
+    local dialog
+
+    dialog =
+        Window:AddDialog(
+            "HolyLoadoutSmartRuleDialog",
+            {
+                Title =
+                    type(existing) == "table"
+                    and "Edit Smart Pet Rule"
+                    or "Add Smart Pet Rule",
+
+                Description =
+                    "HOLY selects the best matching pets in the priority order below.",
+
+                AutoDismiss = false,
+                OutsideClickDismiss = true,
+
+                FooterButtons = {
+                    Cancel = {
+                        Title = "Cancel",
+                        Variant = "Ghost",
+                        Order = 1,
+
+                        Callback = function()
+
+                            dialog:Dismiss()
+                        end,
+                    },
+
+                    Save = {
+                        Title = "Save Rule",
+                        Variant = "Primary",
+                        Order = 2,
+
+                        Callback = function()
+
+                            if #selectedNames <= 0 then
+
+                                dialog:SetDescription(
+                                    "Select at least one pet name."
+                                )
+
+                                return
+                            end
+
+                            local normalized =
+                                HolyLoadoutNormalizeSmartRule({
+                                    Id =
+                                        type(existing) == "table"
+                                        and existing.Id
+                                        or nil,
+
+                                    PetNames =
+                                        selectedNames,
+
+                                    Amount =
+                                        amount,
+
+                                    Sizes =
+                                        selectedSizes,
+
+                                    Variants =
+                                        selectedVariants,
+
+                                    SizePriority =
+                                        HolyLoadoutSizePriorityFromDisplay(
+                                            sizePriority
+                                        ),
+
+                                    VariantPriority =
+                                        HolyLoadoutVariantPriorityFromDisplay(
+                                            variantPriority
+                                        ),
+
+                                    AllowFavorite =
+                                        allowFavorite,
+
+                                    PreferActive =
+                                        preferActive,
+                                })
+
+                            if type(existing) == "table" then
+
+                                for index, rule in ipairs(
+                                    loadout.SmartRules
+                                ) do
+
+                                    if rule.Id == existing.Id then
+
+                                        loadout.SmartRules[
+                                            index
+                                        ] =
+                                            normalized
+
+                                        break
+                                    end
+                                end
+
+                            else
+
+                                table.insert(
+                                    loadout.SmartRules,
+                                    normalized
+                                )
+                            end
+
+                            HOLY_LOADOUT_UI.SelectedSmartRuleId =
+                                normalized.Id
+
+                            if loadout.Mode == "Exact" then
+
+                                loadout.Mode =
+                                    #(
+                                        loadout.ExactPetIds
+                                        or {}
+                                    ) > 0
+                                    and "Hybrid"
+                                    or "Smart"
+                            end
+
+                            HolyLoadoutCommitChange(
+                                "Saved a smart pet rule."
+                            )
+
+                            dialog:Dismiss()
+                        end,
+                    },
+                },
+            }
+        )
+
+    dialog:AddDropdown(
+        "HolyLoadoutSmartPetNames",
+        {
+            Text = "Pet Names",
+            Values = petNames,
+            Default = selectedNames,
+            Multi = true,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 8,
+        }
+    ):OnChanged(function(value)
+
+        selectedNames =
+            HolyLoadoutArray(
+                value
+            )
+    end)
+
+    dialog:AddInput(
+        "HolyLoadoutSmartAmount",
+        {
+            Text = "Amount",
+            Default = tostring(amount),
+            Numeric = true,
+            Finished = true,
+            ClearTextOnFocus = false,
+        }
+    ):OnChanged(function(value)
+
+        amount =
+            math.clamp(
+                math.floor(
+                    tonumber(
+                        value
+                    )
+                    or 1
+                ),
+                1,
+                6
+            )
+    end)
+
+    dialog:AddDropdown(
+        "HolyLoadoutSmartSizes",
+        {
+            Text = "Allowed Sizes",
+            Values = {
+                "Any",
+                "Normal",
+                "Big",
+                "Huge",
+            },
+            Default = selectedSizes,
+            Multi = true,
+            AllowNull = false,
+            Searchable = false,
+            MaxVisibleDropdownItems = 4,
+        }
+    ):OnChanged(function(value)
+
+        selectedSizes =
+            HolyLoadoutArray(
+                value
+            )
+    end)
+
+    dialog:AddDropdown(
+        "HolyLoadoutSmartSizePriority",
+        {
+            Text = "Size Priority",
+            Values = {
+                "Huge > Big > Normal",
+                "Big > Huge > Normal",
+                "Normal > Big > Huge",
+            },
+            Default = sizePriority,
+            Multi = false,
+            AllowNull = false,
+            Searchable = false,
+            MaxVisibleDropdownItems = 3,
+        }
+    ):OnChanged(function(value)
+
+        sizePriority =
+            HolyLoadoutReadSingleDropdownValue(
+                value
+            )
+    end)
+
+    dialog:AddDropdown(
+        "HolyLoadoutSmartVariants",
+        {
+            Text = "Allowed Variants",
+            Values = {
+                "Any",
+                "Normal",
+                "Rainbow",
+            },
+            Default = selectedVariants,
+            Multi = true,
+            AllowNull = false,
+            Searchable = false,
+            MaxVisibleDropdownItems = 3,
+        }
+    ):OnChanged(function(value)
+
+        selectedVariants =
+            HolyLoadoutArray(
+                value
+            )
+    end)
+
+    dialog:AddDropdown(
+        "HolyLoadoutSmartVariantPriority",
+        {
+            Text = "Variant Priority",
+            Values = {
+                "Rainbow > Normal",
+                "Normal > Rainbow",
+            },
+            Default = variantPriority,
+            Multi = false,
+            AllowNull = false,
+            Searchable = false,
+            MaxVisibleDropdownItems = 2,
+        }
+    ):OnChanged(function(value)
+
+        variantPriority =
+            HolyLoadoutReadSingleDropdownValue(
+                value
+            )
+    end)
+
+    dialog:AddToggle(
+        "HolyLoadoutSmartAllowFavorite",
+        {
+            Text = "Allow Favorite Pets",
+            Default = allowFavorite,
+        }
+    ):OnChanged(function(value)
+
+        allowFavorite =
+            value == true
+    end)
+
+    dialog:AddToggle(
+        "HolyLoadoutSmartPreferActive",
+        {
+            Text = "Prefer Already Active",
+            Default = preferActive,
+        }
+    ):OnChanged(function(value)
+
+        preferActive =
+            value == true
+    end)
+end
+
+function HolyLoadoutRemoveSelectedSmartRule()
+
+    local loadout =
+        HolyLoadoutGetSelected()
+
+    local ruleId =
+        HOLY_LOADOUT_UI.SelectedSmartRuleId
+
+    if type(loadout) ~= "table"
+    or HolyLoadoutTrim(
+        ruleId
+    ) == "" then
+
+        return false
+    end
+
+    for index, rule in ipairs(
+        loadout.SmartRules
+        or {}
+    ) do
+
+        if rule.Id == ruleId then
+
+            table.remove(
+                loadout.SmartRules,
+                index
+            )
+
+            HOLY_LOADOUT_UI.SelectedSmartRuleId =
+                nil
+
+            HolyLoadoutCommitChange(
+                "Removed the selected smart rule."
+            )
+
+            return true
+        end
+    end
+
+    return false
+end
+
+function HolyLoadoutOpenAutomationRuleDialog(existingRuleId)
+
+    HolyLoadoutBuildLoadoutMappings()
+
+    local existing =
+        HolyLoadoutGetAutomationRuleById(
+            existingRuleId
+        )
+
+    local name =
+        type(existing) == "table"
+        and existing.Name
+        or "New Automation"
+
+    local selectedLoadoutDisplay =
+        type(existing) == "table"
+        and HOLY_LOADOUT_UI.LoadoutIdToDisplay[
+            existing.LoadoutId
+        ]
+        or HOLY_LOADOUT_UI.LoadoutIdToDisplay[
+            HOLY_LOADOUT_STATE.SelectedLoadoutId
+        ]
+
+    local triggers =
+        type(existing) == "table"
+        and HolyLoadoutArray(
+            existing.Triggers
+        )
+        or {}
+
+    local matchMode =
+        type(existing) == "table"
+        and existing.Match
+        or "Any"
+
+    local priority =
+        type(existing) == "table"
+        and existing.Priority
+        or 50
+
+    local minimumDuration =
+        type(existing) == "table"
+        and existing.MinimumDuration
+        or 0
+
+    local enabled =
+        type(existing) ~= "table"
+        or existing.Enabled ~= false
+
+    local notify =
+        type(existing) == "table"
+        and existing.Notify == true
+
+    local dialog
+
+    dialog =
+        Window:AddDialog(
+            "HolyLoadoutAutomationRuleDialog",
+            {
+                Title =
+                    type(existing) == "table"
+                    and "Edit Automation Rule"
+                    or "Add Automation Rule",
+
+                Description =
+                    "When the selected triggers match, this loadout competes by priority.",
+
+                AutoDismiss = false,
+                OutsideClickDismiss = true,
+
+                FooterButtons = {
+                    Cancel = {
+                        Title = "Cancel",
+                        Variant = "Ghost",
+                        Order = 1,
+
+                        Callback = function()
+
+                            dialog:Dismiss()
+                        end,
+                    },
+
+                    Save = {
+                        Title = "Save Rule",
+                        Variant = "Primary",
+                        Order = 2,
+
+                        Callback = function()
+
+                            local targetId =
+                                HOLY_LOADOUT_UI.LoadoutDisplayToId[
+                                    selectedLoadoutDisplay
+                                ]
+
+                            if HolyLoadoutTrim(
+                                name
+                            ) == "" then
+
+                                dialog:SetDescription(
+                                    "Enter a rule name first."
+                                )
+
+                                return
+                            end
+
+                            if targetId == nil then
+
+                                dialog:SetDescription(
+                                    "Choose a valid loadout."
+                                )
+
+                                return
+                            end
+
+                            if #triggers <= 0 then
+
+                                dialog:SetDescription(
+                                    "Select at least one trigger."
+                                )
+
+                                return
+                            end
+
+                            local normalized =
+                                HolyLoadoutNormalizeAutomationRule(
+                                    {
+                                        Id =
+                                            type(existing) == "table"
+                                            and existing.Id
+                                            or nil,
+
+                                        Name =
+                                            name,
+
+                                        Enabled =
+                                            enabled,
+
+                                        LoadoutId =
+                                            targetId,
+
+                                        Match =
+                                            matchMode,
+
+                                        Triggers =
+                                            triggers,
+
+                                        Priority =
+                                            priority,
+
+                                        MinimumDuration =
+                                            minimumDuration,
+
+                                        Notify =
+                                            notify,
+                                    },
+                                    #HOLY_LOADOUT_STATE.AutomationRules
+                                        + 1
+                                )
+
+                            if type(existing) == "table" then
+
+                                for index, rule in ipairs(
+                                    HOLY_LOADOUT_STATE.AutomationRules
+                                ) do
+
+                                    if rule.Id == existing.Id then
+
+                                        HOLY_LOADOUT_STATE.AutomationRules[
+                                            index
+                                        ] =
+                                            normalized
+
+                                        break
+                                    end
+                                end
+
+                            else
+
+                                table.insert(
+                                    HOLY_LOADOUT_STATE.AutomationRules,
+                                    normalized
+                                )
+                            end
+
+                            HOLY_LOADOUT_UI.SelectedAutomationRuleId =
+                                normalized.Id
+
+                            HolyLoadoutCommitChange(
+                                "Saved automation rule "
+                                    .. normalized.Name
+                                    .. "."
+                            )
+
+                            HolyLoadoutEvaluateAutomation(
+                                true
+                            )
+
+                            dialog:Dismiss()
+                        end,
+                    },
+                },
+            }
+        )
+
+    dialog:AddInput(
+        "HolyLoadoutAutomationName",
+        {
+            Text = "Rule Name",
+            Default = name,
+            Placeholder = "Example: Pet Defense",
+            Numeric = false,
+            Finished = false,
+            ClearTextOnFocus = false,
+        }
+    ):OnChanged(function(value)
+
+        name =
+            tostring(
+                value
+                or ""
+            )
+    end)
+
+    dialog:AddDropdown(
+        "HolyLoadoutAutomationTarget",
+        {
+            Text = "Use Loadout",
+            Values =
+                HolyLoadoutBuildLoadoutMappings(),
+            Default =
+                selectedLoadoutDisplay,
+            Multi = false,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 7,
+        }
+    ):OnChanged(function(value)
+
+        selectedLoadoutDisplay =
+            HolyLoadoutReadSingleDropdownValue(
+                value
+            )
+    end)
+
+    dialog:AddDropdown(
+        "HolyLoadoutAutomationTriggers",
+        {
+            Text = "When",
+            Values =
+                HOLY_LOADOUT_TRIGGER_VALUES,
+            Default =
+                triggers,
+            Multi = true,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 8,
+        }
+    ):OnChanged(function(value)
+
+        triggers =
+            HolyLoadoutArray(
+                value
+            )
+    end)
+
+    dialog:AddDropdown(
+        "HolyLoadoutAutomationMatch",
+        {
+            Text = "Match",
+            Values = {
+                "Any",
+                "All",
+            },
+            Default = matchMode,
+            Multi = false,
+            AllowNull = false,
+            Searchable = false,
+            MaxVisibleDropdownItems = 2,
+        }
+    ):OnChanged(function(value)
+
+        matchMode =
+            HolyLoadoutReadSingleDropdownValue(
+                value
+            )
+    end)
+
+    dialog:AddInput(
+        "HolyLoadoutAutomationPriority",
+        {
+            Text = "Priority",
+            Default = tostring(priority),
+            Numeric = true,
+            Finished = true,
+            ClearTextOnFocus = false,
+            Tooltip = "Higher priority wins. Range: 0 to 100.",
+        }
+    ):OnChanged(function(value)
+
+        priority =
+            math.clamp(
+                math.floor(
+                    tonumber(
+                        value
+                    )
+                    or 50
+                ),
+                0,
+                100
+            )
+    end)
+
+    dialog:AddInput(
+        "HolyLoadoutAutomationMinimumDuration",
+        {
+            Text = "Minimum Active Seconds",
+            Default = tostring(minimumDuration),
+            Numeric = true,
+            Finished = true,
+            ClearTextOnFocus = false,
+            Tooltip = "Prevents rapid switching when a trigger flickers.",
+        }
+    ):OnChanged(function(value)
+
+        minimumDuration =
+            math.clamp(
+                tonumber(
+                    value
+                )
+                or 0,
+                0,
+                300
+            )
+    end)
+
+    dialog:AddToggle(
+        "HolyLoadoutAutomationEnabled",
+        {
+            Text = "Rule Enabled",
+            Default = enabled,
+        }
+    ):OnChanged(function(value)
+
+        enabled =
+            value == true
+    end)
+
+    dialog:AddToggle(
+        "HolyLoadoutAutomationNotify",
+        {
+            Text = "Notify on Activation",
+            Default = notify,
+        }
+    ):OnChanged(function(value)
+
+        notify =
+            value == true
+    end)
+end
+
+function HolyLoadoutRemoveSelectedAutomationRule()
+
+    local ruleId =
+        HOLY_LOADOUT_UI.SelectedAutomationRuleId
+
+    if HolyLoadoutTrim(
+        ruleId
+    ) == "" then
+
+        return false
+    end
+
+    for index, rule in ipairs(
+        HOLY_LOADOUT_STATE.AutomationRules
+    ) do
+
+        if rule.Id == ruleId then
+
+            table.remove(
+                HOLY_LOADOUT_STATE.AutomationRules,
+                index
+            )
+
+            HOLY_LOADOUT_UI.SelectedAutomationRuleId =
+                nil
+
+            HolyLoadoutCommitChange(
+                "Removed automation rule "
+                    .. rule.Name
+                    .. "."
+            )
+
+            HolyLoadoutEvaluateAutomation(
+                true
+            )
+
+            return true
+        end
+    end
+
+    return false
+end
+
+HOLY_LOADOUT_UI.LoadoutDropdown =
+    HOLY_LOADOUT_UI.LibraryBox:AddDropdown(
+        "HolyLoadoutSelected",
+        {
+            Text = "Selected Loadout",
+            Values = {
+                "Default",
+            },
+            Default = 1,
+            Multi = false,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 7,
+            Tooltip = "Choose the loadout to edit or apply.",
+        }
+    )
+
+HOLY_LOADOUT_UI.LoadoutDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local display =
+        HolyLoadoutReadSingleDropdownValue(
+            value
+        )
+
+    local loadoutId =
+        HOLY_LOADOUT_UI.LoadoutDisplayToId[
+            display
+        ]
+
+    if loadoutId ~= nil then
+
+        HOLY_LOADOUT_STATE.SelectedLoadoutId =
+            loadoutId
+
+        HOLY_LOADOUT_UI.SelectedSmartRuleId =
+            nil
+
+        HolyLoadoutQueueSave()
+        HolyLoadoutRefreshAllUI(
+            true
+        )
+    end
+end)
+
+HOLY_LOADOUT_UI.NewButton =
+    HOLY_LOADOUT_UI.LibraryBox:AddButton({
+        Text = "New",
+        Tooltip = "Create a new reusable loadout.",
+
+        Func = function()
+
+            HolyLoadoutOpenNameDialog(
+                "Create"
+            )
+        end,
+    })
+
+HOLY_LOADOUT_UI.NewButton:AddButton({
+    Text = "Apply",
+    Tooltip = "Apply the selected loadout now.",
+
+    Func = function()
+
+        local selected =
+            HolyLoadoutGetSelected()
+
+        if type(selected) == "table" then
+
+            HolyLoadoutRequestApply(
+                selected.Id,
+                "Manual Apply",
+                true
+            )
+        end
+    end,
+})
+
+HOLY_LOADOUT_UI.RenameButton =
+    HOLY_LOADOUT_UI.LibraryBox:AddButton({
+        Text = "Rename",
+        Tooltip = "Rename the selected loadout.",
+
+        Func = function()
+
+            HolyLoadoutOpenNameDialog(
+                "Rename"
+            )
+        end,
+    })
+
+HOLY_LOADOUT_UI.RenameButton:AddButton({
+    Text = "Duplicate",
+    Tooltip = "Copy this loadout and all of its pet rules.",
+
+    Func = function()
+
+        HolyLoadoutDuplicateSelected()
+    end,
+})
+
+HOLY_LOADOUT_UI.DeleteButton =
+    HOLY_LOADOUT_UI.LibraryBox:AddButton({
+        Text = "Delete",
+        Tooltip = "Delete the selected loadout after confirmation.",
+
+        Func = function()
+
+            HolyLoadoutOpenDeleteDialog()
+        end,
+    })
+
+HOLY_LOADOUT_UI.DeleteButton:AddButton({
+    Text = "Use Active Pets",
+    Tooltip = "Replace exact pets with the PetIds currently active in game.",
+
+    Func = function()
+
+        HolyLoadoutCaptureActivePets()
+    end,
+})
+
+HOLY_LOADOUT_UI.ModeDropdown =
+    HOLY_LOADOUT_UI.BuilderBox:AddDropdown(
+        "HolyLoadoutMode",
+        {
+            Text = "Selection Mode",
+            Values = {
+                "Exact",
+                "Smart",
+                "Hybrid",
+            },
+            Default = "Exact",
+            Multi = false,
+            AllowNull = false,
+            Searchable = false,
+            MaxVisibleDropdownItems = 3,
+            Tooltip = "Exact saves PetIds. Smart finds matching pets. Hybrid keeps exact pets and fills remaining slots.",
+        }
+    )
+
+HOLY_LOADOUT_UI.ModeDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local selected =
+        HolyLoadoutGetSelected()
+
+    if type(selected) == "table" then
+
+        selected.Mode =
+            HolyLoadoutNormalizeMode(
+                HolyLoadoutReadSingleDropdownValue(
+                    value
+                )
+            )
+
+        HolyLoadoutCommitChange(
+            "Changed selection mode to "
+                .. selected.Mode
+                .. "."
+        )
+    end
+end)
+
+HOLY_LOADOUT_UI.ExactPetsDropdown =
+    HOLY_LOADOUT_UI.BuilderBox:AddDropdown(
+        "HolyLoadoutExactPets",
+        {
+            Text = "Exact Pets",
+            Values = {
+                "No pets found",
+            },
+            Default = {},
+            Multi = true,
+            AllowNull = true,
+            Searchable = true,
+            MaxVisibleDropdownItems = 8,
+            Tooltip = "Choose exact inventory pets by their unique PetId.",
+        }
+    )
+
+HOLY_LOADOUT_UI.ExactPetsDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local selected =
+        HolyLoadoutGetSelected()
+
+    if type(selected) ~= "table" then
+        return
+    end
+
+    local ids =
+        {}
+
+    local seen =
+        {}
+
+    for _, display in ipairs(
+        HolyLoadoutArray(
+            value
+        )
+    ) do
+
+        local petId =
+            HOLY_LOADOUT_UI.PetDisplayToId[
+                display
+            ]
+
+        if petId ~= nil
+        and seen[
+            petId
+        ] ~= true then
+
+            seen[
+                petId
+            ] =
+                true
+
+            table.insert(
+                ids,
+                petId
+            )
+        end
+    end
+
+    selected.ExactPetIds =
+        ids
+
+    HolyLoadoutCommitChange(
+        "Saved "
+            .. tostring(
+                #ids
+            )
+            .. " exact pet(s)."
+    )
+end)
+
+HOLY_LOADOUT_UI.SmartRuleDropdown =
+    HOLY_LOADOUT_UI.BuilderBox:AddDropdown(
+        "HolyLoadoutSmartRule",
+        {
+            Text = "Smart Rules",
+            Values = {
+                "No smart rules",
+            },
+            Default = 1,
+            Multi = false,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 6,
+            Tooltip = "Select a smart rule to edit or remove.",
+        }
+    )
+
+HOLY_LOADOUT_UI.SmartRuleDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    HOLY_LOADOUT_UI.SelectedSmartRuleId =
+        HOLY_LOADOUT_UI.SmartRuleDisplayToId[
+            HolyLoadoutReadSingleDropdownValue(
+                value
+            )
+        ]
+end)
+
+HOLY_LOADOUT_UI.AddSmartRuleButton =
+    HOLY_LOADOUT_UI.BuilderBox:AddButton({
+        Text = "Add Smart Rule",
+        Tooltip = "Add a pet matching and priority rule.",
+
+        Func = function()
+
+            HolyLoadoutOpenSmartRuleDialog(
+                nil
+            )
+        end,
+    })
+
+HOLY_LOADOUT_UI.AddSmartRuleButton:AddButton({
+    Text = "Edit",
+    Tooltip = "Edit the selected smart rule.",
+
+    Func = function()
+
+        if HOLY_LOADOUT_UI.SelectedSmartRuleId then
+
+            HolyLoadoutOpenSmartRuleDialog(
+                HOLY_LOADOUT_UI.SelectedSmartRuleId
+            )
+
+        else
+
+            HolyNotify(
+                "HOLY Loadouts",
+                "Select a smart rule first.",
+                3
+            )
+        end
+    end,
+})
+
+HOLY_LOADOUT_UI.RemoveSmartRuleButton =
+    HOLY_LOADOUT_UI.BuilderBox:AddButton({
+        Text = "Remove Rule",
+        Tooltip = "Remove the selected smart rule.",
+
+        Func = function()
+
+            HolyLoadoutRemoveSelectedSmartRule()
+        end,
+    })
+
+HOLY_LOADOUT_UI.RemoveSmartRuleButton:AddButton({
+    Text = "Refresh Inventory",
+    Tooltip = "Rescan pets and rebuild the preview.",
+
+    Func = function()
+
+        HolyLoadoutScheduleRefresh(
+            "manual refresh"
+        )
+
+        HolyLoadoutRefreshAllUI(
+            true
+        )
+    end,
+})
+
+HOLY_LOADOUT_UI.PreviewBox:AddUIPassthrough(
+    "HolyLoadoutPreviewPassthrough",
+    {
+        Instance =
+            HolyLoadoutCreatePreviewSurface(),
+
+        Height = 222,
+        Visible = true,
+    }
+)
+
+HOLY_LOADOUT_UI.AutoToggle =
+    HOLY_LOADOUT_UI.AutomationBox:AddToggle(
+        "HolyLoadoutAutoEnabled",
+        {
+            Text = "Auto Loadouts",
+            Default =
+                HOLY_LOADOUT_STATE.AutoEnabled == true,
+            Tooltip = "Automatically applies the highest-priority active rule, otherwise the default loadout.",
+        }
+    )
+
+HOLY_LOADOUT_UI.AutoToggle:OnChanged(function(value)
+
+    HOLY_LOADOUT_STATE.AutoEnabled =
+        value == true
+
+    HolyLoadoutQueueSave()
+
+    if value == true then
+
+        HolyLoadoutEvaluateAutomation(
+            true
+        )
+
+    else
+
+        HolyLoadoutSetStatus(
+            "Automation paused",
+            "Manual Apply and Manual Override still work."
+        )
+    end
+end)
+
+HOLY_LOADOUT_UI.DefaultDropdown =
+    HOLY_LOADOUT_UI.AutomationBox:AddDropdown(
+        "HolyLoadoutDefault",
+        {
+            Text = "Default Loadout",
+            Values = {
+                "Default",
+            },
+            Default = 1,
+            Multi = false,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 7,
+            Tooltip = "Used when no temporary automation rule is active.",
+        }
+    )
+
+HOLY_LOADOUT_UI.DefaultDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local loadoutId =
+        HOLY_LOADOUT_UI.LoadoutDisplayToId[
+            HolyLoadoutReadSingleDropdownValue(
+                value
+            )
+        ]
+
+    if loadoutId ~= nil then
+
+        HOLY_LOADOUT_STATE.DefaultLoadoutId =
+            loadoutId
+
+        HolyLoadoutQueueSave()
+        HolyLoadoutEvaluateAutomation(
+            true
+        )
+    end
+end)
+
+HOLY_LOADOUT_UI.ManualDropdown =
+    HOLY_LOADOUT_UI.AutomationBox:AddDropdown(
+        "HolyLoadoutManualOverride",
+        {
+            Text = "Manual Override",
+            Values = {
+                "None",
+            },
+            Default = "None",
+            Multi = false,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 7,
+            Tooltip = "Temporarily wins over every automation rule until cleared.",
+        }
+    )
+
+HOLY_LOADOUT_UI.ManualDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    local display =
+        HolyLoadoutReadSingleDropdownValue(
+            value
+        )
+
+    HOLY_LOADOUT_STATE.ManualOverrideId =
+        display == "None"
+        and ""
+        or (
+            HOLY_LOADOUT_UI.LoadoutDisplayToId[
+                display
+            ]
+            or ""
+        )
+
+    HolyLoadoutQueueSave()
+    HolyLoadoutEvaluateAutomation(
+        true
+    )
+end)
+
+HOLY_LOADOUT_UI.SwitchCooldownInput =
+    HOLY_LOADOUT_UI.AutomationBox:AddInput(
+        "HolyLoadoutSwitchCooldown",
+        {
+            Text = "Switch Cooldown",
+            Default =
+                tostring(
+                    HOLY_LOADOUT_STATE.SwitchCooldown
+                ),
+            Placeholder = "0.50",
+            Numeric = true,
+            Finished = true,
+            ClearTextOnFocus = false,
+            Tooltip = "Minimum seconds between team switches. Range: 0 to 10.",
+        }
+    )
+
+HOLY_LOADOUT_UI.SwitchCooldownInput:OnChanged(function(value)
+
+    HOLY_LOADOUT_STATE.SwitchCooldown =
+        math.clamp(
+            tonumber(
+                value
+            )
+            or 0.50,
+            0,
+            10
+        )
+
+    HolyLoadoutQueueSave()
+end)
+
+HOLY_LOADOUT_UI.AutomationRuleDropdown =
+    HOLY_LOADOUT_UI.AutomationBox:AddDropdown(
+        "HolyLoadoutAutomationRule",
+        {
+            Text = "Automation Rules",
+            Values = {
+                "No automation rules",
+            },
+            Default = 1,
+            Multi = false,
+            AllowNull = false,
+            Searchable = true,
+            MaxVisibleDropdownItems = 6,
+            Tooltip = "Select a rule to edit or remove.",
+        }
+    )
+
+HOLY_LOADOUT_UI.AutomationRuleDropdown:OnChanged(function(value)
+
+    if HOLY_LOADOUT_RUNTIME.UpdatingUI == true then
+        return
+    end
+
+    HOLY_LOADOUT_UI.SelectedAutomationRuleId =
+        HOLY_LOADOUT_UI.AutomationRuleDisplayToId[
+            HolyLoadoutReadSingleDropdownValue(
+                value
+            )
+        ]
+end)
+
+HOLY_LOADOUT_UI.AddAutomationButton =
+    HOLY_LOADOUT_UI.AutomationBox:AddButton({
+        Text = "Add Rule",
+        Tooltip = "Create a reusable trigger-to-loadout automation rule.",
+
+        Func = function()
+
+            HolyLoadoutOpenAutomationRuleDialog(
+                nil
+            )
+        end,
+    })
+
+HOLY_LOADOUT_UI.AddAutomationButton:AddButton({
+    Text = "Edit",
+    Tooltip = "Edit the selected automation rule.",
+
+    Func = function()
+
+        if HOLY_LOADOUT_UI.SelectedAutomationRuleId then
+
+            HolyLoadoutOpenAutomationRuleDialog(
+                HOLY_LOADOUT_UI.SelectedAutomationRuleId
+            )
+
+        else
+
+            HolyNotify(
+                "HOLY Loadouts",
+                "Select an automation rule first.",
+                3
+            )
+        end
+    end,
+})
+
+HOLY_LOADOUT_UI.RemoveAutomationButton =
+    HOLY_LOADOUT_UI.AutomationBox:AddButton({
+        Text = "Remove Rule",
+        Tooltip = "Remove the selected automation rule.",
+
+        Func = function()
+
+            HolyLoadoutRemoveSelectedAutomationRule()
+        end,
+    })
+
+HOLY_LOADOUT_UI.RemoveAutomationButton:AddButton({
+    Text = "Apply Winner",
+    Tooltip = "Immediately reevaluate priorities and apply the winning rule.",
+
+    Func = function()
+
+        HolyLoadoutEvaluateAutomation(
+            true
+        )
+    end,
+})
+
+HOLY_LOADOUT_UI.StatusLabel =
+    HolySniperAddLabel(
+        HOLY_LOADOUT_UI.ActivityBox,
+        "Status: Ready"
+    )
+
+HOLY_LOADOUT_UI.DetailLabel =
+    HolySniperAddLabel(
+        HOLY_LOADOUT_UI.ActivityBox,
+        "Create or select a loadout."
+    )
+
+for index = 1, 4 do
+
+    HOLY_LOADOUT_UI.ActivityLabels[
+        index
+    ] =
+        HolySniperAddLabel(
+            HOLY_LOADOUT_UI.ActivityBox,
+            index == 1
+            and "No switches yet."
+            or ""
+        )
+end
+
+HOLY_LOADOUT_UI.ActivityActions =
+    HOLY_LOADOUT_UI.ActivityBox:AddButton({
+        Text = "Apply Again",
+        Tooltip = "Reapply the currently active or selected loadout.",
+
+        Func = function()
+
+            local loadoutId =
+                HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+                    ~= ""
+                and HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+                or HOLY_LOADOUT_STATE.SelectedLoadoutId
+
+            HolyLoadoutRequestApply(
+                loadoutId,
+                "Apply Again",
+                true
+            )
+        end,
+    })
+
+HOLY_LOADOUT_UI.ActivityActions:AddButton({
+    Text = "Clear Override",
+    Tooltip = "Clear Manual Override and recalculate the winning rule.",
+
+    Func = function()
+
+        HOLY_LOADOUT_STATE.ManualOverrideId =
+            ""
+
+        HolyLoadoutQueueSave()
+        HolyLoadoutRefreshAllUI(
+            true
+        )
+        HolyLoadoutEvaluateAutomation(
+            true
+        )
+    end,
+})
+
+HolyLoadoutRefreshAllUI(
+    true
+)
+
+HolyLoadoutStart()
 
 local MainQuickBox =
     HolyAddLeftGroupbox(
