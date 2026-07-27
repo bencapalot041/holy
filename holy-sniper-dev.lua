@@ -121701,18 +121701,6 @@ if type(HOLY_MAIL_RUNTIME) == "table" then
         HOLY_MAIL_RUNTIME.DeliveryState.Stop = true
     end
 
-    if type(HolyMailDisconnectConnections) == "function" then
-        pcall(
-            HolyMailDisconnectConnections
-        )
-    end
-
-    if type(HolyMailReleaseCursor) == "function" then
-        pcall(
-            HolyMailReleaseCursor
-        )
-    end
-
     if typeof(HOLY_MAIL_RUNTIME.Gui) == "Instance" then
         pcall(function()
             HOLY_MAIL_RUNTIME.Gui:Destroy()
@@ -122069,17 +122057,6 @@ HOLY_MAIL_RUNTIME = {
     SetMinimized = nil,
     ApplyScale = nil,
     UpdateQuota = nil,
-
-    Connections = {},
-
-    CursorOwned = false,
-    CursorOriginalIconEnabled = nil,
-    CursorOriginalBehavior = nil,
-    CursorBindingName =
-        "HOLY_MAIL_CURSOR_"
-        .. tostring(
-            LocalPlayer.UserId
-        ),
 
     SyncingToggle = false,
     SyncingInboxToggle = false,
@@ -123838,344 +123815,6 @@ function HolyMailStorePosition(position)
     return true
 end
 
-function HolyMailTrackConnection(connection)
-    if typeof(connection) ~= "RBXScriptConnection" then
-        return connection
-    end
-
-    HOLY_MAIL_RUNTIME.Connections =
-        type(HOLY_MAIL_RUNTIME.Connections) == "table"
-        and HOLY_MAIL_RUNTIME.Connections
-        or {}
-
-    table.insert(
-        HOLY_MAIL_RUNTIME.Connections,
-        connection
-    )
-
-    return connection
-end
-
-function HolyMailDisconnectConnections()
-    local connections =
-        type(HOLY_MAIL_RUNTIME.Connections) == "table"
-        and HOLY_MAIL_RUNTIME.Connections
-        or {}
-
-    HOLY_MAIL_RUNTIME.Connections =
-        {}
-
-    for _, connection in ipairs(
-        connections
-    ) do
-        if typeof(connection) == "RBXScriptConnection" then
-            pcall(function()
-                connection:Disconnect()
-            end)
-        end
-    end
-
-    return true
-end
-
-function HolyMailViewportSize()
-    local camera =
-        workspace.CurrentCamera
-
-    local viewport =
-        camera
-        and camera.ViewportSize
-        or Vector2.new(
-            1920,
-            1080
-        )
-
-    if viewport.X <= 0
-        or viewport.Y <= 0
-    then
-        viewport =
-            Vector2.new(
-                1920,
-                1080
-            )
-    end
-
-    return viewport
-end
-
-function HolyMailDisplayedWindowSize(
-    window,
-    viewport
-)
-    if typeof(window) ~= "Instance" then
-        return Vector2.zero
-    end
-
-    viewport =
-        typeof(viewport) == "Vector2"
-        and viewport
-        or HolyMailViewportSize()
-
-    local size =
-        window.Size
-
-    local width =
-        viewport.X
-        * size.X.Scale
-        + size.X.Offset
-
-    local height =
-        viewport.Y
-        * size.Y.Scale
-        + size.Y.Offset
-
-    local scale =
-        1
-
-    local scaleObject =
-        window:FindFirstChildOfClass(
-            "UIScale"
-        )
-
-    if typeof(scaleObject) == "Instance" then
-        scale =
-            math.max(
-                0.01,
-                tonumber(scaleObject.Scale)
-                or 1
-            )
-    end
-
-    return Vector2.new(
-        math.max(
-            1,
-            width * scale
-        ),
-        math.max(
-            1,
-            height * scale
-        )
-    )
-end
-
-function HolyMailClampHudPosition(
-    savePosition,
-    requestedPosition
-)
-    local window =
-        HOLY_MAIL_RUNTIME.Window
-
-    if typeof(window) ~= "Instance"
-        or window.Parent == nil
-    then
-        return false
-    end
-
-    local viewport =
-        HolyMailViewportSize()
-
-    local displayedSize =
-        HolyMailDisplayedWindowSize(
-            window,
-            viewport
-        )
-
-    local position =
-        typeof(requestedPosition) == "UDim2"
-        and requestedPosition
-        or window.Position
-
-    local anchor =
-        window.AnchorPoint
-
-    local currentX =
-        viewport.X
-        * position.X.Scale
-        + position.X.Offset
-
-    local currentY =
-        viewport.Y
-        * position.Y.Scale
-        + position.Y.Offset
-
-    local margin =
-        12
-
-    local minimumX =
-        margin
-        + displayedSize.X
-        * anchor.X
-
-    local maximumX =
-        viewport.X
-        - margin
-        - displayedSize.X
-        * (
-            1
-            - anchor.X
-        )
-
-    local minimumY =
-        margin
-        + displayedSize.Y
-        * anchor.Y
-
-    local maximumY =
-        viewport.Y
-        - margin
-        - displayedSize.Y
-        * (
-            1
-            - anchor.Y
-        )
-
-    local clampedX =
-        minimumX <= maximumX
-        and math.clamp(
-            currentX,
-            minimumX,
-            maximumX
-        )
-        or viewport.X / 2
-
-    local clampedY =
-        minimumY <= maximumY
-        and math.clamp(
-            currentY,
-            minimumY,
-            maximumY
-        )
-        or viewport.Y / 2
-
-    local deltaX =
-        clampedX
-        - currentX
-
-    local deltaY =
-        clampedY
-        - currentY
-
-    if typeof(requestedPosition) == "UDim2"
-        or math.abs(deltaX) > 0.25
-        or math.abs(deltaY) > 0.25
-    then
-        window.Position =
-            UDim2.new(
-                position.X.Scale,
-                position.X.Offset
-                    + deltaX,
-                position.Y.Scale,
-                position.Y.Offset
-                    + deltaY
-            )
-    end
-
-    if savePosition == true then
-        HolyMailStorePosition(
-            window.Position
-        )
-    end
-
-    return true
-end
-
-function HolyMailReleaseCursor()
-    local runtime =
-        HOLY_MAIL_RUNTIME
-
-    pcall(function()
-        RunService:UnbindFromRenderStep(
-            runtime.CursorBindingName
-        )
-    end)
-
-    if runtime.CursorOwned == true then
-        if type(
-            runtime.CursorOriginalIconEnabled
-        ) == "boolean" then
-            UserInputService.MouseIconEnabled =
-                runtime.CursorOriginalIconEnabled
-        end
-
-        if typeof(
-            runtime.CursorOriginalBehavior
-        ) == "EnumItem" then
-            UserInputService.MouseBehavior =
-                runtime.CursorOriginalBehavior
-        end
-    end
-
-    runtime.CursorOwned =
-        false
-
-    runtime.CursorOriginalIconEnabled =
-        nil
-
-    runtime.CursorOriginalBehavior =
-        nil
-
-    return true
-end
-
-function HolyMailAcquireCursor()
-    if UserInputService.MouseEnabled ~= true then
-        return false
-    end
-
-    local runtime =
-        HOLY_MAIL_RUNTIME
-
-    if runtime.CursorOwned ~= true then
-        runtime.CursorOriginalIconEnabled =
-            UserInputService.MouseIconEnabled
-
-        runtime.CursorOriginalBehavior =
-            UserInputService.MouseBehavior
-    end
-
-    runtime.CursorOwned =
-        true
-
-    pcall(function()
-        RunService:UnbindFromRenderStep(
-            runtime.CursorBindingName
-        )
-    end)
-
-    RunService:BindToRenderStep(
-        runtime.CursorBindingName,
-        Enum.RenderPriority.Last.Value
-            + 1,
-        function()
-            local gui =
-                runtime.Gui
-
-            if typeof(gui) ~= "Instance"
-                or gui.Parent == nil
-            then
-                task.defer(
-                    HolyMailReleaseCursor
-                )
-
-                return
-            end
-
-            local libraryCursorActive =
-                type(Library) == "table"
-                and Library.Toggled == true
-                and Library.ShowCustomCursor == true
-
-            UserInputService.MouseIconEnabled =
-                not libraryCursorActive
-
-            UserInputService.MouseBehavior =
-                Enum.MouseBehavior.Default
-        end
-    )
-
-    return true
-end
-
 function HolyMailRefreshControlUI()
     HolyMailCheckDay()
 
@@ -124981,9 +124620,6 @@ function HolyMailCreateHud()
     local oldGui =
         playerGui:FindFirstChild("HolyMailV7")
 
-    HolyMailDisconnectConnections()
-    HolyMailReleaseCursor()
-
     if oldGui then
         oldGui:Destroy()
     end
@@ -125391,8 +125027,6 @@ function HolyMailCreateHud()
     HOLY_MAIL_RUNTIME.Gui =
         gui
 
-    HolyMailAcquireCursor()
-
     local window =
         create(
             "Frame",
@@ -125462,16 +125096,6 @@ function HolyMailCreateHud()
             responsiveScale
             * selectedScale
 
-        task.defer(function()
-            if HOLY_MAIL_RUNTIME.Window
-                == window
-            then
-                HolyMailClampHudPosition(
-                    true
-                )
-            end
-        end)
-
         return true
     end
 
@@ -125479,46 +125103,24 @@ function HolyMailCreateHud()
         applyHudScale
 
     local function resize()
+        local camera =
+            workspace.CurrentCamera
+
         local viewport =
-            HolyMailViewportSize()
-
-        local _,
-            selectedScale =
-            HolyMailNormalizeScale(
-                HOLY_MAIL_STATE.HudScale
-                or "100%"
-            )
-
-        local safeWidth =
-            math.max(
-                1,
-                viewport.X
-                - 24
-            )
-
-        local safeHeight =
-            math.max(
-                1,
-                viewport.Y
-                - 24
-            )
+            camera
+                and camera.ViewportSize
+                or Vector2.new(
+                    1920,
+                    1080
+                )
 
         responsiveScale =
             math.clamp(
                 math.min(
-                    safeWidth
-                        / (
-                            920
-                            * selectedScale
-                        ),
-                    safeHeight
-                        / (
-                            700
-                            * selectedScale
-                        ),
-                    1
+                    viewport.X / 980,
+                    viewport.Y / 770
                 ),
-                0.1,
+                0.62,
                 1
             )
 
@@ -125528,13 +125130,11 @@ function HolyMailCreateHud()
     resize()
 
     if workspace.CurrentCamera then
-        HolyMailTrackConnection(
-            workspace.CurrentCamera
-                :GetPropertyChangedSignal(
-                    "ViewportSize"
-                )
-                :Connect(resize)
-        )
+        workspace.CurrentCamera
+            :GetPropertyChangedSignal(
+                "ViewportSize"
+            )
+            :Connect(resize)
     end
 
     local header =
@@ -135077,19 +134677,6 @@ function HolyMailCreateHud()
         end
 
         updateQuota()
-
-        task.delay(
-            0.14,
-            function()
-                if HOLY_MAIL_RUNTIME.Window
-                    == window
-                then
-                    HolyMailClampHudPosition(
-                        true
-                    )
-                end
-            end
-        )
     end
 
     HOLY_MAIL_RUNTIME.SetMinimized =
@@ -135124,80 +134711,59 @@ function HolyMailCreateHud()
         local dragging =
             false
 
-        local dragInput
         local startInput
         local startPosition
 
-        HolyMailTrackConnection(
-            header.InputBegan:Connect(function(input)
-                if input.UserInputType
-                    == Enum.UserInputType.MouseButton1
-                    or input.UserInputType
-                        == Enum.UserInputType.Touch
-                then
-                    dragging =
-                        true
+        header.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
+                dragging =
+                    true
 
-                    dragInput =
-                        input
+                startInput =
+                    input.Position
 
-                    startInput =
-                        input.Position
+                startPosition =
+                    window.Position
+            end
+        end)
 
-                    startPosition =
-                        window.Position
-                end
-            end)
-        )
-
-        HolyMailTrackConnection(
-            UserInputService.InputChanged:Connect(function(input)
-                if dragging
-                    and (
-                        input.UserInputType
-                            == Enum.UserInputType.MouseMovement
-                        or input.UserInputType
-                            == Enum.UserInputType.Touch
-                    )
-                then
-                    local delta =
-                        input.Position
-                        - startInput
-
-                    HolyMailClampHudPosition(
-                        false,
-                        UDim2.new(
-                            startPosition.X.Scale,
-                            startPosition.X.Offset
-                                + delta.X,
-                            startPosition.Y.Scale,
-                            startPosition.Y.Offset
-                                + delta.Y
-                        )
-                    )
-                end
-            end)
-        )
-
-        HolyMailTrackConnection(
-            UserInputService.InputEnded:Connect(function(input)
-                if dragging ~= true
-                    or input ~= dragInput
-                then
-                    return
-                end
-
+        header.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
                 dragging =
                     false
 
-                dragInput =
-                    nil
-
-                HolyMailClampHudPosition(
-                    true
+                HolyMailStorePosition(
+                    window.Position
                 )
-            end)
-        )
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging
+                and (
+                    input.UserInputType == Enum.UserInputType.MouseMovement
+                    or input.UserInputType == Enum.UserInputType.Touch
+                )
+            then
+                local delta =
+                    input.Position
+                    - startInput
+
+                window.Position =
+                    UDim2.new(
+                        startPosition.X.Scale,
+                        startPosition.X.Offset
+                            + delta.X,
+                        startPosition.Y.Scale,
+                        startPosition.Y.Offset
+                            + delta.Y
+                    )
+            end
+        end)
     end
 
     ------------------------------------------------------------------------
@@ -145066,9 +144632,6 @@ function HolyMailDestroyHud(reason)
         return false
     end
 
-    HolyMailDisconnectConnections()
-    HolyMailReleaseCursor()
-
     local gui =
         HOLY_MAIL_RUNTIME.Gui
 
@@ -145202,17 +144765,9 @@ function HolyMailOpenHud()
         HolyMailCreateHud()
     end
 
-    HolyMailAcquireCursor()
-
     if type(HOLY_MAIL_RUNTIME.SetMinimized) == "function" then
         HOLY_MAIL_RUNTIME.SetMinimized(false)
     end
-
-    task.defer(function()
-        HolyMailClampHudPosition(
-            true
-        )
-    end)
 
     return true
 end
@@ -145230,13 +144785,9 @@ function HolyMailResetPosition()
                 0.5,
                 0.5
             )
-
-        HolyMailClampHudPosition(
-            true
-        )
-    else
-        HolyMailSaveSettings()
     end
+
+    HolyMailSaveSettings()
 
     return true
 end
@@ -165377,6 +164928,9 @@ local Window =
         Font =
             Enum.Font.GothamMedium,
 
+        ShowCustomCursor =
+            false,
+
         Center =
             true,
 
@@ -165425,135 +164979,6 @@ local Window =
         MinSidebarWidth =
             150,
     })
-
-if Library.IsMobile ~= true
-and type(
-    Library.AddDraggableButton
-) == "function" then
-
-    HOLY_DESKTOP_TOGGLE_BUTTON =
-        Library:AddDraggableButton(
-            "HOLY",
-            function()
-
-                Library:Toggle()
-            end,
-            true
-        )
-
-    HOLY_DESKTOP_TOGGLE_HOLDER =
-        HOLY_DESKTOP_TOGGLE_BUTTON.Holder
-        or HOLY_DESKTOP_TOGGLE_BUTTON.Button
-
-    function HolyDesktopToggleClamp()
-
-        local holder =
-            HOLY_DESKTOP_TOGGLE_HOLDER
-
-        local camera =
-            workspace.CurrentCamera
-
-        if typeof(holder) ~= "Instance"
-        or holder.Parent == nil
-        or not camera then
-
-            return false
-        end
-
-        local viewport =
-            camera.ViewportSize
-
-        local absolutePosition =
-            holder.AbsolutePosition
-
-        local absoluteSize =
-            holder.AbsoluteSize
-
-        local margin =
-            6
-
-        local clampedX =
-            math.clamp(
-                absolutePosition.X,
-                margin,
-                math.max(
-                    margin,
-                    viewport.X
-                    - absoluteSize.X
-                    - margin
-                )
-            )
-
-        local clampedY =
-            math.clamp(
-                absolutePosition.Y,
-                margin,
-                math.max(
-                    margin,
-                    viewport.Y
-                    - absoluteSize.Y
-                    - margin
-                )
-            )
-
-        local deltaX =
-            clampedX
-            - absolutePosition.X
-
-        local deltaY =
-            clampedY
-            - absolutePosition.Y
-
-        if math.abs(deltaX) > 0.25
-        or math.abs(deltaY) > 0.25 then
-
-            holder.Position =
-                UDim2.new(
-                    holder.Position.X.Scale,
-                    holder.Position.X.Offset
-                        + deltaX,
-                    holder.Position.Y.Scale,
-                    holder.Position.Y.Offset
-                        + deltaY
-                )
-        end
-
-        return true
-    end
-
-    Library:GiveSignal(
-        HOLY_DESKTOP_TOGGLE_HOLDER
-            :GetPropertyChangedSignal(
-                "Position"
-            )
-            :Connect(function()
-
-                task.defer(
-                    HolyDesktopToggleClamp
-                )
-            end)
-    )
-
-    if workspace.CurrentCamera then
-
-        Library:GiveSignal(
-            workspace.CurrentCamera
-                :GetPropertyChangedSignal(
-                    "ViewportSize"
-                )
-                :Connect(function()
-
-                    task.defer(
-                        HolyDesktopToggleClamp
-                    )
-                end)
-        )
-    end
-
-    task.defer(
-        HolyDesktopToggleClamp
-    )
-end
 
 HolyApplyUIScale(
     HOLY_DEV_UI_STATE.DPIScale
