@@ -188534,6 +188534,8 @@ SettingsPairingBox:AddLabel(
 
 HolyAccountRefreshUI()
 
+do
+
 local HolyQuickThemePicker =
     SettingsUIBox:AddThemePicker(
         "HolyInterfaceTheme",
@@ -188728,6 +188730,10 @@ HOLY_THEME_STATE.UI.RevertButton =
 HOLY_THEME_STATE.UI.SaveAsButton =
     HolyThemeSaveAsButton
 
+end
+
+do
+
 local HolyThemeActiveLabel =
     SettingsThemeLibraryBox:AddLabel(
         "Active: "
@@ -188844,6 +188850,8 @@ HOLY_THEME_STATE.UI.OverwriteButton =
 
 HOLY_THEME_STATE.UI.DeleteButton =
     HolyThemeDeleteButton
+
+end
 
 function HolyThemeRefreshStatus()
 
@@ -189237,6 +189245,8 @@ SettingsUIBox:AddToggle(
     HolySaveUISettings()
 end)
 
+do
+
 local HolyTopLayerColorToggle =
     SettingsWorldBox:AddToggle(
         "HolyTopLayerColorEnabled",
@@ -189282,6 +189292,8 @@ Options.HolyTopLayerColor:OnChanged(function(value)
         value
     )
 end)
+
+end
 
 SettingsWorldBox:AddLabel(
     "Only changes the visible TopLayer on your client."
