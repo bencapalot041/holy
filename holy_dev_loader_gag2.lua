@@ -331,26 +331,54 @@ local function HolyDevCompile(source, name)
         )
     end
 
-    local ok,
-        chunkOrError =
+    if type(source) ~= "string"
+    or source == "" then
+
+        error(
+            "[HOLY DEV] Compile source is empty for "
+            .. tostring(name or "dev source")
+            .. ".",
+            0
+        )
+    end
+
+    local callSuccess,
+        chunk,
+        compileError =
         pcall(
             compiler,
             source
         )
 
-    if ok ~= true
-    or type(chunkOrError) ~= "function" then
+    if callSuccess ~= true then
+
+        error(
+            "[HOLY DEV] Compiler call failed for "
+            .. tostring(name or "dev source")
+            .. ": "
+            .. tostring(chunk),
+            0
+        )
+    end
+
+    if type(chunk) ~= "function" then
 
         error(
             "[HOLY DEV] Compile failed for "
             .. tostring(name or "dev source")
             .. ": "
-            .. tostring(chunkOrError),
+            .. tostring(
+                compileError
+                or chunk
+                or "compiler returned nil without an error"
+            )
+            .. "\nSource bytes: "
+            .. tostring(#source),
             0
         )
     end
 
-    return chunkOrError
+    return chunk
 end
 
 local function HolyDevRun()
