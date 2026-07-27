@@ -106437,7 +106437,7 @@ local HOLY_THEME_STATUS_FIELDS = {
     "WhiteColor",
 }
 
-local function HolyThemeCloneData(data)
+function HolyThemeCloneData(data)
 
     if type(data) ~= "table" then
         return nil
@@ -106467,7 +106467,7 @@ local function HolyThemeCloneData(data)
     }
 end
 
-local function HolyThemeFindFont(enumName)
+function HolyThemeFindFont(enumName)
 
     for _, fontItem in ipairs(
         Enum.Font:GetEnumItems()
@@ -106482,7 +106482,7 @@ local function HolyThemeFindFont(enumName)
     return nil
 end
 
-local function HolyThemeRegisterFont(
+function HolyThemeRegisterFont(
     label,
     enumName
 )
@@ -106587,7 +106587,7 @@ if HOLY_THEME_STATE.FontByName.GothamMedium == nil then
     )
 end
 
-local function HolyThemeClampColor(color)
+function HolyThemeClampColor(color)
 
     if typeof(color) ~= "Color3" then
 
@@ -106619,7 +106619,7 @@ local function HolyThemeClampColor(color)
     )
 end
 
-local function HolyThemeScaleColor(
+function HolyThemeScaleColor(
     color,
     scale
 )
@@ -106642,7 +106642,7 @@ local function HolyThemeScaleColor(
     )
 end
 
-local function HolyThemeOffsetColor(
+function HolyThemeOffsetColor(
     color,
     amount
 )
@@ -106665,7 +106665,7 @@ local function HolyThemeOffsetColor(
     )
 end
 
-local function HolyThemeBlendColor(
+function HolyThemeBlendColor(
     first,
     second,
     amount
@@ -106713,7 +106713,7 @@ local function HolyThemeBlendColor(
     )
 end
 
-local function HolyThemeColorToHex(color)
+function HolyThemeColorToHex(color)
 
     color =
         HolyThemeClampColor(
@@ -106734,7 +106734,7 @@ local function HolyThemeColorToHex(color)
     )
 end
 
-local function HolyThemeHexToColor(
+function HolyThemeHexToColor(
     value,
     fallback
 )
@@ -106803,7 +106803,7 @@ local function HolyThemeHexToColor(
     )
 end
 
-local function HolyThemeDataToRuntime(data)
+function HolyThemeDataToRuntime(data)
 
     local border =
         HolyThemeClampColor(
@@ -106887,7 +106887,7 @@ local function HolyThemeDataToRuntime(data)
     }
 end
 
-local function HolyThemeHydrateBuiltIns()
+function HolyThemeHydrateBuiltIns()
 
     table.clear(
         HOLY_THEME_STATE.BuiltInOrder
@@ -107017,7 +107017,7 @@ local function HolyThemeHydrateBuiltIns()
     end
 end
 
-local function HolyThemeNormalizeData(
+function HolyThemeNormalizeData(
     data,
     fallback
 )
@@ -107087,7 +107087,7 @@ local function HolyThemeNormalizeData(
     return result
 end
 
-local function HolyThemeSerializeData(data)
+function HolyThemeSerializeData(data)
 
     return {
         Background =
@@ -107123,7 +107123,7 @@ local function HolyThemeSerializeData(data)
     }
 end
 
-local function HolyThemeSaveCustomThemes()
+function HolyThemeSaveCustomThemes()
 
     if HolyCanUseFiles() ~= true then
 
@@ -107189,7 +107189,7 @@ local function HolyThemeSaveCustomThemes()
     return true
 end
 
-local function HolyThemeLoadCustomThemes()
+function HolyThemeLoadCustomThemes()
 
     table.clear(
         HOLY_THEME_STATE.CustomThemes
@@ -107310,7 +107310,7 @@ local function HolyThemeLoadCustomThemes()
     return true
 end
 
-local function HolyThemeRebuildLibraryThemes()
+function HolyThemeRebuildLibraryThemes()
 
     for themeName in pairs(
         HOLY_THEME_STATE.RegisteredCustom
@@ -107402,7 +107402,7 @@ local function HolyThemeRebuildLibraryThemes()
     end
 end
 
-local function HolyThemeGetData(
+function HolyThemeGetData(
     themeName
 )
 
@@ -107414,7 +107414,7 @@ local function HolyThemeGetData(
     ]
 end
 
-local function HolyThemeIsCustom(
+function HolyThemeIsCustom(
     themeName
 )
 
@@ -107423,7 +107423,7 @@ local function HolyThemeIsCustom(
     ] ~= nil
 end
 
-local function HolyThemeNotify(
+function HolyThemeNotify(
     title,
     description,
     warning
@@ -107516,7 +107516,7 @@ function HolyThemeApplyByName(
     return true
 end
 
-local function HolyThemeApplyDraft()
+function HolyThemeApplyDraft()
 
     local draft =
         HOLY_THEME_STATE.Draft
@@ -107630,7 +107630,7 @@ function HolyThemeSetDraftFont(
     end
 end
 
-local function HolyThemeCleanName(
+function HolyThemeCleanName(
     value
 )
 
@@ -107968,13 +107968,13 @@ Library:SetAnimations(
     "bottom"
 )
 
-local HolyStartupLoading =
+HolyStartupLoading =
     nil
 
-local HolyStartupLoadingStartedAt =
+HolyStartupLoadingStartedAt =
     os.clock()
 
-local function HolyStartupLoadingStep(
+function HolyStartupLoadingStep(
     step,
     message,
     description
@@ -121719,10 +121719,10 @@ local HOLY_MAIL_HISTORY_FILE =
 local HOLY_MAIL_HISTORY_LIMIT =
     200
 
-local HolyMailTweenService =
+HolyMailTweenService =
     game:GetService("TweenService")
 
-local function HolyMailAccountFileExists(
+function HolyMailAccountFileExists(
     filePath
 )
     if type(filePath) ~= "string"
@@ -121743,7 +121743,7 @@ local function HolyMailAccountFileExists(
         and exists == true
 end
 
-local function HolyMailReadJsonFile(
+function HolyMailReadJsonFile(
     filePath
 )
     if not HolyMailAccountFileExists(
@@ -121787,7 +121787,7 @@ local function HolyMailReadJsonFile(
         raw
 end
 
-local function HolyMailWriteJsonFile(
+function HolyMailWriteJsonFile(
     filePath,
     data
 )
@@ -121824,7 +121824,7 @@ local function HolyMailWriteJsonFile(
     return writeOk == true
 end
 
-local function HolyMailCopyLegacyFile(
+function HolyMailCopyLegacyFile(
     legacyPath,
     accountPath
 )
@@ -121857,7 +121857,7 @@ local function HolyMailCopyLegacyFile(
     return writeOk == true
 end
 
-local function HolyMailPrepareAccountFiles()
+function HolyMailPrepareAccountFiles()
     if HolyCanUseFiles() ~= true
         or HOLY_MAIL_ACCOUNT_USER_ID <= 0
     then
@@ -178264,7 +178264,7 @@ HOLY_MAIL_UI.ScaleDropdown:OnChanged(function(value)
     )
 end)
 
-local HolyMailOpenButton =
+HolyMailOpenButton =
     MailHudBox:AddButton({
         Text =
             "Open HUD",
@@ -179468,10 +179468,10 @@ SniperModeControl =
 
 HolyWebhookEnsureState()
 
-local HolyWebhookInitialEntry =
+HolyWebhookInitialEntry =
     HOLY_WEBHOOK_STATE.Filters[1]
 
-local HolyWebhookFruitValues =
+HolyWebhookFruitValues =
     HolyWebhookGetFruitDropdownValues()
 
 if type(HolyWebhookInitialEntry) == "table" then
@@ -179804,7 +179804,7 @@ HOLY_WEBHOOK_UI.FilterDropdown:OnChanged(function(value)
     HolyWebhookPopulateFilterEditor(entry)
 end)
 
-local HolyWebhookFilterButtons =
+HolyWebhookFilterButtons =
     WebhookFruitMultiplierBox:AddButton({
         Text = "Remove Filter",
 
@@ -182952,7 +182952,7 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
     end)
 end
 
-local function HolyFarmAddPageNote(box, text)
+function HolyFarmAddPageNote(box, text)
 
     if type(box) ~= "table"
     or type(box.AddLabel) ~= "function" then
@@ -185870,7 +185870,7 @@ end
 HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN =
     {}
 
-local HolyAuctionWatchlistRefreshToken =
+HolyAuctionWatchlistRefreshToken =
     HOLY_AUCTION_WATCHLIST_REFRESH_TOKEN
 
 HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
@@ -186030,7 +186030,7 @@ ShopAuctionBox:AddDropdown(
     )
 end)
 
-local HolyAuctionButtons =
+HolyAuctionButtons =
     ShopAuctionBox:AddButton({
         Text =
             "Refresh Auctions",
@@ -186472,7 +186472,7 @@ ShopDoubleBox:AddInput(
     )
 end)
 
-local HolyDoubleManualButton =
+HolyDoubleManualButton =
     ShopDoubleBox:AddButton({
         Text =
             "🎲 Manual Double",
@@ -186753,7 +186753,7 @@ ShopDailyDealBox:AddToggle(
     )
 end)
 
-local HolyDailyDealCheckButton =
+HolyDailyDealCheckButton =
     ShopDailyDealBox:AddButton({
         Text =
             "🔎 Check Now",
@@ -188536,7 +188536,7 @@ HolyAccountRefreshUI()
 
 do
 
-local HolyQuickThemePicker =
+HolyQuickThemePicker =
     SettingsUIBox:AddThemePicker(
         "HolyInterfaceTheme",
         {
@@ -188570,7 +188570,7 @@ end)
 HOLY_THEME_STATE.UI.QuickPicker =
     HolyQuickThemePicker
 
-local function HolyThemeAddColorControl(
+function HolyThemeAddColorControl(
     optionId,
     text,
     key
@@ -188647,7 +188647,7 @@ HolyThemeAddColorControl(
     "Text"
 )
 
-local HolyThemeFontDropdown =
+HolyThemeFontDropdown =
     SettingsThemeEditorBox:AddDropdown(
         "HolyThemeFont",
         {
@@ -188686,7 +188686,7 @@ end)
 HOLY_THEME_STATE.UI.FontDropdown =
     HolyThemeFontDropdown
 
-local HolyThemeEditorStatus =
+HolyThemeEditorStatus =
     SettingsThemeEditorBox:AddLabel(
         "Saved theme"
     )
@@ -188694,7 +188694,7 @@ local HolyThemeEditorStatus =
 HOLY_THEME_STATE.UI.EditorStatus =
     HolyThemeEditorStatus
 
-local HolyThemeRevertButton =
+HolyThemeRevertButton =
     SettingsThemeEditorBox:AddButton({
         Text =
             "Revert",
@@ -188709,7 +188709,7 @@ local HolyThemeRevertButton =
             "Discards unsaved changes.",
     })
 
-local HolyThemeSaveAsButton =
+HolyThemeSaveAsButton =
     HolyThemeRevertButton:AddButton({
         Text =
             "Save as New",
@@ -188734,13 +188734,13 @@ end
 
 do
 
-local HolyThemeActiveLabel =
+HolyThemeActiveLabel =
     SettingsThemeLibraryBox:AddLabel(
         "Active: "
         .. HOLY_THEME_STATE.ActiveName
     )
 
-local HolyThemeDefaultLabel =
+HolyThemeDefaultLabel =
     SettingsThemeLibraryBox:AddLabel(
         "Default: "
         .. tostring(
@@ -188754,7 +188754,7 @@ HOLY_THEME_STATE.UI.ActiveLabel =
 HOLY_THEME_STATE.UI.DefaultLabel =
     HolyThemeDefaultLabel
 
-local HolyLibraryThemePicker =
+HolyLibraryThemePicker =
     SettingsThemeLibraryBox:AddThemePicker(
         "HolyThemeLibraryPicker",
         {
@@ -188788,7 +188788,7 @@ end)
 HOLY_THEME_STATE.UI.LibraryPicker =
     HolyLibraryThemePicker
 
-local HolyThemeDefaultButton =
+HolyThemeDefaultButton =
     SettingsThemeLibraryBox:AddButton({
         Text =
             "Set Default",
@@ -188803,7 +188803,7 @@ local HolyThemeDefaultButton =
             "Uses the active theme next execution.",
     })
 
-local HolyThemeOverwriteButton =
+HolyThemeOverwriteButton =
     HolyThemeDefaultButton:AddButton({
         Text =
             "Save Changes",
@@ -188821,7 +188821,7 @@ local HolyThemeOverwriteButton =
             "Overwrites the selected custom theme.",
     })
 
-local HolyThemeDeleteButton =
+HolyThemeDeleteButton =
     SettingsThemeLibraryBox:AddButton({
         Text =
             "Delete Theme",
@@ -189247,7 +189247,7 @@ end)
 
 do
 
-local HolyTopLayerColorToggle =
+HolyTopLayerColorToggle =
     SettingsWorldBox:AddToggle(
         "HolyTopLayerColorEnabled",
         {
@@ -189270,7 +189270,7 @@ HolyTopLayerColorToggle:OnChanged(function(value)
     )
 end)
 
-local HolyTopLayerColorLabel =
+HolyTopLayerColorLabel =
     SettingsWorldBox:AddLabel(
         "Top Layer Color"
     )
