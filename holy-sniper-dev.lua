@@ -4055,6 +4055,39 @@ HOLY_DEV_SUITE_STATE = {
     PacketDirection = "Both",
     PacketFilter = "",
     PacketMaxEvents = 300,
+
+    DevPage = "Discover",
+
+    ResearchTerms =
+        "movement, teleport, speed, suspect, tame",
+
+    ResearchSources = {
+        "Commands",
+        "Replicated Flags",
+        "Modules",
+        "Networking",
+        "Instances & Attributes",
+        "Static Constants",
+        "Loaded Memory",
+    },
+
+    ResearchDepth =
+        "Standard",
+
+    ResearchMaxFindings =
+        100,
+
+    ResearchFinding =
+        "",
+
+    GuidedTestPreset =
+        "Movement / Teleport",
+
+    GuidedTestExpected =
+        "",
+
+    GuidedTestObserved =
+        "",
 }
 
 HOLY_DEV_SUITE_RUNTIME = {
@@ -4080,6 +4113,13 @@ HOLY_DEV_SUITE_RUNTIME = {
     UpdateScanning = false,
 
     LastDataReport = nil,
+
+    ResearchGeneration = 0,
+    ResearchScanning = false,
+    ResearchFindings = {},
+    ResearchDisplayMap = {},
+    ResearchSelectedFinding = nil,
+    ResearchLastReport = nil,
 
     ModuleMap = {},
 
@@ -169078,6 +169118,15 @@ HolyStartupLoadingStep(
 local SHOW_DEV_PERSISTENCE_TESTER =
     false
 
+DevModeControl =
+    nil
+
+DevResearchBox =
+    nil
+
+DevFindingsBox =
+    nil
+
 DevToolsBox =
     nil
 
@@ -169102,41 +169151,36 @@ DevDataBox =
 DevAuctionBox =
     nil
 
+DevGuidedTestBox =
+    nil
+
 DevPacketBox =
     nil
 
 if Tabs.Dev then
 
-    DevToolsBox =
+    DevResearchBox =
         HolyAddLeftGroupbox(
             Tabs.Dev,
-            "Dev.Tools",
-            "Developer Tools",
-            "terminal"
+            "Dev.ResearchScanner",
+            "Research Scanner",
+            "search-code"
         )
 
-    DevUpdateBox =
+    DevFindingsBox =
         HolyAddRightGroupbox(
             Tabs.Dev,
-            "Dev.UpdateScanner",
-            "Update Scanner",
-            "git-compare"
+            "Dev.FindingsPreview",
+            "Findings Preview",
+            "list-filter"
         )
 
-    DevPersistenceBox =
-        HolyAddRightGroupbox(
-            Tabs.Dev,
-            "Dev.PersistenceTester",
-            "Persistence Tester",
-            "database-zap"
-        )
-
-    DevActionBox =
+    DevDataBox =
         HolyAddLeftGroupbox(
             Tabs.Dev,
-            "Dev.TestRecorder",
-            "Test Recorder",
-            "scan-search"
+            "Dev.DataInspector",
+            "Data Inspector",
+            "braces"
         )
 
     DevSnapshotBox =
@@ -169147,6 +169191,14 @@ if Tabs.Dev then
             "camera"
         )
 
+    DevActionBox =
+        HolyAddLeftGroupbox(
+            Tabs.Dev,
+            "Dev.TestRecorder",
+            "Test Recorder",
+            "scan-search"
+        )
+
     DevErrorBox =
         HolyAddLeftGroupbox(
             Tabs.Dev,
@@ -169155,28 +169207,52 @@ if Tabs.Dev then
             "triangle-alert"
         )
 
-    DevDataBox =
-        HolyAddRightGroupbox(
-            Tabs.Dev,
-            "Dev.DataInspector",
-            "Data Inspector",
-            "braces"
-        )
-
-    DevAuctionBox =
-        HolyAddLeftGroupbox(
-            Tabs.Dev,
-            "Dev.AuctionInspector",
-            "Auction Inspector",
-            "shopping-basket"
-        )
-
     DevPacketBox =
         HolyAddRightGroupbox(
             Tabs.Dev,
             "Dev.PacketWatcher",
             "Packet Watcher",
             "network"
+        )
+
+    DevGuidedTestBox =
+        HolyAddLeftGroupbox(
+            Tabs.Dev,
+            "Dev.GuidedTest",
+            "Guided Test",
+            "flask-conical"
+        )
+
+    DevAuctionBox =
+        HolyAddRightGroupbox(
+            Tabs.Dev,
+            "Dev.AuctionInspector",
+            "Auction Inspector",
+            "shopping-basket"
+        )
+
+    DevPersistenceBox =
+        HolyAddRightGroupbox(
+            Tabs.Dev,
+            "Dev.PersistenceTester",
+            "Persistence Tester",
+            "database-zap"
+        )
+
+    DevUpdateBox =
+        HolyAddLeftGroupbox(
+            Tabs.Dev,
+            "Dev.UpdateScanner",
+            "Update Scanner",
+            "git-compare"
+        )
+
+    DevToolsBox =
+        HolyAddLeftGroupbox(
+            Tabs.Dev,
+            "Dev.Tools",
+            "Developer Tools",
+            "terminal"
         )
 end
 
@@ -189993,6 +190069,3845 @@ end)
 -- [6.95] PASSIVE AUCTION BOOTSTRAP INSPECTOR
 --==================================================
 
+--==================================================
+-- DEV TAB V2 NAVIGATION + RESEARCH SCANNER
+--==================================================
+
+function HolyDevGuidedTestPreset(value)
+
+    value =
+        tostring(
+            value
+            or "Movement / Teleport"
+        )
+
+    local allowed = {
+        ["Auction Purchase"] = true,
+        ["Pet Snipe"] = true,
+        ["Movement / Teleport"] = true,
+        ["Player Tool"] = true,
+        ["Garden Action"] = true,
+        ["Wild Pet Action"] = true,
+        ["UI / Notification"] = true,
+        ["Unknown Issue"] = true,
+    }
+
+    return allowed[value] == true
+        and value
+        or "Movement / Teleport"
+end
+
+function HolyDevGuidedTestConfig(value)
+
+    local preset =
+        HolyDevGuidedTestPreset(
+            value
+        )
+
+    local configs = {
+        ["Auction Purchase"] = {
+            Area =
+                "Auction",
+
+            Terms =
+                "auction purchaselot purchaseresult stock cooldown",
+
+            Instruction =
+                "Start recording, attempt one auction purchase, wait for its result, then finish.",
+        },
+
+        ["Pet Snipe"] = {
+            Area =
+                "Sniper",
+
+            Terms =
+                "sniper purchasepet wildpet serverhop teleport",
+
+            Instruction =
+                "Start before the match, let one join or purchase attempt finish, then mark the problem.",
+        },
+
+        ["Movement / Teleport"] = {
+            Area =
+                "Sniper",
+
+            Terms =
+                "movement teleport speed suspect position",
+
+            Instruction =
+                "Start recording, perform one movement or teleport test, then mark the exact result.",
+        },
+
+        ["Player Tool"] = {
+            Area =
+                "Player Tools",
+
+            Terms =
+                "tool gear watering trowel shovel",
+
+            Instruction =
+                "Start recording, use the affected tool once, wait for feedback, then finish.",
+        },
+
+        ["Garden Action"] = {
+            Area =
+                "Own Garden",
+
+            Terms =
+                "garden plant fruit sprinkler seed",
+
+            Instruction =
+                "Start recording, perform one affected garden action, then mark what happened.",
+        },
+
+        ["Wild Pet Action"] = {
+            Area =
+                "Wild Pets",
+
+            Terms =
+                "wildpet tame pet spawn prompt",
+
+            Instruction =
+                "Start recording before interacting with the wild pet, then complete one attempt.",
+        },
+
+        ["UI / Notification"] = {
+            Area =
+                "UI & Notifications",
+
+            Terms =
+                "notification ui error message",
+
+            Instruction =
+                "Start recording, reproduce the UI or notification problem once, then mark it.",
+        },
+
+        ["Unknown Issue"] = {
+            Area =
+                "Everything",
+
+            Terms =
+                "error failed warning packet",
+
+            Instruction =
+                "Start recording shortly before reproducing the unknown issue, then finish immediately after.",
+        },
+    }
+
+    local config =
+        configs[preset]
+
+    config.Preset =
+        preset
+
+    return config
+end
+
+function HolyDevGuidedTestSetControl(
+    key,
+    value
+)
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    local control =
+        runtime
+        and runtime.UI
+        and runtime.UI[key]
+
+    if type(control) ~= "table"
+    or type(control.SetValue) ~= "function" then
+
+        return false
+    end
+
+    local success =
+        pcall(function()
+
+            control:SetValue(
+                value
+            )
+        end)
+
+    return success == true
+end
+
+function HolyDevGuidedTestRefresh(extra)
+
+    local config =
+        HolyDevGuidedTestConfig(
+            HOLY_DEV_SUITE_STATE.GuidedTestPreset
+        )
+
+    HolyDevSetStatus(
+        "GuidedPresetLabel",
+        "Capture area: "
+            .. tostring(config.Area)
+    )
+
+    HolyDevSetStatus(
+        "GuidedInstructionLabel",
+        tostring(config.Instruction)
+    )
+
+    local status =
+        "Ready · start immediately before reproducing the action."
+
+    if HOLY_DEV_SUITE_RUNTIME.RecorderActive
+    == true then
+
+        status =
+            "Recording · "
+            .. tostring(
+                HolyDevRecorderCount()
+            )
+            .. " events captured"
+    end
+
+    if HolyCleanText(extra) ~= "" then
+
+        status =
+            tostring(extra)
+    end
+
+    HolyDevSetStatus(
+        "GuidedStatusLabel",
+        status
+    )
+
+    return config
+end
+
+function HolyDevGuidedTestSyncRecorder(config)
+
+    config =
+        config
+        or HolyDevGuidedTestConfig(
+            HOLY_DEV_SUITE_STATE.GuidedTestPreset
+        )
+
+    local expected =
+        HolyCleanText(
+            HOLY_DEV_SUITE_STATE.GuidedTestExpected
+        )
+
+    local note =
+        "Guided Test: "
+            .. tostring(config.Preset)
+
+    if expected ~= "" then
+
+        note =
+            note
+            .. " | Expected: "
+            .. expected
+    end
+
+    HOLY_DEV_SUITE_STATE.RecorderArea =
+        config.Area
+
+    HOLY_DEV_SUITE_STATE.RecorderMode =
+        "Manual Test"
+
+    HOLY_DEV_SUITE_STATE.RecorderNote =
+        note
+
+    HolyDevGuidedTestSetControl(
+        "RecorderAreaDropdown",
+        config.Area
+    )
+
+    HolyDevGuidedTestSetControl(
+        "RecorderModeDropdown",
+        "Manual Test"
+    )
+
+    HolyDevGuidedTestSetControl(
+        "RecorderNoteInput",
+        note
+    )
+
+    return note
+end
+
+function HolyDevGuidedTestStart()
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    if runtime.RecorderActive == true then
+
+        HolyDevGuidedTestRefresh(
+            "A Test Recorder session is already running."
+        )
+
+        HolyNotify(
+            "HOLY Dev",
+            "Finish the current Test Recorder session first.",
+            4
+        )
+
+        return false
+    end
+
+    local config =
+        HolyDevGuidedTestConfig(
+            HOLY_DEV_SUITE_STATE.GuidedTestPreset
+        )
+
+    HolyDevGuidedTestSyncRecorder(
+        config
+    )
+
+    if HolyDevRecorderStart() ~= true then
+
+        HolyDevGuidedTestRefresh(
+            "Could not start · check the Test Recorder status."
+        )
+
+        return false
+    end
+
+    HolyDevRecorderPush(
+        "Recorder",
+        config.Area,
+        "Guided Test Started",
+        {
+            Preset =
+                config.Preset,
+
+            Expected =
+                HolyCleanText(
+                    HOLY_DEV_SUITE_STATE.GuidedTestExpected
+                ),
+
+            Instruction =
+                config.Instruction,
+
+            ResearchTerms =
+                config.Terms,
+        },
+        "Info"
+    )
+
+    HolyDevGuidedTestRefresh(
+        "Recording "
+            .. tostring(config.Preset)
+            .. " · perform the action now."
+    )
+
+    return true
+end
+
+function HolyDevGuidedTestMark()
+
+    if HOLY_DEV_SUITE_RUNTIME.RecorderActive
+    ~= true then
+
+        HolyDevGuidedTestRefresh(
+            "Start the guided test before marking the problem."
+        )
+
+        HolyNotify(
+            "HOLY Dev",
+            "Start the guided test first.",
+            4
+        )
+
+        return false
+    end
+
+    local config =
+        HolyDevGuidedTestConfig(
+            HOLY_DEV_SUITE_STATE.GuidedTestPreset
+        )
+
+    local observed =
+        HolyCleanText(
+            HOLY_DEV_SUITE_STATE.GuidedTestObserved
+        )
+
+    if observed == "" then
+
+        observed =
+            "Problem reproduced"
+    end
+
+    HolyDevRecorderPush(
+        "Marker",
+        config.Area,
+        "Guided Problem Marker",
+        {
+            Preset =
+                config.Preset,
+
+            Expected =
+                HolyCleanText(
+                    HOLY_DEV_SUITE_STATE.GuidedTestExpected
+                ),
+
+            Observed =
+                observed,
+        },
+        "Warning"
+    )
+
+    HolyDevGuidedTestRefresh(
+        "Problem marked · continue or finish the test."
+    )
+
+    return true
+end
+
+function HolyDevGuidedTestFinish()
+
+    if HOLY_DEV_SUITE_RUNTIME.RecorderActive
+    ~= true then
+
+        HolyDevGuidedTestRefresh(
+            "No guided test is currently recording."
+        )
+
+        HolyNotify(
+            "HOLY Dev",
+            "Start the guided test first.",
+            4
+        )
+
+        return false
+    end
+
+    local config =
+        HolyDevGuidedTestConfig(
+            HOLY_DEV_SUITE_STATE.GuidedTestPreset
+        )
+
+    HolyDevRecorderPush(
+        "Recorder",
+        config.Area,
+        "Guided Test Summary",
+        {
+            Preset =
+                config.Preset,
+
+            Expected =
+                HolyCleanText(
+                    HOLY_DEV_SUITE_STATE.GuidedTestExpected
+                ),
+
+            Observed =
+                HolyCleanText(
+                    HOLY_DEV_SUITE_STATE.GuidedTestObserved
+                ),
+        },
+        "Info"
+    )
+
+    local finished =
+        HolyDevRecorderFinish(
+            true,
+            "guided test: "
+                .. tostring(config.Preset)
+        )
+
+    if finished == true then
+
+        HolyDevGuidedTestRefresh(
+            "Finished "
+                .. tostring(config.Preset)
+                .. " · report copied."
+        )
+    end
+
+    return finished == true
+end
+
+function HolyDevGuidedTestResearch()
+
+    if HOLY_DEV_SUITE_RUNTIME.RecorderActive
+    == true then
+
+        HolyNotify(
+            "HOLY Dev",
+            "Finish the guided test before starting research.",
+            4
+        )
+
+        HolyDevGuidedTestRefresh(
+            "Finish the recording before researching clues."
+        )
+
+        return false
+    end
+
+    local config =
+        HolyDevGuidedTestConfig(
+            HOLY_DEV_SUITE_STATE.GuidedTestPreset
+        )
+
+    HOLY_DEV_SUITE_STATE.ResearchTerms =
+        config.Terms
+
+    HolyDevGuidedTestSetControl(
+        "ResearchTermsInput",
+        config.Terms
+    )
+
+    HolyDevSetPage(
+        "Discover"
+    )
+
+    task.defer(function()
+
+        HolyDevResearchRun()
+    end)
+
+    return true
+end
+
+function HolyDevNormalizePage(value)
+
+    value =
+        tostring(
+            value
+            or "Discover"
+        )
+
+    if value ~= "Capture"
+    and value ~= "Test Lab"
+    and value ~= "Changes"
+    and value ~= "Tools" then
+
+        value =
+            "Discover"
+    end
+
+    return value
+end
+
+function HolyDevRefreshPage()
+
+    local page =
+        HolyDevNormalizePage(
+            HOLY_DEV_SUITE_STATE.DevPage
+        )
+
+    HOLY_DEV_SUITE_STATE.DevPage =
+        page
+
+    local discover =
+        page == "Discover"
+
+    local capture =
+        page == "Capture"
+
+    local testLab =
+        page == "Test Lab"
+
+    local changes =
+        page == "Changes"
+
+    local tools =
+        page == "Tools"
+
+    HolySetGroupboxVisible(
+        DevResearchBox,
+        discover
+    )
+
+    HolySetGroupboxVisible(
+        DevDataBox,
+        discover
+    )
+
+    HolySetGroupboxVisible(
+        DevFindingsBox,
+        discover
+    )
+
+    HolySetGroupboxVisible(
+        DevSnapshotBox,
+        discover
+    )
+
+    HolySetGroupboxVisible(
+        DevActionBox,
+        capture
+    )
+
+    HolySetGroupboxVisible(
+        DevErrorBox,
+        capture
+    )
+
+    HolySetGroupboxVisible(
+        DevPacketBox,
+        capture
+    )
+
+    HolySetGroupboxVisible(
+        DevGuidedTestBox,
+        testLab
+    )
+
+    HolySetGroupboxVisible(
+        DevAuctionBox,
+        testLab
+    )
+
+    HolySetGroupboxVisible(
+        DevPersistenceBox,
+        testLab
+        and SHOW_DEV_PERSISTENCE_TESTER == true
+    )
+
+    HolySetGroupboxVisible(
+        DevUpdateBox,
+        changes
+    )
+
+    HolySetGroupboxVisible(
+        DevToolsBox,
+        tools
+    )
+
+    if Tabs.Dev
+    and type(Tabs.Dev.RefreshSides) == "function" then
+
+        task.defer(function()
+
+            Tabs.Dev:RefreshSides()
+        end)
+    end
+
+    return page
+end
+
+function HolyDevSetPage(value)
+
+    value =
+        HolyDevNormalizePage(
+            value
+        )
+
+    HOLY_DEV_SUITE_STATE.DevPage =
+        value
+
+    if DevModeControl
+    and type(DevModeControl.SetValue) == "function" then
+
+        pcall(function()
+
+            DevModeControl:SetValue(
+                value,
+                true
+            )
+        end)
+    end
+
+    return HolyDevRefreshPage()
+end
+
+function HolyDevResearchNormalizeDepth(value)
+
+    value =
+        tostring(
+            value
+            or "Standard"
+        )
+
+    if value == "Quick"
+    or value == "Deep" then
+
+        return value
+    end
+
+    return "Standard"
+end
+
+function HolyDevResearchLimit(value)
+
+    return math.clamp(
+        math.floor(
+            tonumber(value)
+            or 100
+        ),
+        10,
+        500
+    )
+end
+
+function HolyDevResearchSelectionArray(value)
+
+    local output =
+        {}
+
+    local seen =
+        {}
+
+    if type(value) == "table" then
+
+        for key,
+            enabled in pairs(
+                value
+            ) do
+
+            local source =
+                ""
+
+            if type(key) == "number" then
+
+                source =
+                    tostring(
+                        enabled
+                        or ""
+                    )
+
+            elseif enabled == true then
+
+                source =
+                    tostring(
+                        key
+                    )
+            end
+
+            if source ~= ""
+            and seen[source] ~= true then
+
+                seen[source] =
+                    true
+
+                table.insert(
+                    output,
+                    source
+                )
+            end
+        end
+    end
+
+    return output
+end
+
+function HolyDevResearchSourceEnabled(
+    context,
+    source
+)
+
+    local selected =
+        context
+        and context.Sources
+        or HOLY_DEV_SUITE_STATE.ResearchSources
+
+    if type(selected) ~= "table" then
+        return false
+    end
+
+    if selected[source] == true then
+        return true
+    end
+
+    for _,
+        selectedSource in ipairs(
+            selected
+        ) do
+
+        if tostring(selectedSource)
+        == tostring(source) then
+
+            return true
+        end
+    end
+
+    return false
+end
+
+function HolyDevResearchTerms(value)
+
+    local output =
+        {}
+
+    local seen =
+        {}
+
+    value =
+        tostring(
+            value
+            or ""
+        ):lower()
+
+    for term in value:gmatch(
+        "[^,%s]+"
+    ) do
+
+        term =
+            HolyCleanText(
+                term
+            ):lower()
+
+        if term ~= ""
+        and seen[term] ~= true then
+
+            seen[term] =
+                true
+
+            table.insert(
+                output,
+                term
+            )
+        end
+    end
+
+    return output
+end
+
+function HolyDevResearchMatch(
+    text,
+    terms
+)
+
+    text =
+        tostring(
+            text
+            or ""
+        ):lower()
+
+    local score =
+        0
+
+    local matches =
+        {}
+
+    for _,
+        term in ipairs(
+            terms
+            or {}
+        ) do
+
+        if text:find(
+            term,
+            1,
+            true
+        ) then
+
+            score =
+                score
+                + 20
+
+            if text == term then
+
+                score =
+                    score
+                    + 10
+            end
+
+            table.insert(
+                matches,
+                term
+            )
+        end
+    end
+
+    return score,
+        matches
+end
+
+function HolyDevResearchClip(
+    value,
+    maximum
+)
+
+    value =
+        tostring(
+            value
+            or ""
+        ):gsub(
+            "[\r\n\t]+",
+            " "
+        ):gsub(
+            "%s+",
+            " "
+        )
+
+    maximum =
+        math.max(
+            20,
+            tonumber(maximum)
+            or 180
+        )
+
+    if #value > maximum then
+
+        value =
+            value:sub(
+                1,
+                maximum - 3
+            )
+            .. "..."
+    end
+
+    return value
+end
+
+function HolyDevResearchPreview(value)
+
+    local valueType =
+        typeof(value)
+
+    if value == nil then
+        return "nil"
+    end
+
+    if valueType == "string"
+    or valueType == "number"
+    or valueType == "boolean" then
+
+        return HolyDevResearchClip(
+            value,
+            260
+        )
+    end
+
+    if valueType == "Instance" then
+
+        return HolyDevGetFullName(
+            value
+        )
+    end
+
+    if valueType == "function" then
+        return "<function>"
+    end
+
+    if valueType == "table" then
+
+        local count =
+            0
+
+        for _ in pairs(value) do
+
+            count =
+                count
+                + 1
+
+            if count >= 9999 then
+                break
+            end
+        end
+
+        return "<table · "
+            .. tostring(count)
+            .. " entries>"
+    end
+
+    return HolyDevResearchClip(
+        tostring(value),
+        260
+    )
+end
+
+function HolyDevResearchAddFinding(
+    context,
+    finding
+)
+
+    if type(context) ~= "table"
+    or type(finding) ~= "table" then
+
+        return false
+    end
+
+    local name =
+        tostring(
+            finding.Name
+            or "Unnamed"
+        )
+
+    local path =
+        tostring(
+            finding.Path
+            or ""
+        )
+
+    local summary =
+        tostring(
+            finding.Summary
+            or ""
+        )
+
+    local searchText =
+        name
+        .. " "
+        .. path
+        .. " "
+        .. summary
+        .. " "
+        .. tostring(
+            finding.Value
+            or ""
+        )
+
+    local score,
+        matches =
+        HolyDevResearchMatch(
+            searchText,
+            context.Terms
+        )
+
+    if score <= 0 then
+        return false
+    end
+
+    score =
+        score
+        + (
+            tonumber(
+                finding.BonusScore
+            )
+            or 0
+        )
+
+    local source =
+        tostring(
+            finding.Source
+            or "Unknown"
+        )
+
+    local kind =
+        tostring(
+            finding.Kind
+            or source
+        )
+
+    local identity =
+        source
+        .. "|"
+        .. kind
+        .. "|"
+        .. path
+        .. "|"
+        .. name
+
+    local existing =
+        context.CandidateMap[
+            identity
+        ]
+
+    if existing then
+
+        if score > existing.Score then
+
+            existing.Score =
+                score
+
+            existing.Matches =
+                matches
+        end
+
+        return false
+    end
+
+    if #context.Candidates >= 5000 then
+
+        context.Stats.CandidatesDropped =
+            (
+                tonumber(
+                    context.Stats.CandidatesDropped
+                )
+                or 0
+            )
+            + 1
+
+        return false
+    end
+
+    local row = {
+        Source =
+            source,
+
+        Kind =
+            kind,
+
+        Name =
+            HolyDevResearchClip(
+                name,
+                160
+            ),
+
+        Path =
+            HolyDevResearchClip(
+                path,
+                500
+            ),
+
+        Summary =
+            HolyDevResearchClip(
+                summary,
+                700
+            ),
+
+        Value =
+            HolyDevResearchClip(
+                finding.Value,
+                500
+            ),
+
+        Access =
+            tostring(
+                finding.Access
+                or "Accessible"
+            ),
+
+        Module =
+            tostring(
+                finding.Module
+                or ""
+            ),
+
+        Matches =
+            matches,
+
+        Score =
+            score,
+    }
+
+    context.CandidateMap[
+        identity
+    ] =
+        row
+
+    table.insert(
+        context.Candidates,
+        row
+    )
+
+    return true
+end
+
+function HolyDevResearchCanceled(context)
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    return type(context) ~= "table"
+        or runtime.Active ~= true
+        or runtime.ResearchScanning ~= true
+        or runtime.ResearchGeneration
+            ~= context.Generation
+end
+
+function HolyDevResearchSetStatus(text)
+
+    HolyDevSetStatus(
+        "ResearchStatusLabel",
+        tostring(text or "")
+    )
+end
+
+function HolyDevResearchCountModule(
+    context,
+    module
+)
+
+    local path =
+        HolyDevGetFullName(
+            module
+        )
+
+    if context.ModuleKeys[path] ~= true then
+
+        context.ModuleKeys[path] =
+            true
+
+        context.Stats.ModulesScanned =
+            context.Stats.ModulesScanned
+            + 1
+    end
+end
+
+function HolyDevResearchWalkTable(
+    context,
+    value,
+    source,
+    kind,
+    path,
+    modulePath,
+    depth,
+    maximumDepth,
+    seen
+)
+
+    if HolyDevResearchCanceled(context) == true
+    or type(value) ~= "table"
+    or depth > maximumDepth
+    or seen[value] == true then
+
+        return
+    end
+
+    seen[value] =
+        true
+
+    local entries =
+        0
+
+    local entryLimit =
+        context.Depth == "Deep"
+        and 800
+        or 250
+
+    for key,
+        child in pairs(
+            value
+        ) do
+
+        if HolyDevResearchCanceled(context) == true then
+            break
+        end
+
+        entries =
+            entries
+            + 1
+
+        context.Stats.ValuesScanned =
+            context.Stats.ValuesScanned
+            + 1
+
+        if entries > entryLimit
+        or context.Stats.ValuesScanned > 150000 then
+
+            context.Stats.ValuesSkipped =
+                context.Stats.ValuesSkipped
+                + 1
+
+            break
+        end
+
+        local keyText =
+            tostring(key)
+
+        local childPath =
+            path == ""
+            and keyText
+            or path
+                .. "."
+                .. keyText
+
+        if HolyDevResearchSourceEnabled(
+            context,
+            "Replicated Flags"
+        )
+        and type(child) == "table"
+        and type(
+            rawget(
+                child,
+                "Key"
+            )
+        ) == "string" then
+
+            local flagKey =
+                tostring(
+                    rawget(
+                        child,
+                        "Key"
+                    )
+                )
+
+            if context.FlagKeys[flagKey] ~= true then
+
+                context.FlagKeys[flagKey] =
+                    true
+
+                context.Stats.FlagsScanned =
+                    context.Stats.FlagsScanned
+                    + 1
+            end
+
+            HolyDevResearchAddFinding(
+                context,
+                {
+                    Source =
+                        "Replicated Flags",
+
+                    Kind =
+                        "Flag",
+
+                    Name =
+                        flagKey,
+
+                    Summary =
+                        "Current="
+                        .. HolyDevResearchPreview(
+                            rawget(
+                                child,
+                                "Value"
+                            )
+                        )
+                        .. " · Default="
+                        .. HolyDevResearchPreview(
+                            rawget(
+                                child,
+                                "DefaultValue"
+                            )
+                        )
+                        .. " · Replicated="
+                        .. tostring(
+                            rawget(
+                                child,
+                                "Replicated"
+                            )
+                        ),
+
+                    Value =
+                        HolyDevResearchPreview(
+                            rawget(
+                                child,
+                                "Value"
+                            )
+                        ),
+
+                    Path =
+                        modulePath
+                        .. "::"
+                        .. childPath,
+
+                    Module =
+                        modulePath,
+
+                    BonusScore =
+                        8,
+                }
+            )
+        end
+
+        local childType =
+            typeof(child)
+
+        if childType == "table" then
+
+            HolyDevResearchAddFinding(
+                context,
+                {
+                    Source =
+                        source,
+
+                    Kind =
+                        kind,
+
+                    Name =
+                        keyText,
+
+                    Path =
+                        modulePath
+                        .. "::"
+                        .. childPath,
+
+                    Summary =
+                        HolyDevResearchPreview(
+                            child
+                        ),
+
+                    Module =
+                        modulePath,
+                }
+            )
+
+            HolyDevResearchWalkTable(
+                context,
+                child,
+                source,
+                kind,
+                childPath,
+                modulePath,
+                depth + 1,
+                maximumDepth,
+                seen
+            )
+
+        elseif childType == "function" then
+
+            HolyDevResearchAddFinding(
+                context,
+                {
+                    Source =
+                        source,
+
+                    Kind =
+                        kind,
+
+                    Name =
+                        keyText,
+
+                    Path =
+                        modulePath
+                        .. "::"
+                        .. childPath,
+
+                    Summary =
+                        "<function>",
+
+                    Module =
+                        modulePath,
+                }
+            )
+
+        else
+
+            HolyDevResearchAddFinding(
+                context,
+                {
+                    Source =
+                        source,
+
+                    Kind =
+                        kind,
+
+                    Name =
+                        keyText,
+
+                    Path =
+                        modulePath
+                        .. "::"
+                        .. childPath,
+
+                    Summary =
+                        HolyDevResearchPreview(
+                            child
+                        ),
+
+                    Value =
+                        HolyDevResearchPreview(
+                            child
+                        ),
+
+                    Module =
+                        modulePath,
+                }
+            )
+        end
+    end
+
+    seen[value] =
+        nil
+end
+
+function HolyDevResearchRecordRequireFailure(
+    context,
+    source,
+    module,
+    errorMessage
+)
+
+    local modulePath =
+        HolyDevGetFullName(
+            module
+        )
+
+    if context.RequireFailureKeys[
+        modulePath
+    ] == true then
+
+        return
+    end
+
+    context.RequireFailureKeys[
+        modulePath
+    ] =
+        true
+
+    local errorText =
+        tostring(
+            errorMessage
+            or "Unknown require failure"
+        )
+
+    local serverOnly =
+        errorText:lower():find(
+            "serveronly",
+            1,
+            true
+        ) ~= nil
+
+    if serverOnly then
+
+        context.Stats.ServerOnly =
+            context.Stats.ServerOnly
+            + 1
+    end
+
+    table.insert(
+        context.Errors,
+        {
+            Source =
+                source,
+
+            Module =
+                modulePath,
+
+            Error =
+                HolyDevResearchClip(
+                    errorText,
+                    700
+                ),
+
+            ServerOnly =
+                serverOnly,
+        }
+    )
+
+    HolyDevResearchAddFinding(
+        context,
+        {
+            Source =
+                source,
+
+            Kind =
+                serverOnly
+                and "Server-only Module"
+                or "Module Error",
+
+            Name =
+                module.Name,
+
+            Path =
+                modulePath,
+
+            Summary =
+                errorText,
+
+            Access =
+                serverOnly
+                and "ServerOnly"
+                or "Require failed",
+
+            Module =
+                modulePath,
+
+            BonusScore =
+                serverOnly
+                and 6
+                or 0,
+        }
+    )
+end
+
+function HolyDevResearchScanCommands(context)
+
+    HolyDevResearchSetStatus(
+        "Scanning commands..."
+    )
+
+    local cmdrClient =
+        ReplicatedStorage:FindFirstChild(
+            "CmdrClient"
+        )
+
+    local commands =
+        cmdrClient
+        and cmdrClient:FindFirstChild(
+            "Commands"
+        )
+
+    if not commands then
+
+        context.Stats.MissingSources[
+            "Commands"
+        ] =
+            "ReplicatedStorage.CmdrClient.Commands missing"
+
+        return
+    end
+
+    local modules =
+        {}
+
+    for _,
+        object in ipairs(
+            commands:GetDescendants()
+        ) do
+
+        if object:IsA("ModuleScript") then
+
+            table.insert(
+                modules,
+                object
+            )
+        end
+    end
+
+    table.sort(
+        modules,
+        function(left, right)
+
+            return HolyDevGetFullName(left)
+                < HolyDevGetFullName(right)
+        end
+    )
+
+    for index,
+        module in ipairs(
+            modules
+        ) do
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        HolyDevResearchCountModule(
+            context,
+            module
+        )
+
+        context.Stats.CommandsScanned =
+            context.Stats.CommandsScanned
+            + 1
+
+        local modulePath =
+            HolyDevGetFullName(
+                module
+            )
+
+        HolyDevResearchAddFinding(
+            context,
+            {
+                Source =
+                    "Commands",
+
+                Kind =
+                    "Command Module",
+
+                Name =
+                    module.Name,
+
+                Path =
+                    modulePath,
+
+                Summary =
+                    "Cmdr command module",
+
+                Module =
+                    modulePath,
+
+                BonusScore =
+                    4,
+            }
+        )
+
+        if context.Depth ~= "Quick" then
+
+            local success,
+                exported =
+                pcall(
+                    require,
+                    module
+                )
+
+            if success == true
+            and type(exported) == "table" then
+
+                local commandName =
+                    tostring(
+                        rawget(
+                            exported,
+                            "Name"
+                        )
+                        or module.Name
+                    )
+
+                local description =
+                    tostring(
+                        rawget(
+                            exported,
+                            "Description"
+                        )
+                        or rawget(
+                            exported,
+                            "description"
+                        )
+                        or ""
+                    )
+
+                local aliases =
+                    rawget(
+                        exported,
+                        "Aliases"
+                    )
+
+                HolyDevResearchAddFinding(
+                    context,
+                    {
+                        Source =
+                            "Commands",
+
+                        Kind =
+                            "Command",
+
+                        Name =
+                            commandName,
+
+                        Path =
+                            modulePath,
+
+                        Summary =
+                            description
+                            .. (
+                                type(aliases) == "table"
+                                and " · Aliases: "
+                                    .. HolyDevResearchClip(
+                                        HolyDevEncode(
+                                            aliases
+                                        )
+                                        or "",
+                                        140
+                                    )
+                                or ""
+                            ),
+
+                        Module =
+                            modulePath,
+
+                        BonusScore =
+                            15,
+                    }
+                )
+
+                HolyDevResearchWalkTable(
+                    context,
+                    exported,
+                    "Commands",
+                    "Command Field",
+                    "",
+                    modulePath,
+                    0,
+                    context.Depth == "Deep"
+                    and 8
+                    or 5,
+                    {}
+                )
+
+            elseif success ~= true then
+
+                HolyDevResearchRecordRequireFailure(
+                    context,
+                    "Commands",
+                    module,
+                    exported
+                )
+            end
+        end
+
+        if index % 20 == 0 then
+            task.wait()
+        end
+    end
+end
+
+function HolyDevResearchScanFlags(context)
+
+    HolyDevResearchSetStatus(
+        "Scanning replicated flags..."
+    )
+
+    local sharedModules =
+        ReplicatedStorage:FindFirstChild(
+            "SharedModules"
+        )
+
+    local flags =
+        sharedModules
+        and sharedModules:FindFirstChild(
+            "Flags"
+        )
+
+    if not flags then
+
+        context.Stats.MissingSources[
+            "Replicated Flags"
+        ] =
+            "ReplicatedStorage.SharedModules.Flags missing"
+
+        return
+    end
+
+    local modules =
+        {}
+
+    for _,
+        object in ipairs(
+            flags:GetDescendants()
+        ) do
+
+        if object:IsA("ModuleScript") then
+
+            table.insert(
+                modules,
+                object
+            )
+        end
+    end
+
+    table.sort(
+        modules,
+        function(left, right)
+
+            return HolyDevGetFullName(left)
+                < HolyDevGetFullName(right)
+        end
+    )
+
+    for index,
+        module in ipairs(
+            modules
+        ) do
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        HolyDevResearchCountModule(
+            context,
+            module
+        )
+
+        local modulePath =
+            HolyDevGetFullName(
+                module
+            )
+
+        HolyDevResearchAddFinding(
+            context,
+            {
+                Source =
+                    "Replicated Flags",
+
+                Kind =
+                    "Flag Module",
+
+                Name =
+                    module.Name,
+
+                Path =
+                    modulePath,
+
+                Summary =
+                    "Replicated flag container",
+
+                Module =
+                    modulePath,
+            }
+        )
+
+        if context.Depth ~= "Quick" then
+
+            local success,
+                exported =
+                pcall(
+                    require,
+                    module
+                )
+
+            if success == true
+            and type(exported) == "table" then
+
+                HolyDevResearchWalkTable(
+                    context,
+                    exported,
+                    "Replicated Flags",
+                    "Flag Field",
+                    "",
+                    modulePath,
+                    0,
+                    context.Depth == "Deep"
+                    and 10
+                    or 7,
+                    {}
+                )
+
+            elseif success ~= true then
+
+                HolyDevResearchRecordRequireFailure(
+                    context,
+                    "Replicated Flags",
+                    module,
+                    exported
+                )
+            end
+        end
+
+        if index % 10 == 0 then
+            task.wait()
+        end
+    end
+end
+
+function HolyDevResearchEnvironmentFunction(name)
+
+    local environment =
+        type(getgenv) == "function"
+        and getgenv()
+        or _G
+
+    local callback =
+        type(environment) == "table"
+        and rawget(
+            environment,
+            name
+        )
+        or nil
+
+    if type(callback) ~= "function"
+    and type(_G) == "table" then
+
+        callback =
+            rawget(
+                _G,
+                name
+            )
+    end
+
+    if type(callback) == "function" then
+        return callback
+    end
+
+    return nil
+end
+
+function HolyDevResearchLoadedModuleSet()
+
+    local output =
+        {}
+
+    local getLoadedModules =
+        HolyDevResearchEnvironmentFunction(
+            "getloadedmodules"
+        )
+
+    if type(getLoadedModules) ~= "function" then
+        return output
+    end
+
+    local success,
+        modules =
+        pcall(
+            getLoadedModules
+        )
+
+    if success == true
+    and type(modules) == "table" then
+
+        for _,
+            module in ipairs(
+                modules
+            ) do
+
+            if typeof(module) == "Instance"
+            and module:IsA("ModuleScript") then
+
+                output[module] =
+                    true
+            end
+        end
+    end
+
+    return output
+end
+
+function HolyDevResearchScanModules(context)
+
+    HolyDevResearchSetStatus(
+        "Scanning shared modules..."
+    )
+
+    local sharedModules =
+        ReplicatedStorage:FindFirstChild(
+            "SharedModules"
+        )
+
+    if not sharedModules then
+
+        context.Stats.MissingSources[
+            "Modules"
+        ] =
+            "ReplicatedStorage.SharedModules missing"
+
+        return
+    end
+
+    local modules =
+        {}
+
+    local loadedModules =
+        HolyDevResearchLoadedModuleSet()
+
+    for _,
+        object in ipairs(
+            sharedModules:GetDescendants()
+        ) do
+
+        if object:IsA("ModuleScript") then
+
+            table.insert(
+                modules,
+                object
+            )
+        end
+    end
+
+    table.sort(
+        modules,
+        function(left, right)
+
+            return HolyDevGetFullName(left)
+                < HolyDevGetFullName(right)
+        end
+    )
+
+    for index,
+        module in ipairs(
+            modules
+        ) do
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        HolyDevResearchCountModule(
+            context,
+            module
+        )
+
+        local modulePath =
+            HolyDevGetFullName(
+                module
+            )
+
+        local pathScore =
+            HolyDevResearchMatch(
+                modulePath,
+                context.Terms
+            )
+
+        HolyDevResearchAddFinding(
+            context,
+            {
+                Source =
+                    "Modules",
+
+                Kind =
+                    "Module",
+
+                Name =
+                    module.Name,
+
+                Path =
+                    modulePath,
+
+                Summary =
+                    loadedModules[module] == true
+                    and "Loaded client module"
+                    or "Shared module",
+
+                Access =
+                    loadedModules[module] == true
+                    and "Loaded"
+                    or "Not inspected",
+
+                Module =
+                    modulePath,
+            }
+        )
+
+        local shouldRequire =
+            context.RequireFailureKeys[
+                modulePath
+            ] ~= true
+            and (
+                context.Depth == "Deep"
+                or (
+                    context.Depth == "Standard"
+                    and (
+                        loadedModules[module] == true
+                        or pathScore > 0
+                    )
+                )
+            )
+
+        if shouldRequire then
+
+            local success,
+                exported =
+                pcall(
+                    require,
+                    module
+                )
+
+            if success == true
+            and type(exported) == "table" then
+
+                HolyDevResearchWalkTable(
+                    context,
+                    exported,
+                    "Modules",
+                    "Module Field",
+                    "",
+                    modulePath,
+                    0,
+                    context.Depth == "Deep"
+                    and 8
+                    or 4,
+                    {}
+                )
+
+            elseif success ~= true then
+
+                HolyDevResearchRecordRequireFailure(
+                    context,
+                    "Modules",
+                    module,
+                    exported
+                )
+            end
+        end
+
+        if index % 20 == 0 then
+
+            HolyDevResearchSetStatus(
+                "Scanning modules · "
+                .. tostring(index)
+                .. "/"
+                .. tostring(#modules)
+            )
+
+            task.wait()
+        end
+    end
+end
+
+function HolyDevResearchScanNetworking(context)
+
+    HolyDevResearchSetStatus(
+        "Scanning networking..."
+    )
+
+    local networkCandidates =
+        {}
+
+    for _,
+        object in ipairs(
+            ReplicatedStorage:GetDescendants()
+        ) do
+
+        local lowered =
+            object.Name:lower()
+
+        if lowered:find(
+            "network",
+            1,
+            true
+        )
+        or lowered:find(
+            "packet",
+            1,
+            true
+        )
+        or object:IsA("RemoteEvent")
+        or object:IsA("RemoteFunction") then
+
+            table.insert(
+                networkCandidates,
+                object
+            )
+        end
+    end
+
+    for index,
+        object in ipairs(
+            networkCandidates
+        ) do
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        context.Stats.NetworkObjects =
+            context.Stats.NetworkObjects
+            + 1
+
+        local path =
+            HolyDevGetFullName(
+                object
+            )
+
+        HolyDevResearchAddFinding(
+            context,
+            {
+                Source =
+                    "Networking",
+
+                Kind =
+                    object.ClassName,
+
+                Name =
+                    object.Name,
+
+                Path =
+                    path,
+
+                Summary =
+                    object:IsA("ModuleScript")
+                    and "Networking module"
+                    or "Replicated networking object",
+
+                Module =
+                    object:IsA("ModuleScript")
+                    and path
+                    or "",
+
+                BonusScore =
+                    5,
+            }
+        )
+
+        if object:IsA("ModuleScript")
+        and context.Depth ~= "Quick"
+        and context.RequireFailureKeys[path] ~= true then
+
+            HolyDevResearchCountModule(
+                context,
+                object
+            )
+
+            local success,
+                exported =
+                pcall(
+                    require,
+                    object
+                )
+
+            if success == true
+            and type(exported) == "table" then
+
+                HolyDevResearchWalkTable(
+                    context,
+                    exported,
+                    "Networking",
+                    "Packet or Network Field",
+                    "",
+                    path,
+                    0,
+                    context.Depth == "Deep"
+                    and 8
+                    or 5,
+                    {}
+                )
+
+            elseif success ~= true then
+
+                HolyDevResearchRecordRequireFailure(
+                    context,
+                    "Networking",
+                    object,
+                    exported
+                )
+            end
+        end
+
+        if index % 50 == 0 then
+            task.wait()
+        end
+    end
+end
+
+function HolyDevResearchScanInstanceRoot(
+    context,
+    root,
+    rootName
+)
+
+    if typeof(root) ~= "Instance" then
+        return
+    end
+
+    local descendants =
+        root:GetDescendants()
+
+    local maximum =
+        context.Depth == "Deep"
+        and 100000
+        or 50000
+
+    for index,
+        object in ipairs(
+            descendants
+        ) do
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        if index > maximum then
+
+            context.Stats.InstanceLimitReached =
+                true
+
+            break
+        end
+
+        context.Stats.InstancesScanned =
+            context.Stats.InstancesScanned
+            + 1
+
+        local path =
+            HolyDevGetFullName(
+                object
+            )
+
+        HolyDevResearchAddFinding(
+            context,
+            {
+                Source =
+                    "Instances & Attributes",
+
+                Kind =
+                    object.ClassName,
+
+                Name =
+                    object.Name,
+
+                Path =
+                    path,
+
+                Summary =
+                    rootName
+                    .. " instance",
+
+                Module =
+                    object:IsA("ModuleScript")
+                    and path
+                    or "",
+            }
+        )
+
+        local success,
+            attributes =
+            pcall(function()
+
+                return object:GetAttributes()
+            end)
+
+        if success == true
+        and type(attributes) == "table" then
+
+            for attributeName,
+                attributeValue in pairs(
+                    attributes
+                ) do
+
+                context.Stats.AttributesScanned =
+                    context.Stats.AttributesScanned
+                    + 1
+
+                HolyDevResearchAddFinding(
+                    context,
+                    {
+                        Source =
+                            "Instances & Attributes",
+
+                        Kind =
+                            "Attribute",
+
+                        Name =
+                            tostring(
+                                attributeName
+                            ),
+
+                        Path =
+                            path
+                            .. ".@"
+                            .. tostring(
+                                attributeName
+                            ),
+
+                        Summary =
+                            HolyDevResearchPreview(
+                                attributeValue
+                            ),
+
+                        Value =
+                            HolyDevResearchPreview(
+                                attributeValue
+                            ),
+
+                        Module =
+                            object:IsA("ModuleScript")
+                            and path
+                            or "",
+
+                        BonusScore =
+                            3,
+                    }
+                )
+            end
+        end
+
+        if index % 1000 == 0 then
+
+            HolyDevResearchSetStatus(
+                "Scanning "
+                .. rootName
+                .. " · "
+                .. tostring(index)
+                .. "/"
+                .. tostring(
+                    math.min(
+                        #descendants,
+                        maximum
+                    )
+                )
+            )
+
+            task.wait()
+        end
+    end
+end
+
+function HolyDevResearchScanInstances(context)
+
+    HolyDevResearchSetStatus(
+        "Scanning instances and attributes..."
+    )
+
+    HolyDevResearchScanInstanceRoot(
+        context,
+        ReplicatedStorage,
+        "ReplicatedStorage"
+    )
+
+    if context.Depth ~= "Quick" then
+
+        HolyDevResearchScanInstanceRoot(
+            context,
+            workspace,
+            "Workspace"
+        )
+
+        local player =
+            Players.LocalPlayer
+
+        HolyDevResearchScanInstanceRoot(
+            context,
+            player
+            and player:FindFirstChild(
+                "PlayerGui"
+            ),
+            "PlayerGui"
+        )
+    end
+end
+
+function HolyDevResearchScanStaticConstants(context)
+
+    if context.Depth ~= "Deep" then
+
+        context.Stats.SkippedSources[
+            "Static Constants"
+        ] =
+            "Deep scan required"
+
+        return
+    end
+
+    HolyDevResearchSetStatus(
+        "Scanning static constants..."
+    )
+
+    local getClosure =
+        HolyDevResearchEnvironmentFunction(
+            "getscriptclosure"
+        )
+
+    local getConstants =
+        debug
+        and debug.getconstants
+        or nil
+
+    local decompileFunction =
+        HolyDevResearchEnvironmentFunction(
+            "decompile"
+        )
+
+    context.Stats.Capabilities.GetScriptClosure =
+        type(getClosure) == "function"
+
+    context.Stats.Capabilities.GetConstants =
+        type(getConstants) == "function"
+
+    context.Stats.Capabilities.Decompile =
+        type(decompileFunction) == "function"
+
+    if type(getClosure) ~= "function"
+    or type(getConstants) ~= "function" then
+
+        context.Stats.MissingSources[
+            "Static Constants"
+        ] =
+            "getscriptclosure/debug.getconstants unavailable"
+
+        return
+    end
+
+    local modules =
+        {}
+
+    for _,
+        object in ipairs(
+            ReplicatedStorage:GetDescendants()
+        ) do
+
+        if object:IsA("ModuleScript") then
+
+            table.insert(
+                modules,
+                object
+            )
+        end
+    end
+
+    for index,
+        module in ipairs(
+            modules
+        ) do
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        local modulePath =
+            HolyDevGetFullName(
+                module
+            )
+
+        local closureSuccess,
+            closure =
+            pcall(
+                getClosure,
+                module
+            )
+
+        if closureSuccess == true
+        and type(closure) == "function" then
+
+            local constantsSuccess,
+                constants =
+                pcall(
+                    getConstants,
+                    closure
+                )
+
+            if constantsSuccess == true
+            and type(constants) == "table" then
+
+                for constantIndex,
+                    constant in ipairs(
+                        constants
+                    ) do
+
+                    context.Stats.ConstantsScanned =
+                        context.Stats.ConstantsScanned
+                        + 1
+
+                    HolyDevResearchAddFinding(
+                        context,
+                        {
+                            Source =
+                                "Static Constants",
+
+                            Kind =
+                                "Constant",
+
+                            Name =
+                                "Constant "
+                                .. tostring(
+                                    constantIndex
+                                ),
+
+                            Path =
+                                modulePath,
+
+                            Summary =
+                                HolyDevResearchPreview(
+                                    constant
+                                ),
+
+                            Value =
+                                HolyDevResearchPreview(
+                                    constant
+                                ),
+
+                            Module =
+                                modulePath,
+
+                            BonusScore =
+                                4,
+                        }
+                    )
+                end
+            end
+        end
+
+        local pathScore =
+            HolyDevResearchMatch(
+                modulePath,
+                context.Terms
+            )
+
+        if pathScore > 0
+        and type(decompileFunction) == "function"
+        and context.Stats.DecompiledModules < 40 then
+
+            context.Stats.DecompiledModules =
+                context.Stats.DecompiledModules
+                + 1
+
+            local decompileSuccess,
+                source =
+                pcall(
+                    decompileFunction,
+                    module
+                )
+
+            if decompileSuccess == true
+            and type(source) == "string" then
+
+                local lowered =
+                    source:lower()
+
+                for _,
+                    term in ipairs(
+                        context.Terms
+                    ) do
+
+                    local position =
+                        lowered:find(
+                            term,
+                            1,
+                            true
+                        )
+
+                    if position then
+
+                        HolyDevResearchAddFinding(
+                            context,
+                            {
+                                Source =
+                                    "Static Constants",
+
+                                Kind =
+                                    "Source Clue",
+
+                                Name =
+                                    module.Name,
+
+                                Path =
+                                    modulePath,
+
+                                Summary =
+                                    source:sub(
+                                        math.max(
+                                            1,
+                                            position - 140
+                                        ),
+                                        math.min(
+                                            #source,
+                                            position + 360
+                                        )
+                                    ),
+
+                                Module =
+                                    modulePath,
+
+                                BonusScore =
+                                    8,
+                            }
+                        )
+
+                        break
+                    end
+                end
+            end
+        end
+
+        if index % 20 == 0 then
+
+            HolyDevResearchSetStatus(
+                "Scanning constants · "
+                .. tostring(index)
+                .. "/"
+                .. tostring(#modules)
+            )
+
+            task.wait()
+        end
+    end
+end
+
+function HolyDevResearchScanLoadedMemory(context)
+
+    if context.Depth ~= "Deep" then
+
+        context.Stats.SkippedSources[
+            "Loaded Memory"
+        ] =
+            "Deep scan required"
+
+        return
+    end
+
+    HolyDevResearchSetStatus(
+        "Scanning loaded memory..."
+    )
+
+    local getGc =
+        HolyDevResearchEnvironmentFunction(
+            "getgc"
+        )
+
+    local getConstants =
+        debug
+        and debug.getconstants
+        or nil
+
+    context.Stats.Capabilities.GetGc =
+        type(getGc) == "function"
+
+    if type(getGc) ~= "function" then
+
+        context.Stats.MissingSources[
+            "Loaded Memory"
+        ] =
+            "getgc unavailable"
+
+        return
+    end
+
+    local success,
+        objects =
+        pcall(
+            getGc,
+            true
+        )
+
+    if success ~= true
+    or type(objects) ~= "table" then
+
+        context.Stats.MissingSources[
+            "Loaded Memory"
+        ] =
+            tostring(objects)
+
+        return
+    end
+
+    local maximum =
+        math.min(
+            #objects,
+            75000
+        )
+
+    for index = 1,
+        maximum do
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        local object =
+            objects[index]
+
+        local objectType =
+            type(object)
+
+        context.Stats.MemoryObjects =
+            context.Stats.MemoryObjects
+            + 1
+
+        if objectType == "table" then
+
+            local entries =
+                0
+
+            for key,
+                child in pairs(
+                    object
+                ) do
+
+                entries =
+                    entries
+                    + 1
+
+                if entries > 80 then
+                    break
+                end
+
+                local keyText =
+                    HolyDevResearchPreview(
+                        key
+                    )
+
+                local valueText =
+                    HolyDevResearchPreview(
+                        child
+                    )
+
+                HolyDevResearchAddFinding(
+                    context,
+                    {
+                        Source =
+                            "Loaded Memory",
+
+                        Kind =
+                            "GC Table",
+
+                        Name =
+                            keyText,
+
+                        Path =
+                            "getgc["
+                            .. tostring(index)
+                            .. "]",
+
+                        Summary =
+                            keyText
+                            .. "="
+                            .. valueText,
+
+                        Value =
+                            valueText,
+
+                        Access =
+                            "Loaded memory",
+                    }
+                )
+            end
+
+        elseif objectType == "function"
+        and type(getConstants) == "function" then
+
+            local constantsSuccess,
+                constants =
+                pcall(
+                    getConstants,
+                    object
+                )
+
+            if constantsSuccess == true
+            and type(constants) == "table" then
+
+                for constantIndex = 1,
+                    math.min(
+                        #constants,
+                        100
+                    ) do
+
+                    local constant =
+                        constants[
+                            constantIndex
+                        ]
+
+                    context.Stats.ConstantsScanned =
+                        context.Stats.ConstantsScanned
+                        + 1
+
+                    HolyDevResearchAddFinding(
+                        context,
+                        {
+                            Source =
+                                "Loaded Memory",
+
+                            Kind =
+                                "GC Constant",
+
+                            Name =
+                                "Constant "
+                                .. tostring(
+                                    constantIndex
+                                ),
+
+                            Path =
+                                "getgc["
+                                .. tostring(index)
+                                .. "]",
+
+                            Summary =
+                                HolyDevResearchPreview(
+                                    constant
+                                ),
+
+                            Value =
+                                HolyDevResearchPreview(
+                                    constant
+                                ),
+
+                            Access =
+                                "Loaded memory",
+                        }
+                    )
+                end
+            end
+        end
+
+        if index % 3000 == 0 then
+
+            HolyDevResearchSetStatus(
+                "Scanning memory · "
+                .. tostring(index)
+                .. "/"
+                .. tostring(maximum)
+            )
+
+            task.wait()
+        end
+    end
+end
+
+function HolyDevResearchFindingDisplay(
+    finding,
+    index
+)
+
+    return "["
+        .. tostring(
+            finding.Kind
+            or finding.Source
+            or "Finding"
+        )
+        .. "] "
+        .. HolyDevResearchClip(
+            finding.Name,
+            54
+        )
+        .. " · #"
+        .. tostring(index)
+end
+
+function HolyDevResearchRefreshPreview(displayValue)
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    local finding =
+        runtime.ResearchDisplayMap
+        and runtime.ResearchDisplayMap[
+            tostring(
+                displayValue
+                or ""
+            )
+        ]
+        or nil
+
+    if type(finding) ~= "table" then
+
+        runtime.ResearchSelectedFinding =
+            nil
+
+        HolyDevSetStatus(
+            "FindingTitleLabel",
+            "No finding selected."
+        )
+
+        HolyDevSetStatus(
+            "FindingPathLabel",
+            "Path: —"
+        )
+
+        HolyDevSetStatus(
+            "FindingMatchLabel",
+            "Matches: —"
+        )
+
+        HolyDevSetStatus(
+            "FindingDetailLabel",
+            "Run a scan to preview the strongest evidence."
+        )
+
+        return false
+    end
+
+    runtime.ResearchSelectedFinding =
+        finding
+
+    HOLY_DEV_SUITE_STATE.ResearchFinding =
+        tostring(displayValue)
+
+    HolyDevSetStatus(
+        "FindingTitleLabel",
+        "["
+        .. tostring(finding.Kind)
+        .. "] "
+        .. tostring(finding.Name)
+    )
+
+    HolyDevSetStatus(
+        "FindingPathLabel",
+        "Path: "
+        .. HolyDevResearchClip(
+            finding.Path,
+            170
+        )
+    )
+
+    HolyDevSetStatus(
+        "FindingMatchLabel",
+        "Matches: "
+        .. table.concat(
+            finding.Matches
+            or {},
+            ", "
+        )
+        .. " · Access: "
+        .. tostring(
+            finding.Access
+            or "Accessible"
+        )
+    )
+
+    HolyDevSetStatus(
+        "FindingDetailLabel",
+        HolyDevResearchClip(
+            finding.Summary,
+            260
+        )
+    )
+
+    return true
+end
+
+function HolyDevResearchRefreshFindings()
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    local findings =
+        type(runtime.ResearchFindings) == "table"
+        and runtime.ResearchFindings
+        or {}
+
+    local values =
+        {}
+
+    local displayMap =
+        {}
+
+    for index,
+        finding in ipairs(
+            findings
+        ) do
+
+        local display =
+            HolyDevResearchFindingDisplay(
+                finding,
+                index
+            )
+
+        values[index] =
+            display
+
+        displayMap[display] =
+            finding
+    end
+
+    if #values == 0 then
+
+        values[1] =
+            "No matching findings"
+    end
+
+    runtime.ResearchDisplayMap =
+        displayMap
+
+    local selected =
+        tostring(
+            HOLY_DEV_SUITE_STATE.ResearchFinding
+            or ""
+        )
+
+    if displayMap[selected] == nil then
+
+        selected =
+            displayMap[values[1]]
+            and values[1]
+            or ""
+    end
+
+    local dropdown =
+        runtime.UI
+        and runtime.UI.ResearchFindingDropdown
+
+    if type(dropdown) == "table" then
+
+        pcall(function()
+
+            if type(dropdown.SetValues) == "function" then
+
+                dropdown:SetValues(
+                    values
+                )
+            end
+
+            if selected ~= ""
+            and type(dropdown.SetValue) == "function" then
+
+                dropdown:SetValue(
+                    selected
+                )
+            end
+        end)
+    end
+
+    return HolyDevResearchRefreshPreview(
+        selected
+    )
+end
+
+function HolyDevResearchFinish(context)
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    table.sort(
+        context.Candidates,
+        function(left, right)
+
+            if tonumber(left.Score)
+            ~= tonumber(right.Score) then
+
+                return tonumber(left.Score)
+                    > tonumber(right.Score)
+            end
+
+            if tostring(left.Source)
+            ~= tostring(right.Source) then
+
+                return tostring(left.Source)
+                    < tostring(right.Source)
+            end
+
+            return tostring(left.Name)
+                < tostring(right.Name)
+        end
+    )
+
+    local findings =
+        {}
+
+    for index = 1,
+        math.min(
+            #context.Candidates,
+            context.MaxFindings
+        ) do
+
+        findings[index] =
+            context.Candidates[index]
+    end
+
+    context.Stats.TotalMatches =
+        #context.Candidates
+
+    context.Stats.DisplayedMatches =
+        #findings
+
+    context.Stats.FinishedAt =
+        os.time()
+
+    local report = {
+        Version =
+            "HOLY_DEV_RESEARCH_V1",
+
+        PlaceId =
+            game.PlaceId,
+
+        JobId =
+            game.JobId,
+
+        CapturedAt =
+            os.time(),
+
+        Query =
+            context.Query,
+
+        Terms =
+            context.Terms,
+
+        Sources =
+            context.Sources,
+
+        Depth =
+            context.Depth,
+
+        MaximumFindings =
+            context.MaxFindings,
+
+        Stats =
+            context.Stats,
+
+        Findings =
+            findings,
+
+        RequireFailures =
+            context.Errors,
+    }
+
+    runtime.ResearchFindings =
+        findings
+
+    runtime.ResearchLastReport =
+        report
+
+    runtime.ResearchScanning =
+        false
+
+    HolyDevResearchRefreshFindings()
+
+    HolyDevResearchSetStatus(
+        "Finished · "
+        .. tostring(
+            context.Stats.ModulesScanned
+        )
+        .. " modules · "
+        .. tostring(
+            context.Stats.FlagsScanned
+        )
+        .. " flags · "
+        .. tostring(
+            context.Stats.ServerOnly
+        )
+        .. " server-only · "
+        .. tostring(
+            context.Stats.TotalMatches
+        )
+        .. " matches"
+    )
+
+    return report
+end
+
+function HolyDevResearchRun()
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    if runtime.ResearchScanning == true then
+
+        HolyNotify(
+            "HOLY Dev",
+            "A research scan is already running.",
+            4
+        )
+
+        return false
+    end
+
+    local query =
+        HolyCleanText(
+            HOLY_DEV_SUITE_STATE.ResearchTerms
+        )
+
+    local terms =
+        HolyDevResearchTerms(
+            query
+        )
+
+    if #terms == 0 then
+
+        HolyDevResearchSetStatus(
+            "Enter at least one search term."
+        )
+
+        return false
+    end
+
+    local sources =
+        HolyDevResearchSelectionArray(
+            HOLY_DEV_SUITE_STATE.ResearchSources
+        )
+
+    if #sources == 0 then
+
+        HolyDevResearchSetStatus(
+            "Select at least one source."
+        )
+
+        return false
+    end
+
+    runtime.ResearchGeneration =
+        (
+            tonumber(
+                runtime.ResearchGeneration
+            )
+            or 0
+        )
+        + 1
+
+    runtime.ResearchScanning =
+        true
+
+    runtime.ResearchFindings =
+        {}
+
+    runtime.ResearchDisplayMap =
+        {}
+
+    runtime.ResearchSelectedFinding =
+        nil
+
+    local context = {
+        Generation =
+            runtime.ResearchGeneration,
+
+        Query =
+            query,
+
+        Terms =
+            terms,
+
+        Sources =
+            sources,
+
+        Depth =
+            HolyDevResearchNormalizeDepth(
+                HOLY_DEV_SUITE_STATE.ResearchDepth
+            ),
+
+        MaxFindings =
+            HolyDevResearchLimit(
+                HOLY_DEV_SUITE_STATE.ResearchMaxFindings
+            ),
+
+        Candidates =
+            {},
+
+        CandidateMap =
+            {},
+
+        ModuleKeys =
+            {},
+
+        FlagKeys =
+            {},
+
+        RequireFailureKeys =
+            {},
+
+        Errors =
+            {},
+
+        Stats = {
+            StartedAt =
+                os.time(),
+
+            ModulesScanned =
+                0,
+
+            CommandsScanned =
+                0,
+
+            FlagsScanned =
+                0,
+
+            ServerOnly =
+                0,
+
+            NetworkObjects =
+                0,
+
+            InstancesScanned =
+                0,
+
+            AttributesScanned =
+                0,
+
+            ValuesScanned =
+                0,
+
+            ValuesSkipped =
+                0,
+
+            ConstantsScanned =
+                0,
+
+            DecompiledModules =
+                0,
+
+            MemoryObjects =
+                0,
+
+            CandidatesDropped =
+                0,
+
+            Capabilities =
+                {},
+
+            MissingSources =
+                {},
+
+            SkippedSources =
+                {},
+        },
+    }
+
+    HolyDevResearchSetStatus(
+        "Starting "
+        .. context.Depth
+        .. " scan..."
+    )
+
+    task.spawn(function()
+
+        local success,
+            errorMessage =
+            xpcall(
+                function()
+
+                    if HolyDevResearchSourceEnabled(
+                        context,
+                        "Commands"
+                    ) then
+
+                        HolyDevResearchScanCommands(
+                            context
+                        )
+                    end
+
+                    if HolyDevResearchSourceEnabled(
+                        context,
+                        "Replicated Flags"
+                    ) then
+
+                        HolyDevResearchScanFlags(
+                            context
+                        )
+                    end
+
+                    if HolyDevResearchSourceEnabled(
+                        context,
+                        "Modules"
+                    ) then
+
+                        HolyDevResearchScanModules(
+                            context
+                        )
+                    end
+
+                    if HolyDevResearchSourceEnabled(
+                        context,
+                        "Networking"
+                    ) then
+
+                        HolyDevResearchScanNetworking(
+                            context
+                        )
+                    end
+
+                    if HolyDevResearchSourceEnabled(
+                        context,
+                        "Instances & Attributes"
+                    ) then
+
+                        HolyDevResearchScanInstances(
+                            context
+                        )
+                    end
+
+                    if HolyDevResearchSourceEnabled(
+                        context,
+                        "Static Constants"
+                    ) then
+
+                        HolyDevResearchScanStaticConstants(
+                            context
+                        )
+                    end
+
+                    if HolyDevResearchSourceEnabled(
+                        context,
+                        "Loaded Memory"
+                    ) then
+
+                        HolyDevResearchScanLoadedMemory(
+                            context
+                        )
+                    end
+                end,
+                function(message)
+
+                    return tostring(message)
+                        .. "\n"
+                        .. debug.traceback()
+                end
+            )
+
+        if runtime.ResearchGeneration
+        ~= context.Generation then
+
+            return
+        end
+
+        if success ~= true then
+
+            runtime.ResearchScanning =
+                false
+
+            HolyDevResearchSetStatus(
+                "Scan failed · "
+                .. HolyDevResearchClip(
+                    errorMessage,
+                    110
+                )
+            )
+
+            warn(
+                "[HOLY DEV RESEARCH]",
+                errorMessage
+            )
+
+            return
+        end
+
+        if HolyDevResearchCanceled(context) == true then
+            return
+        end
+
+        HolyDevResearchFinish(
+            context
+        )
+    end)
+
+    return true
+end
+
+function HolyDevResearchCancel()
+
+    local runtime =
+        HOLY_DEV_SUITE_RUNTIME
+
+    if runtime.ResearchScanning ~= true then
+
+        HolyDevResearchSetStatus(
+            "No research scan is running."
+        )
+
+        return false
+    end
+
+    runtime.ResearchGeneration =
+        (
+            tonumber(
+                runtime.ResearchGeneration
+            )
+            or 0
+        )
+        + 1
+
+    runtime.ResearchScanning =
+        false
+
+    HolyDevResearchSetStatus(
+        "Cancelled · previous findings kept."
+    )
+
+    return true
+end
+
+function HolyDevResearchCopySelected()
+
+    local finding =
+        HOLY_DEV_SUITE_RUNTIME
+        and HOLY_DEV_SUITE_RUNTIME
+            .ResearchSelectedFinding
+
+    if type(finding) ~= "table" then
+
+        HolyDevResearchSetStatus(
+            "Select a finding first."
+        )
+
+        return false
+    end
+
+    local copied =
+        HolyDevCopyReport({
+            Version =
+                "HOLY_DEV_RESEARCH_SELECTED_V1",
+
+            Query =
+                HOLY_DEV_SUITE_STATE.ResearchTerms,
+
+            CapturedAt =
+                os.time(),
+
+            Finding =
+                finding,
+        })
+
+    if copied == true then
+
+        HolyNotify(
+            "HOLY Dev",
+            "Selected finding copied.",
+            4
+        )
+    end
+
+    return copied
+end
+
+function HolyDevResearchCopySummary()
+
+    local report =
+        HOLY_DEV_SUITE_RUNTIME
+        and HOLY_DEV_SUITE_RUNTIME
+            .ResearchLastReport
+
+    if type(report) ~= "table" then
+
+        HolyDevResearchSetStatus(
+            "Run a research scan first."
+        )
+
+        return false
+    end
+
+    local summaryFindings =
+        {}
+
+    for index = 1,
+        math.min(
+            #report.Findings,
+            25
+        ) do
+
+        summaryFindings[index] =
+            report.Findings[index]
+    end
+
+    local copied =
+        HolyDevCopyReport({
+            Version =
+                "HOLY_DEV_RESEARCH_SUMMARY_V1",
+
+            Query =
+                report.Query,
+
+            Terms =
+                report.Terms,
+
+            Sources =
+                report.Sources,
+
+            Depth =
+                report.Depth,
+
+            Stats =
+                report.Stats,
+
+            TopFindings =
+                summaryFindings,
+        })
+
+    if copied == true then
+
+        HolyNotify(
+            "HOLY Dev",
+            "Research summary copied.",
+            4
+        )
+    end
+
+    return copied
+end
+
+function HolyDevResearchCopyFull()
+
+    local report =
+        HOLY_DEV_SUITE_RUNTIME
+        and HOLY_DEV_SUITE_RUNTIME
+            .ResearchLastReport
+
+    if type(report) ~= "table" then
+
+        HolyDevResearchSetStatus(
+            "Run a research scan first."
+        )
+
+        return false
+    end
+
+    local copied =
+        HolyDevCopyReport(
+            report
+        )
+
+    if copied == true then
+
+        HolyNotify(
+            "HOLY Dev",
+            "Full research report copied.",
+            4
+        )
+    end
+
+    return copied
+end
+
+function HolyDevResearchResolvePath(path)
+
+    path =
+        tostring(
+            path
+            or ""
+        )
+
+    local current =
+        nil
+
+    local first =
+        true
+
+    for part in path:gmatch(
+        "[^%.]+"
+    ) do
+
+        if first == true then
+
+            first =
+                false
+
+            if part == "ReplicatedStorage" then
+
+                current =
+                    ReplicatedStorage
+
+            elseif part == "Workspace" then
+
+                current =
+                    workspace
+
+            elseif part == "Players" then
+
+                current =
+                    Players
+
+            else
+
+                current =
+                    game:FindFirstChild(
+                        part
+                    )
+            end
+
+        else
+
+            current =
+                current
+                and current:FindFirstChild(
+                    part
+                )
+                or nil
+        end
+
+        if current == nil then
+            return nil
+        end
+    end
+
+    return current
+end
+
+function HolyDevResearchInspectSource()
+
+    local finding =
+        HOLY_DEV_SUITE_RUNTIME
+        and HOLY_DEV_SUITE_RUNTIME
+            .ResearchSelectedFinding
+
+    if type(finding) ~= "table" then
+
+        HolyDevResearchSetStatus(
+            "Select a finding first."
+        )
+
+        return false
+    end
+
+    local module =
+        HolyDevResearchResolvePath(
+            finding.Module
+        )
+
+    if typeof(module) ~= "Instance"
+    or module:IsA("ModuleScript") ~= true then
+
+        HolyDevResearchSetStatus(
+            "This finding has no inspectable module."
+        )
+
+        return false
+    end
+
+    local success,
+        exported =
+        pcall(
+            require,
+            module
+        )
+
+    local report = {
+        Version =
+            "HOLY_DEV_RESEARCH_SOURCE_V1",
+
+        Finding =
+            finding,
+
+        Module =
+            HolyDevGetFullName(
+                module
+            ),
+
+        CapturedAt =
+            os.time(),
+
+        Success =
+            success,
+
+        Data =
+            success == true
+            and HolyDevSafeValue(
+                exported
+            )
+            or nil,
+
+        Error =
+            success ~= true
+            and tostring(
+                exported
+            )
+            or nil,
+    }
+
+    HolyDevCopyReport(
+        report
+    )
+
+    HolyDevResearchSetStatus(
+        success == true
+        and "Source inspected and copied."
+        or "Source require failed · report copied."
+    )
+
+    return success == true
+end
+
 function HolyDevAuctionReadPrimitive(value)
 
     local valueType =
@@ -191503,6 +195418,703 @@ end
 -- [7] DEV TAB
 --==================================================
 
+if Tabs.Dev
+and type(Tabs.Dev.AddTopNavigation) == "function" then
+
+    DevModeControl =
+        Tabs.Dev:AddTopNavigation({
+            Items = {
+                {
+                    Key = "Discover",
+                    Text = "Discover",
+                },
+
+                {
+                    Key = "Capture",
+                    Text = "Capture",
+                },
+
+                {
+                    Key = "Test Lab",
+                    Text = "Test Lab",
+                },
+
+                {
+                    Key = "Changes",
+                    Text = "Changes",
+                },
+
+                {
+                    Key = "Tools",
+                    Text = "Tools",
+                },
+            },
+
+            Default =
+                HolyDevNormalizePage(
+                    HOLY_DEV_SUITE_STATE.DevPage
+                ),
+
+            Height =
+                50,
+
+            BarHeight =
+                36,
+
+            Callback =
+                function(value)
+
+                    HolyDevSetPage(
+                        value
+                    )
+                end,
+        })
+
+elseif Tabs.Dev
+and type(Tabs.Dev.AddTopSegmentedControl) == "function" then
+
+    DevModeControl =
+        Tabs.Dev:AddTopSegmentedControl({
+            Values = {
+                "Discover",
+                "Capture",
+                "Test Lab",
+                "Changes",
+                "Tools",
+            },
+
+            Default =
+                HolyDevNormalizePage(
+                    HOLY_DEV_SUITE_STATE.DevPage
+                ),
+
+            Width =
+                500,
+
+            Height =
+                46,
+
+            PillHeight =
+                32,
+
+            Callback =
+                function(value)
+
+                    HolyDevSetPage(
+                        value
+                    )
+                end,
+        })
+end
+
+if DevResearchBox then
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchTermsInput =
+        DevResearchBox:AddInput(
+            "HolyDevResearchTerms",
+            {
+                Text =
+                    "Search Terms",
+
+                Default =
+                    tostring(
+                        HOLY_DEV_SUITE_STATE.ResearchTerms
+                        or ""
+                    ),
+
+                Placeholder =
+                    "movement, teleport, suspect, tame",
+
+                Numeric =
+                    false,
+
+                Finished =
+                    false,
+
+                ClearTextOnFocus =
+                    false,
+
+                Tooltip =
+                    "Separate search terms with commas or spaces. Results matching more terms are ranked higher.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchTermsInput:OnChanged(function(value)
+
+        HOLY_DEV_SUITE_STATE.ResearchTerms =
+            tostring(
+                value
+                or ""
+            )
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchSourcesDropdown =
+        DevResearchBox:AddDropdown(
+            "HolyDevResearchSources",
+            {
+                Text =
+                    "Sources",
+
+                Values = {
+                    "Commands",
+                    "Replicated Flags",
+                    "Modules",
+                    "Networking",
+                    "Instances & Attributes",
+                    "Static Constants",
+                    "Loaded Memory",
+                },
+
+                Default =
+                    HolyDevResearchSelectionArray(
+                        HOLY_DEV_SUITE_STATE.ResearchSources
+                    ),
+
+                Multi =
+                    true,
+
+                Searchable =
+                    false,
+
+                AllowNull =
+                    false,
+
+                MaxVisibleDropdownItems =
+                    7,
+
+                Tooltip =
+                    "Choose where the unified scanner searches. Static Constants and Loaded Memory only run in Deep mode.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchSourcesDropdown:OnChanged(function(value)
+
+        HOLY_DEV_SUITE_STATE.ResearchSources =
+            HolyDevResearchSelectionArray(
+                value
+            )
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchDepthDropdown =
+        DevResearchBox:AddDropdown(
+            "HolyDevResearchDepth",
+            {
+                Text =
+                    "Scan Depth",
+
+                Values = {
+                    "Quick",
+                    "Standard",
+                    "Deep",
+                },
+
+                Default =
+                    HolyDevResearchNormalizeDepth(
+                        HOLY_DEV_SUITE_STATE.ResearchDepth
+                    ),
+
+                Multi =
+                    false,
+
+                Searchable =
+                    false,
+
+                AllowNull =
+                    false,
+
+                MaxVisibleDropdownItems =
+                    3,
+
+                Tooltip =
+                    "Quick scans names and paths. Standard inspects safe client exports. Deep adds shared exports, constants, source clues, and loaded memory when supported.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchDepthDropdown:OnChanged(function(value)
+
+        HOLY_DEV_SUITE_STATE.ResearchDepth =
+            HolyDevResearchNormalizeDepth(
+                value
+            )
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchMaxInput =
+        DevResearchBox:AddInput(
+            "HolyDevResearchMaxFindings",
+            {
+                Text =
+                    "Maximum Findings",
+
+                Default =
+                    tostring(
+                        HolyDevResearchLimit(
+                            HOLY_DEV_SUITE_STATE.ResearchMaxFindings
+                        )
+                    ),
+
+                Numeric =
+                    true,
+
+                Finished =
+                    true,
+
+                ClearTextOnFocus =
+                    false,
+
+                Tooltip =
+                    "Number of ranked findings kept in the final report. Range: 10–500.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchMaxInput:OnChanged(function(value)
+
+        HOLY_DEV_SUITE_STATE.ResearchMaxFindings =
+            HolyDevResearchLimit(
+                value
+            )
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchStatusLabel =
+        HolySniperAddLabel(
+            DevResearchBox,
+            "Ready · enter terms and choose Scan."
+        )
+
+    DevResearchBox:AddActionRow(
+        "HolyDevResearchRunActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Scan",
+
+                    Text =
+                        "Scan",
+
+                    Tooltip =
+                        "Runs the selected research sources asynchronously and ranks every matching clue.",
+
+                    Callback =
+                        function()
+
+                            HolyDevResearchRun()
+                        end,
+                },
+
+                {
+                    Id =
+                        "Cancel",
+
+                    Text =
+                        "Cancel",
+
+                    Tooltip =
+                        "Stops the active scan without deleting the previous completed report.",
+
+                    Callback =
+                        function()
+
+                            HolyDevResearchCancel()
+                        end,
+                },
+            },
+        }
+    )
+
+    DevResearchBox:AddActionRow(
+        "HolyDevResearchCopyActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Summary",
+
+                    Text =
+                        "Copy Summary",
+
+                    Tooltip =
+                        "Copies scan statistics and the top 25 ranked findings.",
+
+                    Callback =
+                        function()
+
+                            HolyDevResearchCopySummary()
+                        end,
+                },
+
+                {
+                    Id =
+                        "Full",
+
+                    Text =
+                        "Copy Full",
+
+                    Tooltip =
+                        "Copies the full research report, including findings, capabilities, skipped sources, and require failures.",
+
+                    Callback =
+                        function()
+
+                            HolyDevResearchCopyFull()
+                        end,
+                },
+            },
+        }
+    )
+end
+
+if DevFindingsBox then
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchFindingDropdown =
+        DevFindingsBox:AddDropdown(
+            "HolyDevResearchFinding",
+            {
+                Text =
+                    "Finding",
+
+                Values = {
+                    "No matching findings",
+                },
+
+                Default =
+                    "No matching findings",
+
+                Multi =
+                    false,
+
+                Searchable =
+                    true,
+
+                AllowNull =
+                    false,
+
+                MaxVisibleDropdownItems =
+                    12,
+
+                Tooltip =
+                    "Select a ranked result to preview its exact path, matched terms, access state, and evidence.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.ResearchFindingDropdown:OnChanged(function(value)
+
+        HolyDevResearchRefreshPreview(
+            value
+        )
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.FindingTitleLabel =
+        HolySniperAddLabel(
+            DevFindingsBox,
+            "No finding selected."
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.FindingPathLabel =
+        HolySniperAddLabel(
+            DevFindingsBox,
+            "Path: —"
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.FindingMatchLabel =
+        HolySniperAddLabel(
+            DevFindingsBox,
+            "Matches: —"
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.FindingDetailLabel =
+        HolySniperAddLabel(
+            DevFindingsBox,
+            "Run a scan to preview the strongest evidence."
+        )
+
+    DevFindingsBox:AddActionRow(
+        "HolyDevFindingActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Copy",
+
+                    Text =
+                        "Copy Selected",
+
+                    Tooltip =
+                        "Copies only the selected finding and its original query.",
+
+                    Callback =
+                        function()
+
+                            HolyDevResearchCopySelected()
+                        end,
+                },
+
+                {
+                    Id =
+                        "Inspect",
+
+                    Text =
+                        "Inspect Source",
+
+                    Tooltip =
+                        "Requires the selected module, privacy-redacts its public export, and copies it.",
+
+                    Callback =
+                        function()
+
+                            HolyDevResearchInspectSource()
+                        end,
+                },
+            },
+        }
+    )
+end
+
+if DevGuidedTestBox then
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedTestPresetDropdown =
+        DevGuidedTestBox:AddDropdown(
+            "HolyDevGuidedTestPreset",
+            {
+                Text =
+                    "Test Preset",
+
+                Values = {
+                    "Auction Purchase",
+                    "Pet Snipe",
+                    "Movement / Teleport",
+                    "Player Tool",
+                    "Garden Action",
+                    "Wild Pet Action",
+                    "UI / Notification",
+                    "Unknown Issue",
+                },
+
+                Default =
+                    HolyDevGuidedTestPreset(
+                        HOLY_DEV_SUITE_STATE.GuidedTestPreset
+                    ),
+
+                Multi =
+                    false,
+
+                Searchable =
+                    false,
+
+                AllowNull =
+                    false,
+
+                MaxVisibleDropdownItems =
+                    8,
+
+                Tooltip =
+                    "Configures the existing Test Recorder for the selected system and provides the correct testing sequence.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedTestPresetDropdown:OnChanged(function(value)
+
+        HOLY_DEV_SUITE_STATE.GuidedTestPreset =
+            HolyDevGuidedTestPreset(
+                value
+            )
+
+        HolyDevGuidedTestRefresh()
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedExpectedInput =
+        DevGuidedTestBox:AddInput(
+            "HolyDevGuidedTestExpected",
+            {
+                Text =
+                    "Expected Result",
+
+                Default =
+                    tostring(
+                        HOLY_DEV_SUITE_STATE.GuidedTestExpected
+                        or ""
+                    ),
+
+                Placeholder =
+                    "What should happen?",
+
+                Numeric =
+                    false,
+
+                Finished =
+                    false,
+
+                ClearTextOnFocus =
+                    false,
+
+                Tooltip =
+                    "Describe the correct result so it is included beside the captured evidence.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedExpectedInput:OnChanged(function(value)
+
+        HOLY_DEV_SUITE_STATE.GuidedTestExpected =
+            tostring(
+                value
+                or ""
+            )
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedObservedInput =
+        DevGuidedTestBox:AddInput(
+            "HolyDevGuidedTestObserved",
+            {
+                Text =
+                    "Observed Result",
+
+                Default =
+                    tostring(
+                        HOLY_DEV_SUITE_STATE.GuidedTestObserved
+                        or ""
+                    ),
+
+                Placeholder =
+                    "What actually happened?",
+
+                Numeric =
+                    false,
+
+                Finished =
+                    false,
+
+                ClearTextOnFocus =
+                    false,
+
+                Tooltip =
+                    "Describe the actual result before choosing Mark Problem or Finish + Copy.",
+            }
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedObservedInput:OnChanged(function(value)
+
+        HOLY_DEV_SUITE_STATE.GuidedTestObserved =
+            tostring(
+                value
+                or ""
+            )
+    end)
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedPresetLabel =
+        HolySniperAddLabel(
+            DevGuidedTestBox,
+            "Capture area: Sniper"
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedInstructionLabel =
+        HolySniperAddLabel(
+            DevGuidedTestBox,
+            "Start recording, perform one test, then mark the exact result."
+        )
+
+    HOLY_DEV_SUITE_RUNTIME.UI.GuidedStatusLabel =
+        HolySniperAddLabel(
+            DevGuidedTestBox,
+            "Ready · start immediately before reproducing the action."
+        )
+
+    DevGuidedTestBox:AddActionRow(
+        "HolyDevGuidedTestMainActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Start",
+
+                    Text =
+                        "Start Guided Test",
+
+                    Tooltip =
+                        "Configures and starts the existing Test Recorder using this preset.",
+
+                    Callback =
+                        function()
+
+                            HolyDevGuidedTestStart()
+                        end,
+                },
+
+                {
+                    Id =
+                        "Mark",
+
+                    Text =
+                        "Mark Problem",
+
+                    Tooltip =
+                        "Adds the exact expected and observed result to the active recording timeline.",
+
+                    Callback =
+                        function()
+
+                            HolyDevGuidedTestMark()
+                        end,
+                },
+            },
+        }
+    )
+
+    DevGuidedTestBox:AddActionRow(
+        "HolyDevGuidedTestFinishActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Finish",
+
+                    Text =
+                        "Finish + Copy",
+
+                    Tooltip =
+                        "Finishes the recorder, analyzes the captured evidence, saves it, and copies the report.",
+
+                    Callback =
+                        function()
+
+                            HolyDevGuidedTestFinish()
+                        end,
+                },
+
+                {
+                    Id =
+                        "Research",
+
+                    Text =
+                        "Research Clues",
+
+                    Tooltip =
+                        "Opens Discover and runs the Research Scanner with terms matched to this preset.",
+
+                    Callback =
+                        function()
+
+                            HolyDevGuidedTestResearch()
+                        end,
+                },
+            },
+        }
+    )
+end
+
 if DevToolsBox then
 
     for _, tool in ipairs(
@@ -192582,6 +197194,12 @@ if DevPacketBox then
         }
     )
 end
+
+HolyDevGuidedTestRefresh()
+
+HolyDevSetPage(
+    HOLY_DEV_SUITE_STATE.DevPage
+)
 
 if Tabs.Dev then
 
