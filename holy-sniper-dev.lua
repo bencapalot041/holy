@@ -3384,9 +3384,21 @@ local DEV_TOOLS = {
     },
 
     {
-        Name = "Dex Explorer V2",
+        Name = "Dex Explorer Stable",
+        Url = "https://github.com/AZYsGithub/DexPlusPlus/releases/download/stable-3.0/out.lua",
+        Tooltip = "Open Dex++ Stable 3.0.",
+    },
+
+    {
+        Name = "Dex Explorer Legacy",
         Url = "https://raw.githubusercontent.com/peyton2465/Dex/master/out.lua",
-        Tooltip = "Open Dex Explorer V2.",
+        Tooltip = "Open legacy Dex as a compatibility fallback.",
+    },
+
+        {
+        Name = "Dex Explorer 2026",
+        Url = "https://github.com/BOXLEGENDARY/Dex/releases/latest/download/out.lua",
+        Tooltip = "Dex 2026.",
     },
 }
 
