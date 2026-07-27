@@ -168463,7 +168463,7 @@ HOLY_LOADOUT_UI.ActivityActions:AddButton({
 
 HolyLoadoutStart()
 
-local MainQuickBox =
+MainQuickBox =
     HolyAddLeftGroupbox(
         Tabs.Main,
         "Main.ServerControls",
@@ -168471,7 +168471,7 @@ local MainQuickBox =
         "server"
     )
 
-local MainLivePetsBox =
+MainLivePetsBox =
     HolyAddRightGroupbox(
         Tabs.Main,
         "Main.LiveWildPets",
@@ -168479,7 +168479,7 @@ local MainLivePetsBox =
         "paw-print"
     )
 
-local MainMoonPredictorBox =
+MainMoonPredictorBox =
     HolyAddRightGroupbox(
         Tabs.Main,
         "Main.MoonPredictor",
@@ -168487,7 +168487,7 @@ local MainMoonPredictorBox =
         "moon"
     )
 
-local MainPetInventoryBox =
+MainPetInventoryBox =
     HolyAddRightGroupbox(
         Tabs.Main,
         "Main.PetInventory",
@@ -168495,7 +168495,7 @@ local MainPetInventoryBox =
         "panda"
     )
 
-local MainFarmDetailsBox =
+MainFarmDetailsBox =
     HolyAddRightGroupbox(
         Tabs.Main,
         "Main.FarmDetails",
@@ -168503,7 +168503,7 @@ local MainFarmDetailsBox =
         "sprout"
     )
 
-local MailHudBox =
+MailHudBox =
     HolyAddLeftGroupbox(
         Tabs.Mail,
         "Mail.Hud",
@@ -168511,7 +168511,7 @@ local MailHudBox =
         "mail"
     )
 
-local MailInboxBox =
+MailInboxBox =
     HolyAddLeftGroupbox(
         Tabs.Mail,
         "Mail.Inbox",
@@ -168519,7 +168519,7 @@ local MailInboxBox =
         "inbox"
     )
 
-local MailUsageBox =
+MailUsageBox =
     HolyAddRightGroupbox(
         Tabs.Mail,
         "Mail.Usage",
@@ -168637,7 +168637,7 @@ HOLY_GUILD_UI.LeaderboardBox =
 HOLY_GUILD_UI.SelectedGuildBox =
     GuildSelectedGuildBox
     
-local WebhookSetupBox =
+WebhookSetupBox =
     HolyAddLeftGroupbox(
         Tabs.Webhook,
         "Webhook.Setup",
@@ -168645,7 +168645,7 @@ local WebhookSetupBox =
         "webhook"
     )
 
-local WebhookFruitMultiplierBox =
+WebhookFruitMultiplierBox =
     HolyAddRightGroupbox(
         Tabs.Webhook,
         "Webhook.FruitMultiplierAlerts",
@@ -168653,7 +168653,7 @@ local WebhookFruitMultiplierBox =
         "bell-ring"
     )
 
-local ServerControlsBox =
+ServerControlsBox =
     HolyAddLeftGroupbox(
         Tabs.Server,
         "Server.Controls",
@@ -168661,7 +168661,7 @@ local ServerControlsBox =
         "server"
     )
 
-local ServerStatusBox =
+ServerStatusBox =
     HolyAddRightGroupbox(
         Tabs.Server,
         "Server.Status",
@@ -168669,7 +168669,7 @@ local ServerStatusBox =
         "activity"
     )
 
-local SniperEngineBox =
+SniperEngineBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
         "Sniper.Engine",
@@ -168677,7 +168677,7 @@ local SniperEngineBox =
         "crosshair"
     )
 
-local SniperDefenseBox =
+SniperDefenseBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
         "Sniper.PetDefense",
@@ -168685,7 +168685,7 @@ local SniperDefenseBox =
         "shield"
     )
 
-local SniperAdvancedDefenseBox =
+SniperAdvancedDefenseBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
         "Sniper.AdvancedPetDefense",
@@ -168694,7 +168694,7 @@ local SniperAdvancedDefenseBox =
     )
  
 
-local SniperExecutionBox =
+SniperExecutionBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
         "Sniper.Execution",
@@ -168702,7 +168702,7 @@ local SniperExecutionBox =
         "zap"
     )
 
-local SniperFilterBox =
+SniperFilterBox =
     HolyAddRightGroupbox(
         Tabs.Sniper,
         "Sniper.Filter",
@@ -168710,7 +168710,7 @@ local SniperFilterBox =
         "paw-print"
     )
 
-local SniperWatchlistBox =
+SniperWatchlistBox =
     HolyAddRightGroupbox(
         Tabs.Sniper,
         "Sniper.Watchlist",
@@ -168718,7 +168718,7 @@ local SniperWatchlistBox =
         "list"
     )
 
-local ServerSniperBox =
+ServerSniperBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
         "Sniper.ServerFinder",
@@ -168726,7 +168726,7 @@ local ServerSniperBox =
         "server"
     )
 
-local ServerAutoJoinBox =
+ServerAutoJoinBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
         "Sniper.ServerAutoJoin",
@@ -168734,7 +168734,7 @@ local ServerAutoJoinBox =
         "zap"
     )
 
-local ServerAutoJoinFilterBox =
+ServerAutoJoinFilterBox =
     HolyAddLeftGroupbox(
         Tabs.Sniper,
         "Sniper.ServerAutoJoinFilters",
@@ -168742,7 +168742,7 @@ local ServerAutoJoinFilterBox =
         "list-filter"
     )
 
-local ServerAutoJoinWatchlistBox =
+ServerAutoJoinWatchlistBox =
     HolyAddRightGroupbox(
         Tabs.Sniper,
         "Sniper.ServerAutoJoinWatchlist",
@@ -168750,16 +168750,16 @@ local ServerAutoJoinWatchlistBox =
         "list"
     )
 
-local SniperModeControl =
+SniperModeControl =
     nil
 
-local ShopModeControl =
+ShopModeControl =
     nil
 
-local FarmModeControl =
+FarmModeControl =
     nil
 
-local ShopSeedsBox =
+ShopSeedsBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.Seeds",
@@ -168767,7 +168767,7 @@ local ShopSeedsBox =
         "sprout"
     )
 
-local ShopGearBox =
+ShopGearBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.Gear",
@@ -168775,7 +168775,7 @@ local ShopGearBox =
         "wrench"
     )
 
-local ShopCratesBox =
+ShopCratesBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.Props",
@@ -168783,7 +168783,7 @@ local ShopCratesBox =
         "package"
     )
 
-local ShopAuctionBox =
+ShopAuctionBox =
     HolyAddRightGroupbox(
         Tabs.Shop,
         "Shop.Auctions",
@@ -168791,7 +168791,7 @@ local ShopAuctionBox =
         "shopping-basket"
     )
 
-local ShopAuctionWatchlistBox =
+ShopAuctionWatchlistBox =
     HolyAddRightGroupbox(
         Tabs.Shop,
         "Shop.AuctionWatchlist",
@@ -168799,7 +168799,7 @@ local ShopAuctionWatchlistBox =
         "list"
     )
 
-local ShopSellBox =
+ShopSellBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.Sell",
@@ -168807,7 +168807,7 @@ local ShopSellBox =
         "coins"
     )
 
-local ShopFiltersBox =
+ShopFiltersBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.FruitFilters",
@@ -168815,7 +168815,7 @@ local ShopFiltersBox =
         "filter"
     )
 
-local ShopPetSellerBox =
+ShopPetSellerBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.PetSeller",
@@ -168831,7 +168831,7 @@ ShopPetSellPreviewBox =
         "list-checks"
     )
 
-local ShopDoubleBox =
+ShopDoubleBox =
     HolyAddRightGroupbox(
         Tabs.Shop,
         "Shop.AutoDoubleOrNothing",
@@ -168839,7 +168839,7 @@ local ShopDoubleBox =
         "dice-5"
     )
 
-local ShopDailyDealBox =
+ShopDailyDealBox =
     HolyAddRightGroupbox(
         Tabs.Shop,
         "Shop.DailyDeal",
@@ -168847,7 +168847,7 @@ local ShopDailyDealBox =
         "badge-dollar-sign"
     )
 
-local FarmCollectionBox =
+FarmCollectionBox =
     HolyAddLeftGroupbox(
         Tabs.Farm,
         "Farm.FruitCollection",
@@ -168855,7 +168855,7 @@ local FarmCollectionBox =
         "zap"
     )
 
-local FarmCollectionFiltersBox =
+FarmCollectionFiltersBox =
     HolyAddLeftGroupbox(
         Tabs.Farm,
         "Farm.CollectionFilters",
@@ -168863,7 +168863,7 @@ local FarmCollectionFiltersBox =
         "list-filter"
     )
 
-local FarmProCollectionBox =
+FarmProCollectionBox =
     HolyAddRightGroupbox(
         Tabs.Farm,
         "Farm.ProFruitCollector",
@@ -168871,7 +168871,7 @@ local FarmProCollectionBox =
         "star"
     )
 
-local FarmCollectionOverridesBox =
+FarmCollectionOverridesBox =
     HolyAddRightGroupbox(
         Tabs.Farm,
         "Farm.CollectionOverrides",
@@ -168879,7 +168879,7 @@ local FarmCollectionOverridesBox =
         "list-filter-plus"
     )
 
-local FarmPlantBox =
+FarmPlantBox =
     HolyAddLeftGroupbox(
         Tabs.Farm,
         "Farm.AutoPlant",
@@ -168887,7 +168887,7 @@ local FarmPlantBox =
         "sprout"
     )
 
-local FarmPlantSettingsBox =
+FarmPlantSettingsBox =
     HolyAddRightGroupbox(
         Tabs.Farm,
         "Farm.PlantSettings",
@@ -168895,7 +168895,7 @@ local FarmPlantSettingsBox =
         "settings"
     )
 
-local FarmToolsWaterBox =
+FarmToolsWaterBox =
     HolyAddLeftGroupbox(
         Tabs.Farm,
         "Farm.WateringSprinklers",
@@ -168903,7 +168903,7 @@ local FarmToolsWaterBox =
         "droplets"
     )
 
-local FarmToolsUtilityBox =
+FarmToolsUtilityBox =
     HolyAddRightGroupbox(
         Tabs.Farm,
         "Farm.AutoTrowel",
@@ -168911,7 +168911,7 @@ local FarmToolsUtilityBox =
         "move-3d"
     )
 
-local FarmExtraUtilitiesBox =
+FarmExtraUtilitiesBox =
     HolyAddLeftGroupbox(
         Tabs.Farm,
         "Farm.Utilities",
@@ -168919,7 +168919,7 @@ local FarmExtraUtilitiesBox =
         "settings"
     )
 
-local FarmFruitAutomationBox =
+FarmFruitAutomationBox =
     HolyAddLeftGroupbox(
         Tabs.Farm,
         "Farm.FruitDropPickup",
@@ -168927,7 +168927,7 @@ local FarmFruitAutomationBox =
         "target"
     )
 
-local FarmPlantMergeBox =
+FarmPlantMergeBox =
     HolyAddRightGroupbox(
         Tabs.Farm,
         "Farm.PlantMerging",
@@ -168935,7 +168935,7 @@ local FarmPlantMergeBox =
         "combine"
     )
 
-local FarmPlantPotsBox =
+FarmPlantPotsBox =
     HolyAddRightGroupbox(
         Tabs.Farm,
         "Farm.PotAutomation",
@@ -168943,7 +168943,7 @@ local FarmPlantPotsBox =
         "package-open"
     )
 
-local FarmPlantEclipseBox =
+FarmPlantEclipseBox =
     HolyAddRightGroupbox(
         Tabs.Farm,
         "Farm.EclipseLoop",
@@ -168954,7 +168954,7 @@ local FarmPlantEclipseBox =
 local SHOW_PATCHED_VULN_TOOLS =
     false
 
-local VulnRollbackBox =
+VulnRollbackBox =
     HolyAddLeftGroupbox(
         Tabs.Vuln,
         "Vuln.Rollback",
@@ -168962,7 +168962,7 @@ local VulnRollbackBox =
         "rotate-ccw"
     )
 
-local VulnWateringRejoinBox =
+VulnWateringRejoinBox =
     HolyAddLeftGroupbox(
         Tabs.Vuln,
         "Vuln.WateringRejoin",
@@ -168970,7 +168970,7 @@ local VulnWateringRejoinBox =
         "droplets"
     )
 
-local VisualInventoryBox =
+VisualInventoryBox =
     HolyAddLeftGroupbox(
         Tabs.Visual,
         "Visual.InventoryVisuals",
@@ -168978,7 +168978,7 @@ local VisualInventoryBox =
         "eye"
     )
 
-local VisualGardenBox =
+VisualGardenBox =
     HolyAddLeftGroupbox(
         Tabs.Visual,
         "Visual.GardenVisuals",
@@ -168986,10 +168986,10 @@ local VisualGardenBox =
         "sprout"
     )
 
-local SettingsModeControl =
+SettingsModeControl =
     nil
 
-local SettingsUIBox =
+SettingsUIBox =
     HolyAddLeftGroupbox(
         Tabs.Settings,
         "Settings.UI",
@@ -168997,7 +168997,7 @@ local SettingsUIBox =
         "palette"
     )
 
-local SettingsLayoutBox =
+SettingsLayoutBox =
     HolyAddRightGroupbox(
         Tabs.Settings,
         "Settings.Layout",
@@ -169005,7 +169005,7 @@ local SettingsLayoutBox =
         "panels-top-left"
     )
 
-local SettingsWorldBox =
+SettingsWorldBox =
     HolyAddRightGroupbox(
         Tabs.Settings,
         "Settings.WorldAppearance",
@@ -169013,7 +169013,7 @@ local SettingsWorldBox =
         "palette"
     )
 
-local SettingsThemeEditorBox =
+SettingsThemeEditorBox =
     HolyAddLeftGroupbox(
         Tabs.Settings,
         "Settings.ThemeEditor",
@@ -169021,7 +169021,7 @@ local SettingsThemeEditorBox =
         "paintbrush"
     )
 
-local SettingsThemeLibraryBox =
+SettingsThemeLibraryBox =
     HolyAddRightGroupbox(
         Tabs.Settings,
         "Settings.ThemeLibrary",
@@ -169029,7 +169029,7 @@ local SettingsThemeLibraryBox =
         "library"
     )
 
-local SettingsSessionBox =
+SettingsSessionBox =
     HolyAddLeftGroupbox(
         Tabs.Settings,
         "Settings.Session",
@@ -169037,7 +169037,7 @@ local SettingsSessionBox =
         "activity"
     )
 
-local SettingsProtectionBox =
+SettingsProtectionBox =
     HolyAddRightGroupbox(
         Tabs.Settings,
         "Settings.Protection",
@@ -169045,7 +169045,7 @@ local SettingsProtectionBox =
         "shield"
     )
 
-local SettingsPerformanceBox =
+SettingsPerformanceBox =
     HolyAddLeftGroupbox(
         Tabs.Settings,
         "Settings.Performance",
@@ -169053,7 +169053,7 @@ local SettingsPerformanceBox =
         "gauge"
     )
 
-local SettingsAccountBox =
+SettingsAccountBox =
     HolyAddLeftGroupbox(
         Tabs.Settings,
         "Settings.Account",
@@ -169061,7 +169061,7 @@ local SettingsAccountBox =
         "circle-user-round"
     )
 
-local SettingsPairingBox =
+SettingsPairingBox =
     HolyAddRightGroupbox(
         Tabs.Settings,
         "Settings.Pairing",
@@ -169078,31 +169078,31 @@ HolyStartupLoadingStep(
 local SHOW_DEV_PERSISTENCE_TESTER =
     false
 
-local DevToolsBox =
+DevToolsBox =
     nil
 
-local DevUpdateBox =
+DevUpdateBox =
     nil
 
-local DevPersistenceBox =
+DevPersistenceBox =
     nil
 
-local DevActionBox =
+DevActionBox =
     nil
 
-local DevSnapshotBox =
+DevSnapshotBox =
     nil
 
-local DevErrorBox =
+DevErrorBox =
     nil
 
-local DevDataBox =
+DevDataBox =
     nil
 
-local DevAuctionBox =
+DevAuctionBox =
     nil
 
-local DevPacketBox =
+DevPacketBox =
     nil
 
 if Tabs.Dev then
