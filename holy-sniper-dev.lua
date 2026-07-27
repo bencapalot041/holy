@@ -158096,22 +158096,40 @@ HOLY_LOADOUT_RUNTIME = {
     Busy = false,
     PendingLoadoutId = "",
     PendingReason = "",
+    PendingForce = false,
+
+    RequestGeneration = 0,
+    CurrentGeneration = 0,
+    CurrentLoadoutId = "",
+    CurrentTargetSignature = "",
 
     ActiveLoadoutId = "",
+    ActiveResolvedSignature = "",
     ActiveReason = "None",
     WinningRuleId = "",
     WinningRuleName = "None",
 
     LastSwitchAt = 0,
     LastInventorySignature = "",
+    LastPetPoolSignature = "",
 
     RefreshQueued = false,
     RefreshGeneration = 0,
     SaveGeneration = 0,
 
     PacketCache = nil,
+    ActivePetIds = {},
+    ActiveServerReadable = false,
     ProtectedPetIds = {},
     RuleActiveUntil = {},
+
+    TeamDirty = false,
+    ResolutionDirty = false,
+    FailedKey = "",
+
+    Phase = "Idle",
+    ProgressCurrent = 0,
+    ProgressTotal = 0,
 
     Activity = {},
     Status = "Ready",
@@ -161588,6 +161606,1564 @@ function HolyLoadoutStart()
     return true
 end
 
+--==================================================
+-- HOLY LOADOUTS · CONFIRMED TEAM SWITCHER V2
+--==================================================
+
+HOLY_LOADOUT_READ_ACTIVE_BASE =
+    HolyLoadoutReadActivePetIds
+
+function HolyLoadoutResolvePackets(force)
+
+    if force ~= true
+    and type(HOLY_LOADOUT_RUNTIME.PacketCache) == "table" then
+        return HOLY_LOADOUT_RUNTIME.PacketCache
+    end
+
+    local networking =
+        type(HolyDefenseGetNetworking) == "function"
+        and HolyDefenseGetNetworking()
+        or nil
+
+    if type(networking) ~= "table" then
+
+        local sharedModules =
+            ReplicatedStorage:FindFirstChild("SharedModules")
+
+        local networkingModule =
+            sharedModules
+            and sharedModules:FindFirstChild("Networking")
+            or nil
+
+        if typeof(networkingModule) == "Instance"
+        and networkingModule:IsA("ModuleScript") then
+
+            local ok, result =
+                pcall(function()
+                    return require(networkingModule)
+                end)
+
+            if ok == true
+            and type(result) == "table" then
+                networking = result
+            end
+        end
+    end
+
+    local pets =
+        type(networking) == "table"
+        and type(networking.Pets) == "table"
+        and networking.Pets
+        or {}
+
+    HOLY_LOADOUT_RUNTIME.PacketCache = {
+        GetEquipped = pets.GetEquippedPets,
+        RequestUnequip = pets.RequestUnequip,
+        RequestToggleFollower = pets.RequestToggleFollower,
+        PetEquipped = pets.PetEquipped,
+        PetUnequipped = pets.PetUnequipped,
+    }
+
+    return HOLY_LOADOUT_RUNTIME.PacketCache
+end
+
+function HolyLoadoutFirePacket(packet, ...)
+
+    if HolyLoadoutPacketCanFire(packet) ~= true then
+        return false, "packet unavailable"
+    end
+
+    local ok, result =
+        pcall(function(...)
+            return packet:Fire(...)
+        end, ...)
+
+    if ok ~= true then
+        return false, tostring(result)
+    end
+
+    if result == false then
+        return false, "server rejected request"
+    end
+
+    if type(result) == "table"
+    and result.Success == false then
+
+        return false,
+            tostring(
+                result.Message
+                or result.Reason
+                or result.Error
+                or "server rejected request"
+            )
+    end
+
+    return true, result
+end
+
+function HolyLoadoutFirePacketReturns(packet, ...)
+
+    if HolyLoadoutPacketCanFire(packet) ~= true then
+        return false, "packet unavailable"
+    end
+
+    local arguments =
+        table.pack(...)
+
+    local ok, packed =
+        pcall(function()
+
+            return table.pack(
+                packet:Fire(
+                    table.unpack(
+                        arguments,
+                        1,
+                        arguments.n
+                    )
+                )
+            )
+        end)
+
+    if ok ~= true then
+        return false, tostring(packed)
+    end
+
+    return true, packed
+end
+
+function HolyLoadoutLooksLikePetId(value)
+
+    value =
+        HolyLoadoutTrim(value)
+
+    if value == "" then
+        return false
+    end
+
+    return value:match(
+        "^[0-9a-fA-F]+%-[0-9a-fA-F]+%-[0-9a-fA-F]+%-[0-9a-fA-F]+%-[0-9a-fA-F]+$"
+    ) ~= nil
+end
+
+function HolyLoadoutCollectPetIds(value, output, visited, depth)
+
+    depth =
+        tonumber(depth)
+        or 0
+
+    if depth > 6 then
+        return
+    end
+
+    if type(value) == "string" then
+
+        if HolyLoadoutLooksLikePetId(value) == true then
+            output[value] = true
+        end
+
+        return
+    end
+
+    if type(value) ~= "table" then
+        return
+    end
+
+    visited =
+        type(visited) == "table"
+        and visited
+        or {}
+
+    if visited[value] == true then
+        return
+    end
+
+    visited[value] = true
+
+    for _, fieldName in ipairs({
+        "Id",
+        "ID",
+        "PetId",
+        "PetID",
+        "PetUUID",
+        "UUID",
+        "Uuid",
+    }) do
+
+        local petId =
+            rawget(value, fieldName)
+
+        if HolyLoadoutLooksLikePetId(petId) == true
+        and rawget(value, "Equipped") ~= false then
+            output[tostring(petId)] = true
+        end
+    end
+
+    for key, nested in pairs(value) do
+
+        if HolyLoadoutLooksLikePetId(key) == true
+        and nested ~= false then
+            output[tostring(key)] = true
+        end
+
+        HolyLoadoutCollectPetIds(
+            nested,
+            output,
+            visited,
+            depth + 1
+        )
+    end
+end
+
+function HolyLoadoutCountPetIds(values)
+
+    local count = 0
+
+    for _, enabled in pairs(values or {}) do
+
+        if enabled == true then
+            count += 1
+        end
+    end
+
+    return count
+end
+
+function HolyLoadoutSortedPetIds(values)
+
+    local ids = {}
+
+    for petId, enabled in pairs(values or {}) do
+
+        if enabled == true then
+            table.insert(ids, petId)
+        end
+    end
+
+    table.sort(ids)
+
+    return ids
+end
+
+function HolyLoadoutPetPoolSignature(snapshot)
+
+    local parts = {}
+
+    for _, pet in ipairs(
+        type(snapshot) == "table"
+        and snapshot.Pets
+        or {}
+    ) do
+
+        table.insert(
+            parts,
+            table.concat({
+                tostring(pet.PetId or ""),
+                tostring(pet.GroupKey or ""),
+                pet.Favorite == true and "1" or "0",
+                pet.Locked == true and "1" or "0",
+            }, ":")
+        )
+    end
+
+    table.sort(parts)
+
+    return table.concat(parts, "|")
+end
+
+function HolyLoadoutQueryEquipped(packets)
+
+    packets =
+        type(packets) == "table"
+        and packets
+        or HolyLoadoutResolvePackets(false)
+
+    local ok, packed =
+        HolyLoadoutFirePacketReturns(
+            packets.GetEquipped
+        )
+
+    if ok ~= true then
+
+        return nil,
+            "GetEquippedPets failed: "
+            .. tostring(packed)
+    end
+
+    if type(packed) ~= "table"
+    or tonumber(packed.n) == nil
+    or packed.n <= 0 then
+
+        return nil,
+            "GetEquippedPets returned no response"
+    end
+
+    local activeIds = {}
+
+    for index = 1, packed.n do
+
+        HolyLoadoutCollectPetIds(
+            packed[index],
+            activeIds,
+            {},
+            0
+        )
+    end
+
+    HOLY_LOADOUT_RUNTIME.ActivePetIds =
+        activeIds
+
+    HOLY_LOADOUT_RUNTIME.ActiveServerReadable =
+        true
+
+    return activeIds, nil
+end
+
+function HolyLoadoutReadActivePetIds(snapshot)
+
+    if HOLY_LOADOUT_RUNTIME.ActiveServerReadable == true then
+
+        local activeIds = {}
+        local activeCount = 0
+
+        for petId, enabled in pairs(
+            HOLY_LOADOUT_RUNTIME.ActivePetIds
+            or {}
+        ) do
+
+            if enabled == true then
+                activeIds[petId] = true
+                activeCount += 1
+            end
+        end
+
+        return activeIds,
+            activeCount,
+            true
+    end
+
+    return HOLY_LOADOUT_READ_ACTIVE_BASE(snapshot)
+end
+
+function HolyLoadoutDescribePet(petId, snapshot)
+
+    local pet =
+        type(snapshot) == "table"
+        and type(snapshot.ById) == "table"
+        and snapshot.ById[petId]
+        or nil
+
+    if type(pet) ~= "table" then
+        return HolyLoadoutShortId(petId)
+    end
+
+    local details = {}
+
+    if tostring(pet.Size or "Normal") ~= "Normal" then
+        table.insert(details, tostring(pet.Size))
+    end
+
+    if tostring(pet.Variant or "Normal") ~= "Normal" then
+        table.insert(details, tostring(pet.Variant))
+    end
+
+    return tostring(pet.PetName or "Pet")
+        .. (
+            #details > 0
+            and (
+                " · "
+                .. table.concat(details, " · ")
+            )
+            or ""
+        )
+end
+
+function HolyLoadoutTransactionCurrent(generation)
+
+    return HOLY_LOADOUT_RUNTIME.Running == true
+        and HOLY_LOADOUT_RUNTIME.RequestGeneration
+            == generation
+end
+
+function HolyLoadoutWaitForEmpty(packets, total, timeout)
+
+    local deadline =
+        os.clock()
+        + timeout
+
+    local lastIds = nil
+    local lastError = nil
+
+    repeat
+
+        if HOLY_LOADOUT_RUNTIME.Running ~= true then
+            return false, "loadout system stopped", lastIds
+        end
+
+        task.wait(0.12)
+
+        local activeIds, queryError =
+            HolyLoadoutQueryEquipped(packets)
+
+        if activeIds ~= nil then
+
+            lastIds = activeIds
+
+            local remaining =
+                HolyLoadoutCountPetIds(activeIds)
+
+            HOLY_LOADOUT_RUNTIME.ProgressCurrent =
+                math.max(total - remaining, 0)
+
+            HolyLoadoutSetStatus(
+                "Clearing Team",
+                "Removed "
+                    .. tostring(
+                        HOLY_LOADOUT_RUNTIME.ProgressCurrent
+                    )
+                    .. "/"
+                    .. tostring(total)
+                    .. " pets..."
+            )
+
+            if remaining <= 0 then
+                return true, "server confirmed empty", activeIds
+            end
+
+        else
+
+            lastError = queryError
+        end
+
+    until os.clock() >= deadline
+
+    return false,
+        tostring(
+            lastError
+            or "the server still reports active pets"
+        ),
+        lastIds
+end
+
+function HolyLoadoutClearTeam(packets, snapshot)
+
+    local activeIds, queryError =
+        HolyLoadoutQueryEquipped(packets)
+
+    if activeIds == nil then
+        return false, queryError
+    end
+
+    local total =
+        HolyLoadoutCountPetIds(activeIds)
+
+    HOLY_LOADOUT_RUNTIME.Phase = "Clearing"
+    HOLY_LOADOUT_RUNTIME.ProgressCurrent = 0
+    HOLY_LOADOUT_RUNTIME.ProgressTotal = total
+
+    if total <= 0 then
+
+        HolyLoadoutSetStatus(
+            "Team cleared",
+            "The server confirms 0 active pets."
+        )
+
+        return true, "already empty"
+    end
+
+    HolyLoadoutSetStatus(
+        "Clearing Team",
+        "Removed 0/"
+            .. tostring(total)
+            .. " pets..."
+    )
+
+    for _, petId in ipairs(
+        HolyLoadoutSortedPetIds(activeIds)
+    ) do
+
+        HolyLoadoutFirePacket(
+            packets.RequestUnequip,
+            petId
+        )
+    end
+
+    local cleared, clearReason, remainingIds =
+        HolyLoadoutWaitForEmpty(
+            packets,
+            total,
+            4
+        )
+
+    if cleared == true then
+        return true, clearReason
+    end
+
+    remainingIds =
+        type(remainingIds) == "table"
+        and remainingIds
+        or activeIds
+
+    for _, petId in ipairs(
+        HolyLoadoutSortedPetIds(remainingIds)
+    ) do
+
+        HolyLoadoutFirePacket(
+            packets.RequestUnequip,
+            petId
+        )
+    end
+
+    cleared,
+        clearReason,
+        remainingIds =
+        HolyLoadoutWaitForEmpty(
+            packets,
+            total,
+            3
+        )
+
+    if cleared == true then
+        return true, "server confirmed empty after one safe retry"
+    end
+
+    local firstRemaining =
+        HolyLoadoutSortedPetIds(
+            remainingIds
+            or {}
+        )[1]
+
+    if firstRemaining then
+
+        return false,
+            "timed out clearing "
+            .. HolyLoadoutDescribePet(
+                firstRemaining,
+                snapshot
+            )
+            .. " ("
+            .. HolyLoadoutShortId(
+                firstRemaining
+            )
+            .. ")"
+    end
+
+    return false, clearReason
+end
+
+function HolyLoadoutWaitForPetEquipped(
+    petId,
+    packets,
+    generation,
+    timeout
+)
+
+    local deadline =
+        os.clock()
+        + (
+            tonumber(timeout)
+            or 3.5
+        )
+
+    local lastSnapshot = nil
+    local lastError = nil
+
+    repeat
+
+        if HolyLoadoutTransactionCurrent(generation) ~= true then
+            return false, "superseded", lastSnapshot
+        end
+
+        if HOLY_LOADOUT_RUNTIME.ActivePetIds[petId] == true then
+            return true, "event confirmed", HOLY_LOADOUT_RUNTIME.ActivePetIds
+        end
+
+        local activeIds, queryError =
+            HolyLoadoutQueryEquipped(packets)
+
+        if activeIds ~= nil then
+
+            lastSnapshot = activeIds
+
+            if activeIds[petId] == true then
+                return true, "server confirmed", activeIds
+            end
+
+        else
+
+            lastError = queryError
+        end
+
+        task.wait(0.12)
+
+    until os.clock() >= deadline
+
+    if lastSnapshot == nil then
+
+        return false,
+            tostring(
+                lastError
+                or "could not read the server team"
+            ),
+            nil
+    end
+
+    return false,
+        "server confirmed inactive",
+        lastSnapshot
+end
+
+function HolyLoadoutEquipOne(pet, packets, generation)
+
+    local petId =
+        tostring(
+            pet.RawPetId
+            or pet.PetId
+            or ""
+        )
+
+    if petId == "" then
+        return false, "pet record has no PetId", "failed"
+    end
+
+    local sent, sendReason =
+        HolyLoadoutFirePacket(
+            packets.RequestToggleFollower,
+            petId
+        )
+
+    if sent ~= true then
+        return false, tostring(sendReason), "failed"
+    end
+
+    local confirmed, confirmReason =
+        HolyLoadoutWaitForPetEquipped(
+            petId,
+            packets,
+            generation,
+            3.5
+        )
+
+    if confirmed == true then
+        task.wait(0.08)
+        return true, confirmReason, "confirmed"
+    end
+
+    if confirmReason == "superseded" then
+        return false, confirmReason, "superseded"
+    end
+
+    if confirmReason ~= "server confirmed inactive" then
+        return false, confirmReason, "failed"
+    end
+
+    sent,
+        sendReason =
+        HolyLoadoutFirePacket(
+            packets.RequestToggleFollower,
+            petId
+        )
+
+    if sent ~= true then
+
+        return false,
+            "retry failed: "
+            .. tostring(sendReason),
+            "failed"
+    end
+
+    confirmed,
+        confirmReason =
+        HolyLoadoutWaitForPetEquipped(
+            petId,
+            packets,
+            generation,
+            3.5
+        )
+
+    if confirmed == true then
+        task.wait(0.08)
+        return true, "confirmed after one safe retry", "confirmed"
+    end
+
+    return false,
+        tostring(confirmReason),
+        confirmReason == "superseded"
+            and "superseded"
+            or "failed"
+end
+
+function HolyLoadoutSetPetEquipped(pet, enabled, packets)
+
+    if type(pet) ~= "table" then
+        return false, "pet record missing"
+    end
+
+    packets =
+        type(packets) == "table"
+        and packets
+        or HolyLoadoutResolvePackets(false)
+
+    local petId =
+        pet.RawPetId
+        or pet.PetId
+
+    if enabled == true then
+
+        return HolyLoadoutFirePacket(
+            packets.RequestToggleFollower,
+            petId
+        )
+    end
+
+    return HolyLoadoutFirePacket(
+        packets.RequestUnequip,
+        petId
+    )
+end
+
+function HolyLoadoutConnectPacketEvent(packet, callback)
+
+    if type(packet) ~= "table"
+    or packet.OnClientEvent == nil then
+        return false
+    end
+
+    local ok, connection =
+        pcall(function()
+            return packet.OnClientEvent:Connect(callback)
+        end)
+
+    if ok == true
+    and connection ~= nil then
+        HolyLoadoutAddConnection(connection)
+        return true
+    end
+
+    return false
+end
+
+function HolyLoadoutOnServerPetState(petId, equipped)
+
+    petId =
+        HolyLoadoutTrim(petId)
+
+    if petId == "" then
+        return
+    end
+
+    if equipped == true then
+        HOLY_LOADOUT_RUNTIME.ActivePetIds[petId] = true
+    else
+        HOLY_LOADOUT_RUNTIME.ActivePetIds[petId] = nil
+    end
+
+    HOLY_LOADOUT_RUNTIME.ActiveServerReadable = true
+
+    if HOLY_LOADOUT_RUNTIME.Busy ~= true then
+
+        HOLY_LOADOUT_RUNTIME.TeamDirty = true
+        HOLY_LOADOUT_RUNTIME.FailedKey = ""
+
+        HolyLoadoutScheduleRefresh(
+            equipped == true
+            and "server pet equipped"
+            or "server pet unequipped"
+        )
+    end
+end
+
+function HolyLoadoutConnectPetEvents()
+
+    local packets =
+        HolyLoadoutResolvePackets(true)
+
+    HolyLoadoutConnectPacketEvent(
+        packets.PetEquipped,
+        function(petId)
+            HolyLoadoutOnServerPetState(petId, true)
+        end
+    )
+
+    HolyLoadoutConnectPacketEvent(
+        packets.PetUnequipped,
+        function(petId)
+            HolyLoadoutOnServerPetState(petId, false)
+        end
+    )
+
+    HolyLoadoutQueryEquipped(packets)
+
+    return packets
+end
+
+function HolyLoadoutCaptureActivePets()
+
+    local loadout =
+        HolyLoadoutGetSelected()
+
+    if type(loadout) ~= "table" then
+        return false
+    end
+
+    local activeIds, activeError =
+        HolyLoadoutQueryEquipped(
+            HolyLoadoutResolvePackets(false)
+        )
+
+    if activeIds == nil then
+
+        HolyNotify(
+            "HOLY Loadouts",
+            tostring(activeError),
+            4
+        )
+
+        return false
+    end
+
+    local snapshot =
+        HolyLoadoutScanInventory()
+
+    local ids = {}
+
+    for _, petId in ipairs(
+        HolyLoadoutSortedPetIds(activeIds)
+    ) do
+
+        if type(snapshot.ById[petId]) == "table" then
+            table.insert(ids, petId)
+        end
+    end
+
+    if #ids <= 0 then
+
+        HolyNotify(
+            "HOLY Loadouts",
+            "The server reports no equipped pets.",
+            4
+        )
+
+        return false
+    end
+
+    loadout.ExactPetIds = ids
+
+    if loadout.Mode == "Smart" then
+        loadout.Mode = "Hybrid"
+    end
+
+    HolyLoadoutCommitChange(
+        "Captured "
+            .. tostring(#ids)
+            .. " server-confirmed pet(s)."
+    )
+
+    return true
+end
+
+function HolyLoadoutApplyResolved(
+    loadout,
+    resolved,
+    reason,
+    generation,
+    force
+)
+
+    if type(loadout) ~= "table"
+    or type(resolved) ~= "table" then
+        return false, "loadout could not be resolved", "failed"
+    end
+
+    if loadout.Enabled == false then
+        return false, "loadout is disabled", "failed"
+    end
+
+    if #resolved.Pets <= 0 then
+        return false, "no available pets matched this loadout", "failed"
+    end
+
+    if #(resolved.DuplicateExact or {}) > 0 then
+
+        return false,
+            "the loadout contains the same exact PetId more than once",
+            "failed"
+    end
+
+    if #(resolved.MissingExact or {}) > 0 then
+
+        return false,
+            "exact pet is missing: "
+            .. HolyLoadoutShortId(
+                resolved.MissingExact[1]
+            ),
+            "failed"
+    end
+
+    local packets =
+        HolyLoadoutResolvePackets(false)
+
+    local packetsReady =
+        HolyLoadoutPacketCanFire(packets.GetEquipped) == true
+        and HolyLoadoutPacketCanFire(packets.RequestUnequip) == true
+        and HolyLoadoutPacketCanFire(
+            packets.RequestToggleFollower
+        ) == true
+
+    if packetsReady ~= true then
+
+        packets =
+            HolyLoadoutResolvePackets(true)
+
+        packetsReady =
+            HolyLoadoutPacketCanFire(packets.GetEquipped) == true
+            and HolyLoadoutPacketCanFire(packets.RequestUnequip) == true
+            and HolyLoadoutPacketCanFire(
+                packets.RequestToggleFollower
+            ) == true
+    end
+
+    if packetsReady ~= true then
+
+        return false,
+            "required Pets networking packets were not found",
+            "failed"
+    end
+
+    local currentIds, currentError =
+        HolyLoadoutQueryEquipped(packets)
+
+    if currentIds == nil then
+        return false, currentError, "failed"
+    end
+
+    if force ~= true
+    and HolyLoadoutCurrentSignature(currentIds)
+        == resolved.Signature then
+
+        return true,
+            "already equipped",
+            "already"
+    end
+
+    local cleared, clearReason =
+        HolyLoadoutClearTeam(
+            packets,
+            resolved.Snapshot
+        )
+
+    if cleared ~= true then
+        return false, tostring(clearReason), "failed"
+    end
+
+    if HolyLoadoutTransactionCurrent(generation) ~= true then
+
+        HOLY_LOADOUT_RUNTIME.Phase =
+            "Changing Target"
+
+        return false,
+            "a newer loadout was selected",
+            "superseded"
+    end
+
+    HOLY_LOADOUT_RUNTIME.Phase = "Placing"
+    HOLY_LOADOUT_RUNTIME.ProgressCurrent = 0
+    HOLY_LOADOUT_RUNTIME.ProgressTotal = #resolved.Pets
+
+    for index, pet in ipairs(resolved.Pets) do
+
+        if HolyLoadoutTransactionCurrent(generation) ~= true then
+
+            HolyLoadoutClearTeam(
+                packets,
+                resolved.Snapshot
+            )
+
+            HOLY_LOADOUT_RUNTIME.Phase =
+                "Changing Target"
+
+            return false,
+                "a newer loadout was selected",
+                "superseded"
+        end
+
+        local petLabel =
+            HolyLoadoutDescribePet(
+                pet.PetId,
+                resolved.Snapshot
+            )
+
+        HolyLoadoutSetStatus(
+            "Placing Team",
+            "Placed "
+                .. tostring(index - 1)
+                .. "/"
+                .. tostring(#resolved.Pets)
+                .. " · waiting for "
+                .. petLabel
+        )
+
+        local equipped, equipReason, equipOutcome =
+            HolyLoadoutEquipOne(
+                pet,
+                packets,
+                generation
+            )
+
+        if equipped ~= true then
+
+            if equipOutcome == "superseded" then
+
+                HolyLoadoutClearTeam(
+                    packets,
+                    resolved.Snapshot
+                )
+
+                HOLY_LOADOUT_RUNTIME.Phase =
+                    "Changing Target"
+
+                return false,
+                    "a newer loadout was selected",
+                    "superseded"
+            end
+
+            return false,
+                petLabel
+                .. " placement was not confirmed (slot "
+                .. tostring(index)
+                .. "/"
+                .. tostring(#resolved.Pets)
+                .. "): "
+                .. tostring(equipReason),
+                "failed"
+        end
+
+        HOLY_LOADOUT_RUNTIME.ProgressCurrent =
+            index
+
+        HolyLoadoutSetStatus(
+            "Placing Team",
+            "Placed "
+                .. tostring(index)
+                .. "/"
+                .. tostring(#resolved.Pets)
+                .. " pets."
+        )
+    end
+
+    local finalIds, finalError =
+        HolyLoadoutQueryEquipped(packets)
+
+    if finalIds == nil then
+        return false, finalError, "failed"
+    end
+
+    if HolyLoadoutCurrentSignature(finalIds)
+        ~= resolved.Signature then
+
+        return false,
+            "final server team did not exactly match the resolved loadout",
+            "failed"
+    end
+
+    HOLY_LOADOUT_RUNTIME.ActivePetIds = finalIds
+    HOLY_LOADOUT_RUNTIME.Phase = "Active"
+    HOLY_LOADOUT_RUNTIME.ProgressCurrent = #resolved.Pets
+    HOLY_LOADOUT_RUNTIME.ProgressTotal = #resolved.Pets
+
+    return true,
+        "server verified "
+        .. tostring(#resolved.Pets)
+        .. "/"
+        .. tostring(#resolved.Pets)
+        .. " pets",
+        "verified"
+end
+
+function HolyLoadoutRequestApply(loadoutId, reason, force)
+
+    local loadout =
+        HolyLoadoutGetById(loadoutId)
+
+    if type(loadout) ~= "table" then
+
+        HolyLoadoutSetStatus(
+            "Apply failed",
+            "The selected loadout no longer exists."
+        )
+
+        return false
+    end
+
+    if force ~= true
+    and HOLY_LOADOUT_RUNTIME.Busy == true
+    and (
+        HOLY_LOADOUT_RUNTIME.CurrentLoadoutId == loadout.Id
+        or HOLY_LOADOUT_RUNTIME.PendingLoadoutId == loadout.Id
+    ) then
+        return true
+    end
+
+    HOLY_LOADOUT_RUNTIME.RequestGeneration += 1
+    HOLY_LOADOUT_RUNTIME.PendingLoadoutId = loadout.Id
+    HOLY_LOADOUT_RUNTIME.PendingReason = tostring(reason or "Manual")
+    HOLY_LOADOUT_RUNTIME.PendingForce = force == true
+
+    if HOLY_LOADOUT_RUNTIME.Busy == true then
+
+        HolyLoadoutSetStatus(
+            "Changing Target",
+            "The current switch will clear safely, then use "
+                .. loadout.Name
+                .. "."
+        )
+
+        return true
+    end
+
+    HOLY_LOADOUT_RUNTIME.Busy = true
+
+    task.spawn(function()
+
+        while HOLY_LOADOUT_RUNTIME.Running == true
+        and HOLY_LOADOUT_RUNTIME.PendingLoadoutId ~= "" do
+
+            local nextId =
+                HOLY_LOADOUT_RUNTIME.PendingLoadoutId
+
+            local nextReason =
+                HOLY_LOADOUT_RUNTIME.PendingReason
+
+            local nextForce =
+                HOLY_LOADOUT_RUNTIME.PendingForce == true
+
+            local generation =
+                HOLY_LOADOUT_RUNTIME.RequestGeneration
+
+            HOLY_LOADOUT_RUNTIME.PendingLoadoutId = ""
+            HOLY_LOADOUT_RUNTIME.PendingReason = ""
+            HOLY_LOADOUT_RUNTIME.PendingForce = false
+
+            local nextLoadout =
+                HolyLoadoutGetById(nextId)
+
+            if type(nextLoadout) ~= "table" then
+                continue
+            end
+
+            local waitFor =
+                HOLY_LOADOUT_STATE.SwitchCooldown
+                - (
+                    os.clock()
+                    - HOLY_LOADOUT_RUNTIME.LastSwitchAt
+                )
+
+            if nextForce ~= true
+            and waitFor > 0 then
+
+                HolyLoadoutSetStatus(
+                    "Switch Cooldown",
+                    "Applying "
+                        .. nextLoadout.Name
+                        .. " in "
+                        .. string.format("%.1f", waitFor)
+                        .. "s."
+                )
+
+                local cooldownDeadline =
+                    os.clock()
+                    + waitFor
+
+                repeat
+
+                    task.wait(
+                        math.min(
+                            0.05,
+                            math.max(
+                                cooldownDeadline
+                                    - os.clock(),
+                                0
+                            )
+                        )
+                    )
+
+                until os.clock() >= cooldownDeadline
+                    or HolyLoadoutTransactionCurrent(
+                        generation
+                    ) ~= true
+            end
+
+            if HolyLoadoutTransactionCurrent(generation) ~= true then
+                continue
+            end
+
+            HolyLoadoutSetStatus(
+                "Preparing "
+                    .. nextLoadout.Name,
+                "Resolving and validating every target pet..."
+            )
+
+            local snapshot =
+                HolyLoadoutScanInventory()
+
+            local resolved =
+                HolyLoadoutResolve(
+                    nextLoadout,
+                    snapshot
+                )
+
+            local failureKey =
+                nextLoadout.Id
+                .. "|"
+                .. tostring(resolved.Signature)
+                .. "|"
+                .. HolyLoadoutPetPoolSignature(snapshot)
+
+            if nextForce ~= true
+            and HOLY_LOADOUT_RUNTIME.FailedKey == failureKey then
+
+                HolyLoadoutSetStatus(
+                    "Waiting for change",
+                    nextLoadout.Name
+                        .. " will retry after its pets or team state changes."
+                )
+
+                continue
+            end
+
+            HOLY_LOADOUT_RUNTIME.CurrentGeneration = generation
+            HOLY_LOADOUT_RUNTIME.CurrentLoadoutId = nextLoadout.Id
+            HOLY_LOADOUT_RUNTIME.CurrentTargetSignature =
+                resolved.Signature
+
+            local success, applyReason, applyOutcome =
+                HolyLoadoutApplyResolved(
+                    nextLoadout,
+                    resolved,
+                    nextReason,
+                    generation,
+                    nextForce
+                )
+
+            if HOLY_LOADOUT_RUNTIME.Running ~= true then
+                break
+            end
+
+            if applyOutcome == "superseded" then
+
+                HolyLoadoutSetStatus(
+                    "Changing Target",
+                    "The cleared team will use the newest selected loadout."
+                )
+
+                continue
+            end
+
+            if success == true then
+
+                local oldLoadout =
+                    HolyLoadoutGetById(
+                        HOLY_LOADOUT_RUNTIME.ActiveLoadoutId
+                    )
+
+                local rebuiltSame =
+                    type(oldLoadout) == "table"
+                    and oldLoadout.Id == nextLoadout.Id
+
+                HOLY_LOADOUT_RUNTIME.ActiveLoadoutId = nextLoadout.Id
+                HOLY_LOADOUT_RUNTIME.ActiveResolvedSignature =
+                    resolved.Signature
+                HOLY_LOADOUT_RUNTIME.ActiveReason = nextReason
+                HOLY_LOADOUT_RUNTIME.LastSwitchAt = os.clock()
+                HOLY_LOADOUT_RUNTIME.TeamDirty = false
+                HOLY_LOADOUT_RUNTIME.ResolutionDirty = false
+                HOLY_LOADOUT_RUNTIME.FailedKey = ""
+
+                HolyLoadoutSetStatus(
+                    "Active: "
+                        .. nextLoadout.Name,
+                    tostring(applyReason)
+                )
+
+                HolyLoadoutAddActivity(
+                    rebuiltSame == true
+                    and (
+                        "Rebuilt "
+                        .. nextLoadout.Name
+                        .. " · "
+                        .. tostring(nextReason)
+                    )
+                    or (
+                        (
+                            type(oldLoadout) == "table"
+                            and oldLoadout.Name
+                            or "None"
+                        )
+                            .. " → "
+                            .. nextLoadout.Name
+                            .. " · "
+                            .. tostring(nextReason)
+                    )
+                )
+
+            else
+
+                HOLY_LOADOUT_RUNTIME.Phase = "Failed"
+                HOLY_LOADOUT_RUNTIME.FailedKey = failureKey
+
+                HolyLoadoutSetStatus(
+                    "Apply failed",
+                    tostring(applyReason)
+                )
+
+                HolyLoadoutAddActivity(
+                    "Failed "
+                        .. nextLoadout.Name
+                        .. " · "
+                        .. tostring(applyReason)
+                )
+
+                HolyNotify(
+                    "HOLY Loadouts",
+                    tostring(applyReason),
+                    5
+                )
+            end
+
+            HolyLoadoutRebuildProtection()
+
+            if type(HolyLoadoutRefreshAllUI) == "function" then
+                HolyLoadoutRefreshAllUI(false)
+            end
+        end
+
+        HOLY_LOADOUT_RUNTIME.CurrentGeneration = 0
+        HOLY_LOADOUT_RUNTIME.CurrentLoadoutId = ""
+        HOLY_LOADOUT_RUNTIME.CurrentTargetSignature = ""
+        HOLY_LOADOUT_RUNTIME.Busy = false
+    end)
+
+    return true
+end
+
+function HolyLoadoutEvaluateAutomation(force)
+
+    if HOLY_LOADOUT_STATE.AutoEnabled ~= true
+    and HOLY_LOADOUT_STATE.ManualOverrideId == "" then
+
+        HOLY_LOADOUT_RUNTIME.WinningRuleId = ""
+        HOLY_LOADOUT_RUNTIME.WinningRuleName = "None"
+
+        return false
+    end
+
+    local winningLoadoutId = ""
+    local winningReason = ""
+    local winningRule = nil
+
+    if HOLY_LOADOUT_STATE.ManualOverrideId ~= ""
+    and HolyLoadoutGetById(
+        HOLY_LOADOUT_STATE.ManualOverrideId
+    ) ~= nil then
+
+        winningLoadoutId =
+            HOLY_LOADOUT_STATE.ManualOverrideId
+
+        winningReason =
+            "Manual Override"
+
+    elseif HOLY_LOADOUT_STATE.AutoEnabled == true then
+
+        for _, rule in ipairs(
+            HOLY_LOADOUT_STATE.AutomationRules
+            or {}
+        ) do
+
+            if HolyLoadoutAutomationRuleActive(rule) == true
+            and (
+                winningRule == nil
+                or rule.Priority > winningRule.Priority
+            ) then
+                winningRule = rule
+            end
+        end
+
+        if type(winningRule) == "table" then
+            winningLoadoutId = winningRule.LoadoutId
+            winningReason = winningRule.Name
+
+        elseif HolyLoadoutGetById(
+            HOLY_LOADOUT_STATE.DefaultLoadoutId
+        ) ~= nil then
+            winningLoadoutId = HOLY_LOADOUT_STATE.DefaultLoadoutId
+            winningReason = "Default"
+        end
+    end
+
+    HOLY_LOADOUT_RUNTIME.WinningRuleId =
+        type(winningRule) == "table"
+        and winningRule.Id
+        or ""
+
+    HOLY_LOADOUT_RUNTIME.WinningRuleName =
+        winningReason ~= ""
+        and winningReason
+        or "None"
+
+    if winningLoadoutId == "" then
+        return false
+    end
+
+    local shouldApply =
+        force == true
+        or HOLY_LOADOUT_RUNTIME.ActiveLoadoutId ~= winningLoadoutId
+        or HOLY_LOADOUT_RUNTIME.TeamDirty == true
+
+    if shouldApply ~= true
+    and HOLY_LOADOUT_RUNTIME.ResolutionDirty == true then
+
+        local winningLoadout =
+            HolyLoadoutGetById(winningLoadoutId)
+
+        if type(winningLoadout) == "table" then
+
+            local currentResolved =
+                HolyLoadoutResolve(
+                    winningLoadout,
+                    HolyLoadoutScanInventory()
+                )
+
+            shouldApply =
+                currentResolved.Signature
+                ~= HOLY_LOADOUT_RUNTIME.ActiveResolvedSignature
+        end
+
+        HOLY_LOADOUT_RUNTIME.ResolutionDirty = false
+    end
+
+    if shouldApply == true then
+
+        local previousReason =
+            HOLY_LOADOUT_RUNTIME.ActiveReason
+
+        HolyLoadoutRequestApply(
+            winningLoadoutId,
+            winningReason,
+            force == true
+        )
+
+        if type(winningRule) == "table"
+        and winningRule.Notify == true
+        and previousReason ~= winningReason then
+
+            HolyNotify(
+                "HOLY Loadouts",
+                "Activated by "
+                    .. winningReason
+                    .. ".",
+                3
+            )
+        end
+
+        return true
+    end
+
+    return false
+end
+
+function HolyLoadoutScheduleRefresh(reason)
+
+    HOLY_LOADOUT_RUNTIME.RefreshGeneration += 1
+
+    local generation =
+        HOLY_LOADOUT_RUNTIME.RefreshGeneration
+
+    HOLY_LOADOUT_RUNTIME.RefreshQueued = true
+
+    task.delay(
+        0.25,
+        function()
+
+            if HOLY_LOADOUT_RUNTIME.RefreshGeneration ~= generation
+            or HOLY_LOADOUT_RUNTIME.Running ~= true then
+                return
+            end
+
+            HOLY_LOADOUT_RUNTIME.RefreshQueued = false
+
+            local snapshot =
+                HolyLoadoutScanInventory()
+
+            local signature =
+                HolyLoadoutInventorySignature(snapshot)
+
+            local petPoolSignature =
+                HolyLoadoutPetPoolSignature(snapshot)
+
+            if petPoolSignature
+                ~= HOLY_LOADOUT_RUNTIME.LastPetPoolSignature then
+
+                HOLY_LOADOUT_RUNTIME.LastPetPoolSignature =
+                    petPoolSignature
+
+                HOLY_LOADOUT_RUNTIME.ResolutionDirty = true
+                HOLY_LOADOUT_RUNTIME.FailedKey = ""
+            end
+
+            if signature
+                ~= HOLY_LOADOUT_RUNTIME.LastInventorySignature then
+
+                HOLY_LOADOUT_RUNTIME.LastInventorySignature =
+                    signature
+
+                HolyLoadoutRebuildProtection()
+
+                if type(HolyLoadoutRefreshAllUI) == "function" then
+
+                    HolyLoadoutRefreshAllUI(
+                        false,
+                        snapshot
+                    )
+                end
+            end
+
+            HolyLoadoutEvaluateAutomation(false)
+        end
+    )
+
+    return true
+end
+
+function HolyLoadoutStop(reason)
+
+    HOLY_LOADOUT_RUNTIME.Running = false
+    HOLY_LOADOUT_RUNTIME.Token = nil
+    HOLY_LOADOUT_RUNTIME.RequestGeneration += 1
+    HOLY_LOADOUT_RUNTIME.PendingLoadoutId = ""
+    HOLY_LOADOUT_RUNTIME.PendingReason = ""
+    HOLY_LOADOUT_RUNTIME.PendingForce = false
+    HOLY_LOADOUT_RUNTIME.CurrentLoadoutId = ""
+    HOLY_LOADOUT_RUNTIME.CurrentTargetSignature = ""
+
+    HolyLoadoutDisconnect()
+
+    return true
+end
+
+HOLY_LOADOUT_RECONNECT_BASE =
+    HolyLoadoutReconnect
+
+function HolyLoadoutReconnect()
+
+    local result =
+        HOLY_LOADOUT_RECONNECT_BASE()
+
+    if HOLY_LOADOUT_RUNTIME.Running == true then
+        HolyLoadoutConnectPetEvents()
+    end
+
+    return result
+end
+
 HOLY_LOADOUT_RUNTIME.Stop =
     HolyLoadoutStop
 
@@ -165039,8 +166615,8 @@ end
 
 HOLY_LOADOUT_UI.ActivityActions =
     HOLY_LOADOUT_UI.ActivityBox:AddButton({
-        Text = "Apply Again",
-        Tooltip = "Reapply the currently active or selected loadout.",
+        Text = "Rebuild Team",
+        Tooltip = "Unequip every active pet and rebuild the loadout from scratch.",
 
         Func = function()
 
@@ -165052,7 +166628,7 @@ HOLY_LOADOUT_UI.ActivityActions =
 
             HolyLoadoutRequestApply(
                 loadoutId,
-                "Apply Again",
+                "Rebuild Team",
                 true
             )
         end,
