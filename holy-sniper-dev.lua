@@ -102,7 +102,7 @@ local env =
     or _G
 
 local VERSION =
-    "HOLY_EARLY_PERFORMANCE_V1"
+    "HOLY_EARLY_PERFORMANCE_V3"
 
 local SETTINGS_FILE =
     "HolyGAG2/HolyDevUISettings.json"
@@ -832,8 +832,6 @@ end
 
 local ownContainerNames = {
     Plants = true,
-    Sprinklers = true,
-    Props = true,
 }
 
 local function processOwnPlot(plot)
@@ -1554,7 +1552,7 @@ runtime.ReadyAt =
             return false
         end
 
-        if earlyEnv.HOLY_EARLY_PERFORMANCE_QUEUED_FROM_JOB
+        if earlyEnv.HOLY_EARLY_PERFORMANCE_V3_QUEUED_FROM_JOB
             == game.JobId then
 
             return true
@@ -1575,7 +1573,7 @@ runtime.ReadyAt =
 
         if ok == true then
 
-            earlyEnv.HOLY_EARLY_PERFORMANCE_QUEUED_FROM_JOB =
+            earlyEnv.HOLY_EARLY_PERFORMANCE_V3_QUEUED_FROM_JOB =
                 game.JobId
         end
 
@@ -1686,7 +1684,7 @@ local env =
     or _G
 
 local VERSION =
-    "HOLY_FAST_LOADER_PRODUCTION_V1"
+    "HOLY_FAST_LOADER_PRODUCTION_V3"
 
 local SETTINGS_FILE =
     "HolyGAG2/HolyDevUISettings.json"
@@ -2640,12 +2638,79 @@ do
 
         module.EnqueueSpawnEntries = function(self, entries, total)
 
-            if runtime.Active ~= true then
+            if runtime.Active ~= true
+            or type(entries) ~= "table" then
 
                 return original(
                     self,
                     entries,
                     total
+                )
+            end
+
+            -- Preserve unknown dictionary formats instead of
+            -- accidentally filtering the complete garden.
+            if #entries <= 0
+            and next(entries) ~= nil then
+
+                return original(
+                    self,
+                    entries,
+                    total
+                )
+            end
+
+            local resolvedEntries =
+                {}
+
+            for _, entry in ipairs(entries) do
+
+                if type(entry) ~= "table" then
+
+                    return original(
+                        self,
+                        entries,
+                        total
+                    )
+                end
+
+                local entryUserId =
+                    tonumber(
+                        entry.userId
+                        or entry.UserId
+                        or entry.ownerUserId
+                        or entry.OwnerUserId
+                    )
+
+                local entryEntityCount =
+                    tonumber(
+                        entry.entityCount
+                        or entry.EntityCount
+                    )
+
+                if entryUserId == nil
+                or entryEntityCount == nil then
+
+                    -- Unknown ownership stays loaded.
+                    return original(
+                        self,
+                        entries,
+                        total
+                    )
+                end
+
+                table.insert(
+                    resolvedEntries,
+                    {
+                        Entry =
+                            entry,
+
+                        UserId =
+                            entryUserId,
+
+                        EntityCount =
+                            entryEntityCount,
+                    }
                 )
             end
 
@@ -2655,22 +2720,19 @@ do
             local localEntityTotal =
                 0
 
-            for _, entry in ipairs(
-                type(entries) == "table"
-                and entries
-                or {}
+            for _, resolved in ipairs(
+                resolvedEntries
             ) do
 
-                if tonumber(entry.userId) == player.UserId then
+                if resolved.UserId == player.UserId then
 
                     table.insert(
                         localEntries,
-                        entry
+                        resolved.Entry
                     )
 
                     localEntityTotal +=
-                        tonumber(entry.entityCount)
-                        or 0
+                        resolved.EntityCount
 
                 else
 
@@ -2678,8 +2740,7 @@ do
                         1
 
                     runtime.GardenEntitiesSkipped +=
-                        tonumber(entry.entityCount)
-                        or 0
+                        resolved.EntityCount
                 end
             end
 
@@ -2710,8 +2771,21 @@ do
 
         module.SpawnPlantFromData = function(self, userId, ...)
 
+            local resolvedUserId =
+                type(userId) == "table"
+                and tonumber(
+                    userId.userId
+                    or userId.UserId
+                    or userId.ownerUserId
+                    or userId.OwnerUserId
+                )
+                or tonumber(
+                    userId
+                )
+
             if runtime.Active == true
-            and tonumber(userId) ~= player.UserId then
+            and resolvedUserId ~= nil
+            and resolvedUserId ~= player.UserId then
 
                 runtime.DirectPlantSpawnsSkipped +=
                     1
@@ -2719,6 +2793,7 @@ do
                 return nil
             end
 
+            -- Unknown ownership is allowed through.
             return original(
                 self,
                 userId,
@@ -2861,7 +2936,7 @@ runtime.FinishedAt =
             return false
         end
 
-        if env.HOLY_FAST_LOADER_QUEUED_FROM_JOB == game.JobId then
+        if env.HOLY_FAST_LOADER_V3_QUEUED_FROM_JOB == game.JobId then
             return true
         end
 
@@ -2880,7 +2955,7 @@ runtime.FinishedAt =
 
         if ok == true then
 
-            env.HOLY_FAST_LOADER_QUEUED_FROM_JOB =
+            env.HOLY_FAST_LOADER_V3_QUEUED_FROM_JOB =
                 game.JobId
         end
 
@@ -98714,6 +98789,23 @@ function HolyPerformanceModeSimplifyInstance(instance)
                 return false
             end
 
+            local gardens =
+                HolyPerformanceGetGardensRoot()
+
+            if typeof(gardens) == "Instance"
+            and (
+                instance == gardens
+                or instance:IsDescendantOf(
+                    gardens
+                )
+            ) then
+
+                -- Plant and fruit models are removed separately by
+                -- HolyPerformanceModeBindOwnPlants. Everything else
+                -- inside Gardens stays fully loaded and untouched.
+                return false
+            end
+
             if HolyPerformanceModeShouldDestroyVisual(
                 instance
             ) == true then
@@ -99181,38 +99273,14 @@ end
 
 function HolyPerformanceShouldRemoveChild(child)
 
-    if typeof(child) ~= "Instance" then
-        return false
-    end
-
-    local removeNames = {
-        Plants = true,
-        Sprinklers = true,
-        Props = true,
-    }
-
-    return removeNames[
-        tostring(child.Name)
-    ] == true
+    return typeof(child) == "Instance"
+        and child.Name == "Plants"
 end
 
 function HolyPerformanceShouldHideChild(child)
 
-    if typeof(child) ~= "Instance" then
-        return false
-    end
-
-    local hideNames = {
-        Signs = true,
-        SpawnPoint = true,
-        PlotSizeReference = true,
-        LoadingCam = true,
-        LoadingScreenCam = true,
-    }
-
-    return hideNames[
-        tostring(child.Name)
-    ] == true
+    -- Own-plot structure and utility objects always stay loaded.
+    return false
 end
 
 function HolyPerformanceGetMapRoot()
@@ -171348,8 +171416,8 @@ ShopFiltersBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.FruitFilters",
-        "banana",
-        "filter"
+        "Fruit Filters",
+        "banana"
     )
 
 ShopPetSellerBox =
@@ -192144,7 +192212,7 @@ SettingsPerformanceBox:AddToggle(
             HOLY_DEV_UI_STATE.PerformanceMode == true,
 
         Tooltip =
-            "Aggressive client performance mode. Deletes your local plant and fruit models, removes textures and visual effects, disables shadows, simplifies materials and keeps future plants unloaded. Sprinklers and the plot structure remain. Some plant-based visuals and interactions will stop working. Turning this off does not restore deleted visuals; disable it, then rejoin.",
+            "Deletes your local plant and fruit models while reducing heavy world graphics outside garden plots. Sprinklers, props, signs, prompts, garden textures, effects, and the plot structure remain fully loaded. Turning this off does not restore deleted plant models; disable it, then rejoin.",
     }
 ):OnChanged(function(value)
 
@@ -192195,13 +192263,13 @@ SettingsPerformanceBox:AddToggle(
     "HolyPerformanceModePlus",
     {
         Text =
-            "Delete Own Garden",
+            "Delete Own Plants",
 
         Default =
             HOLY_DEV_UI_STATE.UnloadOwnGarden == true,
 
         Tooltip =
-            "Stronger client performance profile.",
+            "Removes only your local plant and fruit models. Sprinklers, props, signs, prompts, and the plot structure stay fully loaded. Rejoin after disabling it to restore plant visuals.",
     }
 ):OnChanged(function(value)
 
