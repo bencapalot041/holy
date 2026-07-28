@@ -27928,7 +27928,7 @@ function HolyFruitAutomationDropTool(tool)
         nil
 
     while os.clock() < confirmationDeadline
-    and HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true do
+    and HolyFruitAutomationDropAllowed() == true do
 
         for _, item in ipairs(addedItems) do
 
@@ -27990,7 +27990,7 @@ function HolyFruitAutomationDropTool(tool)
         + 0.75
 
     while os.clock() < nextDropAt
-    and HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true do
+    and HolyFruitAutomationDropAllowed() == true do
 
         task.wait(
             0.05
@@ -36811,6 +36811,18 @@ function HolySniperReturnToDestination(reason, token)
 end
 
 function HolySniperRegisterConfirmedBuy(match, entry)
+
+    if type(
+        HolyFruitAutomationRecordConfirmedSnipe
+    ) == "function" then
+
+        pcall(function()
+
+            HolyFruitAutomationRecordConfirmedSnipe(
+                entry
+            )
+        end)
+    end
 
     if HOLY_SNIPER_STATE.ReturnEnabled ~= true then
         return
@@ -63066,10 +63078,16 @@ function HolySniperAutoHopCanRun()
     or HOLY_SNIPER_RUNTIME.BatchPendingReturnAfterBuy == true
     or HolySniperHasSettlingPets() == true
     or HolyDefenseQueuedTargetCount() > 0
-    or HOLY_DEFENSE_RUNTIME.Active == true then
+    or HOLY_DEFENSE_RUNTIME.Active == true
+    or (
+        type(
+            HolyFruitAutomationCleanupPending
+        ) == "function"
+        and HolyFruitAutomationCleanupPending() == true
+    ) then
 
         HolySniperAutoHopReset(
-            "batch or defense pending"
+            "batch, defense, or drop pending"
         )
 
         return false
@@ -185347,6 +185365,20 @@ function HolyFruitAutomationNormalizeCategories(
     return output
 end
 
+function HolyFruitAutomationNormalizeDropScope(value)
+    value =
+        tostring(
+            value
+            or ""
+        )
+
+    if value == "Confirmed Snipes Only" then
+        return "Confirmed Snipes Only"
+    end
+
+    return "All Matching Items"
+end
+
 function HolyFruitAutomationDefaultProfile(action)
     return {
         EnabledCategories = {
@@ -185552,6 +185584,12 @@ function HolyFruitAutomationEnsureState()
     state.AutoPickupItems =
         state.AutoCollectDroppedFruits == true
 
+    state.DropScope =
+        HolyFruitAutomationNormalizeDropScope(
+            state.DropScope
+            or "All Matching Items"
+        )
+
     if state.PickupMovement == "Walk to Fruits" then
         state.PickupMovement =
             "Walk to Drops"
@@ -185724,6 +185762,9 @@ function HolySaveFruitAutomationSettings()
         PickupMovement =
             state.PickupMovement,
 
+        DropScope =
+            state.DropScope,
+
         Profiles =
             state.Profiles,
 
@@ -185838,6 +185879,12 @@ function HolyLoadFruitAutomationSettings()
         tostring(
             data.PickupMovement
             or "Nearby Only"
+        )
+
+    HOLY_FRUIT_AUTOMATION_STATE.DropScope =
+        HolyFruitAutomationNormalizeDropScope(
+            data.DropScope
+            or "All Matching Items"
         )
 
     if type(data.Profiles) == "table" then
@@ -186598,7 +186645,33 @@ function HolyFruitAutomationPassesActionFilters(
             ) ~= true then
                 return false
             end
+
+            if type(HolyLoadoutPetIsProtected) == "function"
+            and HolyLoadoutPetIsProtected(
+                tostring(
+                    info.ItemKey
+                    or ""
+                )
+            ) == true then
+                return false
+            end
         end
+    elseif category == "Gears"
+    and action == "Drop"
+    and type(HOLY_SNIPER_STATE) == "table"
+    and HOLY_SNIPER_STATE.DefendBoughtPets == true
+    and type(HolyDefenseToolMatches) == "function"
+    and (
+        HolyDefenseToolMatches(
+            info.Tool,
+            "Strawberry Sniper"
+        ) == true
+        or HolyDefenseToolMatches(
+            info.Tool,
+            "Shovel"
+        ) == true
+    ) then
+        return false
     end
 
     return true
@@ -187172,6 +187245,17 @@ function HolyFruitAutomationEquipDropTool(
         return nil
     end
 
+    local blockReason =
+        type(
+            HolyFruitAutomationDropBlockReason
+        ) == "function"
+        and HolyFruitAutomationDropBlockReason()
+        or nil
+
+    if blockReason ~= nil then
+        return nil
+    end
+
     local alreadyEquipped =
         HolyFruitAutomationFindEquippedItem(
             character,
@@ -187229,7 +187313,8 @@ function HolyFruitAutomationEquipDropTool(
         false
 
     while os.clock() < deadline
-    and HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true do
+    and HolyFruitAutomationDropAllowed() == true
+    and HolyFruitAutomationDropBlockReason() == nil do
         local equipped =
             HolyFruitAutomationFindEquippedItem(
                 character,
@@ -187259,6 +187344,25 @@ function HolyFruitAutomationEquipDropTool(
         )
     end
 
+    local blockReason =
+        HolyFruitAutomationDropBlockReason()
+
+    if blockReason ~= nil then
+        local equipped =
+            HolyFruitAutomationFindEquippedItem(
+                character,
+                sourceInfo
+            )
+
+        HolyFruitAutomationReleaseDropTool(
+            equipped,
+            character,
+            humanoid
+        )
+
+        return nil
+    end
+
     return HolyFruitAutomationFindEquippedItem(
         character,
         sourceInfo
@@ -187279,6 +187383,10 @@ function HolyFruitAutomationDropTool(tool)
     if type(sourceInfo) ~= "table"
     or sourceInfo.MailCategory == ""
     or sourceInfo.ItemKey == "" then
+        return false
+    end
+
+    if HolyFruitAutomationDropBlockReason() ~= nil then
         return false
     end
 
@@ -187355,6 +187463,10 @@ function HolyFruitAutomationDropTool(tool)
         return false
     end
 
+    if HolyFruitAutomationDropBlockReason() ~= nil then
+        return false
+    end
+
     local equippedTool =
         HolyFruitAutomationEquipDropTool(
             tool,
@@ -187386,8 +187498,21 @@ function HolyFruitAutomationDropTool(tool)
         + 0.55
 
     while os.clock() < settleDeadline
-    and HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true do
+    and HolyFruitAutomationDropAllowed() == true do
         if equippedTool.Parent ~= character then
+            return false
+        end
+
+        local blockReason =
+            HolyFruitAutomationDropBlockReason()
+
+        if blockReason ~= nil then
+            HolyFruitAutomationReleaseDropTool(
+                equippedTool,
+                character,
+                humanoid
+            )
+
             return false
         end
 
@@ -187396,8 +187521,15 @@ function HolyFruitAutomationDropTool(tool)
         )
     end
 
-    if HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits ~= true
-    or equippedTool.Parent ~= character then
+    if HolyFruitAutomationDropAllowed() ~= true
+    or equippedTool.Parent ~= character
+    or HolyFruitAutomationDropBlockReason() ~= nil then
+        HolyFruitAutomationReleaseDropTool(
+            equippedTool,
+            character,
+            humanoid
+        )
+
         return false
     end
 
@@ -187438,7 +187570,7 @@ function HolyFruitAutomationDropTool(tool)
         nil
 
     while os.clock() < confirmationDeadline
-    and HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true do
+    and HolyFruitAutomationDropAllowed() == true do
         for _, item in ipairs(addedItems) do
             if typeof(item) == "Instance" then
                 local itemCategory =
@@ -187519,7 +187651,7 @@ function HolyFruitAutomationDropTool(tool)
         + 0.55
 
     while os.clock() < nextDropAt
-    and HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true do
+    and HolyFruitAutomationDropAllowed() == true do
         task.wait(
             0.05
         )
@@ -187612,10 +187744,422 @@ function HolyFruitAutomationTryDropInfo(info)
     return false
 end
 
+function HolyFruitAutomationDropAllowed()
+    HolyFruitAutomationEnsureState()
+
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    return HOLY_FRUIT_AUTOMATION_STATE
+        .AutoDropFruits == true
+        or runtime.DropManualRequested == true
+        or runtime.DropManualActive == true
+end
+
+function HolyFruitAutomationDropBlockReason()
+    if HolyFruitAutomationDropAllowed() ~= true then
+        return "disabled"
+    end
+
+    local sniper =
+        type(HOLY_SNIPER_RUNTIME) == "table"
+        and HOLY_SNIPER_RUNTIME
+        or {}
+
+    if sniper.AutoHopInProgress == true then
+        return "server hop"
+    end
+
+    if sniper.BatchDispatching == true
+    or sniper.Buying == true then
+        return "sniper batch"
+    end
+
+    if sniper.Returning == true
+    or sniper.BatchPendingReturnAfterBuy == true
+    or sniper.BatchActive == true then
+        return "return"
+    end
+
+    local defense =
+        type(HOLY_DEFENSE_RUNTIME) == "table"
+        and HOLY_DEFENSE_RUNTIME
+        or {}
+
+    if defense.Active == true then
+        return "defense"
+    end
+
+    if type(HolyDefenseQueuedTargetCount) == "function"
+    and HolyDefenseQueuedTargetCount() > 0 then
+        return "defense"
+    end
+
+    if type(HolySniperHasSettlingPets) == "function"
+    and HolySniperHasSettlingPets() == true then
+        return "settling"
+    end
+
+    return nil
+end
+
+function HolyFruitAutomationNormalizeItemId(value)
+    return tostring(
+        value
+        or ""
+    ):gsub(
+        "^%s+",
+        ""
+    ):gsub(
+        "%s+$",
+        ""
+    ):lower()
+end
+
+function HolyFruitAutomationCountMap(map)
+    local count = 0
+
+    for _, enabled in pairs(
+        type(map) == "table"
+        and map
+        or {}
+    ) do
+        if enabled == true then
+            count +=
+                1
+        end
+    end
+
+    return count
+end
+
+function HolyFruitAutomationItemProtected(info)
+    if type(info) ~= "table" then
+        return true
+    end
+
+    if info.Category == "Pets"
+    and type(HolyLoadoutPetIsProtected) == "function"
+    and HolyLoadoutPetIsProtected(
+        tostring(
+            info.ItemKey
+            or ""
+        )
+    ) == true then
+        return true
+    end
+
+    if info.Category == "Gears"
+    and type(HOLY_SNIPER_STATE) == "table"
+    and HOLY_SNIPER_STATE.DefendBoughtPets == true
+    and type(HolyDefenseToolMatches) == "function"
+    and (
+        HolyDefenseToolMatches(
+            info.Tool,
+            "Strawberry Sniper"
+        ) == true
+        or HolyDefenseToolMatches(
+            info.Tool,
+            "Shovel"
+        ) == true
+    ) then
+        return true
+    end
+
+    return false
+end
+
+function HolyFruitAutomationScopeAllowsInfo(
+    info,
+    confirmedIds,
+    manual
+)
+    if manual == true
+    or HolyFruitAutomationNormalizeDropScope(
+        HOLY_FRUIT_AUTOMATION_STATE.DropScope
+    ) == "All Matching Items" then
+        return true
+    end
+
+    if type(info) ~= "table"
+    or info.Category ~= "Pets" then
+        return false
+    end
+
+    local itemId =
+        HolyFruitAutomationNormalizeItemId(
+            info.ItemKey
+        )
+
+    return itemId ~= ""
+        and type(confirmedIds) == "table"
+        and confirmedIds[itemId] == true
+end
+
+function HolyFruitAutomationBuildDropSnapshot(manual)
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    runtime.PendingConfirmedPetIds =
+        type(runtime.PendingConfirmedPetIds) == "table"
+        and runtime.PendingConfirmedPetIds
+        or {}
+
+    local confirmedIds =
+        runtime.PendingConfirmedPetIds
+
+    local confirmedCount =
+        HolyFruitAutomationCountMap(
+            confirmedIds
+        )
+
+    runtime.PendingConfirmedPetIds =
+        {}
+
+    local snapshot = {}
+
+    for _, info in ipairs(
+        HolyFruitAutomationGetFruitTools()
+    ) do
+        if HolyFruitAutomationScopeAllowsInfo(
+            info,
+            confirmedIds,
+            manual
+        ) == true
+        and HolyFruitAutomationItemProtected(
+            info
+        ) ~= true then
+            table.insert(
+                snapshot,
+                info
+            )
+        end
+    end
+
+    return snapshot,
+        confirmedCount
+end
+
+function HolyFruitAutomationSetDropBlockedStatus(reason)
+    local text =
+        "Queued · Waiting"
+
+    if reason == "defense" then
+        text =
+            "Waiting for defense"
+    elseif reason == "settling" then
+        text =
+            "Waiting for confirmed pets"
+    elseif reason == "return" then
+        text =
+            "Returning before cleanup"
+    elseif reason == "sniper batch" then
+        text =
+            "Paused · New sniper batch"
+    elseif reason == "server hop" then
+        text =
+            "Paused · Server hop"
+    end
+
+    HolyFruitAutomationSetStatus(
+        "Drop",
+        text
+    )
+end
+
+function HolyFruitAutomationCleanupPending()
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    return runtime.CleanupQueued == true
+        or runtime.CleanupManagerRunning == true
+        or runtime.DropRunning == true
+end
+
+function HolyFruitAutomationReleaseDropTool(
+    tool,
+    character,
+    humanoid
+)
+    if typeof(tool) ~= "Instance"
+    or typeof(character) ~= "Instance"
+    or typeof(humanoid) ~= "Instance"
+    or tool.Parent ~= character then
+        return false
+    end
+
+    pcall(function()
+        humanoid:UnequipTools()
+    end)
+
+    return true
+end
+
+function HolyFruitAutomationRunDropWorker(token)
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    runtime.DropRunning =
+        true
+
+    local snapshot =
+        type(runtime.DropSnapshot) == "table"
+        and runtime.DropSnapshot
+        or {}
+
+    local total =
+        #snapshot
+
+    local droppedCount = 0
+    local skippedCount = 0
+
+    for index, info in ipairs(snapshot) do
+        if runtime.DropToken ~= token
+        or HolyFruitAutomationDropAllowed() ~= true then
+            break
+        end
+
+        if HolyFruitAutomationDropLimitReached() == true then
+            break
+        end
+
+        local attempts = 0
+        local dropped = false
+
+        while attempts < 2
+        and runtime.DropToken == token
+        and HolyFruitAutomationDropAllowed() == true do
+            local blockReason =
+                HolyFruitAutomationDropBlockReason()
+
+            if blockReason ~= nil then
+                if blockReason == "disabled" then
+                    break
+                end
+
+                HolyFruitAutomationSetDropBlockedStatus(
+                    blockReason
+                )
+
+                task.wait(
+                    0.12
+                )
+
+                continue
+            end
+
+            attempts +=
+                1
+
+            HolyFruitAutomationSetStatus(
+                "Drop",
+                "Dropping "
+                    .. tostring(index)
+                    .. "/"
+                    .. tostring(total)
+            )
+
+            dropped =
+                HolyFruitAutomationTryDropInfo(
+                    info
+                ) == true
+
+            if dropped == true then
+                break
+            end
+
+            if attempts < 2 then
+                runtime.DropLastAttempt[
+                    info.Tool
+                ] =
+                    nil
+
+                task.wait(
+                    0.20
+                )
+            end
+        end
+
+        if runtime.DropToken ~= token
+        or HolyFruitAutomationDropAllowed() ~= true then
+            break
+        end
+
+        if dropped == true then
+            droppedCount +=
+                1
+        else
+            skippedCount +=
+                1
+        end
+
+        task.wait(
+            0.05
+        )
+    end
+
+    if runtime.DropToken ~= token then
+        return false
+    end
+
+    runtime.DropToken =
+        nil
+
+    runtime.DropRunning =
+        false
+
+    runtime.DropManualActive =
+        false
+
+    runtime.DropSnapshot =
+        {}
+
+    runtime.LastCleanupDropped =
+        droppedCount
+
+    runtime.LastCleanupSkipped =
+        skippedCount
+
+    HolyFruitAutomationSetStatus(
+        "Drop",
+        "Complete · "
+            .. tostring(droppedCount)
+            .. " dropped · "
+            .. tostring(skippedCount)
+            .. " skipped"
+    )
+
+    if runtime.CleanupQueued == true then
+        task.defer(function()
+            HolyFruitAutomationStartCleanupManager()
+        end)
+    elseif HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true then
+        task.delay(
+            1.5,
+            function()
+                local liveRuntime =
+                    HolyFruitAutomationEnsureRuntime()
+
+                if liveRuntime.DropRunning ~= true
+                and liveRuntime.CleanupQueued ~= true
+                and HOLY_FRUIT_AUTOMATION_STATE
+                    .AutoDropFruits == true then
+                    HolyFruitAutomationSetStatus(
+                        "Drop",
+                        "Armed · Waiting for confirmed batch"
+                    )
+                end
+            end
+        )
+    end
+
+    return true
+end
+
 function HolyFruitAutomationStartDrop(reason)
     HolyFruitAutomationEnsureState()
 
-    if HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits ~= true then
+    if HolyFruitAutomationDropAllowed() ~= true then
         return false
     end
 
@@ -187626,6 +188170,23 @@ function HolyFruitAutomationStartDrop(reason)
         return false
     end
 
+    local blockReason =
+        HolyFruitAutomationDropBlockReason()
+
+    if blockReason ~= nil then
+        HolyFruitAutomationSetDropBlockedStatus(
+            blockReason
+        )
+
+        return false
+    end
+
+    runtime.DropManualActive =
+        runtime.DropManualRequested == true
+
+    runtime.DropManualRequested =
+        false
+
     runtime.DropLastAttempt =
         {}
 
@@ -187634,6 +188195,41 @@ function HolyFruitAutomationStartDrop(reason)
 
     runtime.DroppedByCategory =
         {}
+
+    local snapshot,
+        confirmedCount =
+        HolyFruitAutomationBuildDropSnapshot(
+            runtime.DropManualActive
+        )
+
+    runtime.DropSnapshot =
+        snapshot
+
+    runtime.LastCleanupConfirmedCount =
+        confirmedCount
+
+    if #snapshot <= 0 then
+        runtime.DropManualActive =
+            false
+
+        local status =
+            "No matching items"
+
+        if HolyFruitAutomationNormalizeDropScope(
+            HOLY_FRUIT_AUTOMATION_STATE.DropScope
+        ) == "Confirmed Snipes Only"
+        and confirmedCount > 0 then
+            status =
+                "No confirmed snipes matched the filters"
+        end
+
+        HolyFruitAutomationSetStatus(
+            "Drop",
+            status
+        )
+
+        return false
+    end
 
     runtime.DropToken =
         {}
@@ -187649,6 +188245,261 @@ function HolyFruitAutomationStartDrop(reason)
             token
         )
     end)
+
+    return true
+end
+
+function HolyFruitAutomationStartCleanupManager()
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    if runtime.CleanupManagerRunning == true then
+        return false
+    end
+
+    runtime.CleanupManagerRunning =
+        true
+
+    task.spawn(function()
+        while runtime.CleanupQueued == true do
+            if HolyFruitAutomationDropAllowed() ~= true then
+                break
+            end
+
+            if runtime.DropRunning == true then
+                task.wait(
+                    0.12
+                )
+
+                continue
+            end
+
+            local blockReason =
+                HolyFruitAutomationDropBlockReason()
+
+            if blockReason ~= nil then
+                HolyFruitAutomationSetDropBlockedStatus(
+                    blockReason
+                )
+
+                task.wait(
+                    0.12
+                )
+
+                continue
+            end
+
+            runtime.CleanupQueued =
+                false
+
+            HolyFruitAutomationStartDrop(
+                runtime.CleanupReason
+                or "queued cleanup"
+            )
+
+            task.wait(
+                0.05
+            )
+        end
+
+        runtime.CleanupManagerRunning =
+            false
+
+        if runtime.CleanupQueued == true
+        and HolyFruitAutomationDropAllowed() == true then
+            task.defer(function()
+                HolyFruitAutomationStartCleanupManager()
+            end)
+        end
+    end)
+
+    return true
+end
+
+function HolyFruitAutomationQueueCleanup(
+    reason,
+    manual
+)
+    HolyFruitAutomationEnsureState()
+
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    if manual == true then
+        runtime.DropManualRequested =
+            true
+    elseif HOLY_FRUIT_AUTOMATION_STATE
+        .AutoDropFruits ~= true then
+        return false
+    end
+
+    runtime.CleanupQueued =
+        true
+
+    runtime.CleanupReason =
+        tostring(
+            reason
+            or "cleanup"
+        )
+
+    local confirmedCount =
+        HolyFruitAutomationCountMap(
+            runtime.PendingConfirmedPetIds
+        )
+
+    HolyFruitAutomationSetStatus(
+        "Drop",
+        manual == true
+        and "Queued · Manual cleanup"
+        or (
+            "Queued · "
+            .. tostring(confirmedCount)
+            .. " confirmed snipe"
+            .. (
+                confirmedCount == 1
+                and ""
+                or "s"
+            )
+        )
+    )
+
+    HolyFruitAutomationStartCleanupManager()
+
+    return true
+end
+
+function HolyFruitAutomationRecordConfirmedSnipe(entry)
+    HolyFruitAutomationEnsureState()
+
+    if HOLY_FRUIT_AUTOMATION_STATE
+        .AutoDropFruits ~= true then
+        return false
+    end
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    local petId =
+        HolyFruitAutomationNormalizeItemId(
+            entry.UUID
+            or entry.PetId
+            or entry.PetID
+            or entry.Key
+            or (
+                typeof(entry.Ref) == "Instance"
+                and type(HolyDefenseReadPetId) == "function"
+                and HolyDefenseReadPetId(
+                    entry.Ref
+                )
+                or ""
+            )
+        )
+
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    runtime.PendingConfirmedPetIds =
+        type(runtime.PendingConfirmedPetIds) == "table"
+        and runtime.PendingConfirmedPetIds
+        or {}
+
+    if petId ~= "" then
+        runtime.PendingConfirmedPetIds[
+            petId
+        ] =
+            true
+    end
+
+    return HolyFruitAutomationQueueCleanup(
+        "confirmed sniper batch",
+        false
+    )
+end
+
+function HolyFruitAutomationDropNow()
+    return HolyFruitAutomationQueueCleanup(
+        "manual drop",
+        true
+    )
+end
+
+function HolyFruitAutomationSetDropScope(value)
+    HolyFruitAutomationEnsureState()
+
+    HOLY_FRUIT_AUTOMATION_STATE.DropScope =
+        HolyFruitAutomationNormalizeDropScope(
+            value
+        )
+
+    HolySaveFruitAutomationSettings()
+
+    return HOLY_FRUIT_AUTOMATION_STATE.DropScope
+end
+
+function HolyFruitAutomationStopDrop(reason)
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    runtime.DropToken =
+        nil
+
+    runtime.DropRunning =
+        false
+
+    runtime.DropManualRequested =
+        false
+
+    runtime.DropManualActive =
+        false
+
+    runtime.CleanupQueued =
+        false
+
+    runtime.CleanupReason =
+        ""
+
+    runtime.PendingConfirmedPetIds =
+        {}
+
+    runtime.DropSnapshot =
+        {}
+
+    runtime.DropLastAttempt =
+        {}
+
+    return true
+end
+
+function HolyFruitAutomationSetAutoDropFruits(value)
+    HolyFruitAutomationEnsureState()
+
+    HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits =
+        value == true
+
+    HOLY_FRUIT_AUTOMATION_STATE.AutoDropItems =
+        HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits
+
+    HolySaveFruitAutomationSettings()
+
+    if HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true then
+        HolyFruitAutomationSetStatus(
+            "Drop",
+            "Armed · Waiting for confirmed batch"
+        )
+
+        return true
+    end
+
+    HolyFruitAutomationStopDrop(
+        "toggle off"
+    )
+
+    HolyFruitAutomationSetStatus(
+        "Drop",
+        "Drop: Disabled"
+    )
 
     return true
 end
@@ -188377,6 +189228,32 @@ function HolyFruitAutomationPreview(action)
         and HolyFruitAutomationGetFruitTools()
         or HolyFruitAutomationGetDroppedTargets()
 
+    if action == "Drop"
+    and HolyFruitAutomationNormalizeDropScope(
+        HOLY_FRUIT_AUTOMATION_STATE.DropScope
+    ) == "Confirmed Snipes Only" then
+        local runtime =
+            HolyFruitAutomationEnsureRuntime()
+
+        local scopedRecords = {}
+
+        for _, info in ipairs(records) do
+            if HolyFruitAutomationScopeAllowsInfo(
+                info,
+                runtime.PendingConfirmedPetIds,
+                false
+            ) == true then
+                table.insert(
+                    scopedRecords,
+                    info
+                )
+            end
+        end
+
+        records =
+            scopedRecords
+    end
+
     local counts = {
         Fruits = 0,
         Pets = 0,
@@ -188507,7 +189384,7 @@ function HolyFruitAutomationBuildProfileUI(
             {
                 Text =
                     action == "Drop"
-                    and "Auto Drop Items"
+                    and "Auto Drop After Sniper Batch"
                     or "Auto Pickup Items",
 
                 Default =
@@ -188515,7 +189392,7 @@ function HolyFruitAutomationBuildProfileUI(
 
                 Tooltip =
                     action == "Drop"
-                    and "Automatically drops matching fruits, pets, seeds, and gears."
+                    and "Arms one cleanup pass after a sniper batch has at least one server-confirmed purchase."
                     or "Automatically picks up matching fruits, pets, seeds, and gears."
             }
         )
@@ -188535,6 +189412,42 @@ function HolyFruitAutomationBuildProfileUI(
     if action == "Drop" then
         HOLY_FRUIT_AUTOMATION_UI.AutoDropToggle =
             ui.AutoToggle
+
+        ui.DropScopeDropdown =
+            tab:AddDropdown(
+                prefix
+                    .. "Scope",
+                {
+                    Text =
+                        "Drop Scope",
+
+                    Values = {
+                        "All Matching Items",
+                        "Confirmed Snipes Only"
+                    },
+
+                    Default =
+                        HOLY_FRUIT_AUTOMATION_STATE.DropScope,
+
+                    Multi =
+                        false,
+
+                    Searchable =
+                        false,
+
+                    MaxVisibleDropdownItems =
+                        2,
+
+                    Tooltip =
+                        "All Matching Items runs every configured filter. Confirmed Snipes Only restricts automatic cleanup to exact PetIds bought by the completed batch."
+                }
+            )
+
+        ui.DropScopeDropdown:OnChanged(function(value)
+            HolyFruitAutomationSetDropScope(
+                value
+            )
+        end)
     else
         HOLY_FRUIT_AUTOMATION_UI.AutoPickupToggle =
             ui.AutoToggle
@@ -189121,7 +190034,7 @@ function HolyFruitAutomationBuildProfileUI(
                     .. "Limit",
                 {
                     Text =
-                        "Drop Limit (0 = no limit)",
+                        "Drop Limit Per Batch (0 = no limit)",
 
                     Default =
                         HOLY_FRUIT_AUTOMATION_STATE.DropLimit,
@@ -189136,7 +190049,7 @@ function HolyFruitAutomationBuildProfileUI(
                         false,
 
                     Tooltip =
-                        "Stops Auto Drop after this many confirmed drops."
+                        "Limits each cleanup pass without disabling the Auto Drop toggle."
                 }
             )
 
@@ -189189,11 +190102,32 @@ function HolyFruitAutomationBuildProfileUI(
             end
     })
 
+    if action == "Drop" then
+        ui.DropNowButton =
+            tab:AddButton({
+                Text =
+                    "Drop Now",
+
+                Tooltip =
+                    "Runs one manual All Matching Items pass. Defense, active sniper batches, settling pets, and return movement still have priority.",
+
+                Func =
+                    function()
+                        HolyFruitAutomationDropNow()
+                    end
+            })
+    end
+
     ui.StatusLabel =
         HolySniperAddLabel(
             tab,
             action == "Drop"
-            and "Drop: Ready"
+            and (
+                HOLY_FRUIT_AUTOMATION_STATE
+                    .AutoDropFruits == true
+                and "Armed · Waiting for confirmed batch"
+                or "Drop: Disabled"
+            )
             or "Pickup: Ready"
         )
 
@@ -189219,7 +190153,8 @@ HolyFruitAutomationRefreshDropdowns(
     false
 )
 
-if FarmFruitAutomationBox
+if false
+and FarmFruitAutomationBox
 and type(FarmFruitAutomationBox.AddToggle) == "function" then
 
     HOLY_FRUIT_AUTOMATION_UI.AutoDropToggle =
@@ -189267,7 +190202,8 @@ and type(FarmFruitAutomationBox.AddToggle) == "function" then
     end)
 end
 
-if FarmFruitAutomationBox
+if false
+and FarmFruitAutomationBox
 and type(FarmFruitAutomationBox.AddDropdown) == "function" then
 
     HOLY_FRUIT_AUTOMATION_UI.PickupMovementDropdown =
@@ -189457,7 +190393,8 @@ and type(FarmFruitAutomationBox.AddDropdown) == "function" then
     end)
 end
 
-if FarmFruitAutomationBox
+if false
+and FarmFruitAutomationBox
 and type(FarmFruitAutomationBox.AddInput) == "function" then
 
     HOLY_FRUIT_AUTOMATION_UI.WeightInput =
@@ -190742,8 +191679,9 @@ task.defer(function()
 
     if HOLY_FRUIT_AUTOMATION_STATE.AutoDropFruits == true then
 
-        HolyFruitAutomationStartDrop(
-            "startup"
+        HolyFruitAutomationSetStatus(
+            "Drop",
+            "Armed · Waiting for confirmed batch"
         )
     end
 
