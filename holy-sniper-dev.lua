@@ -4920,6 +4920,8 @@ HOLY_SHOP_STATE = {
 
     AutoSellPets = false,
 
+    PetSellRules = {},
+
     PetSellNames = {},
 
     PetSellSizes = {
@@ -4929,6 +4931,11 @@ HOLY_SHOP_STATE = {
     PetSellVariants = {
         "Normal",
     },
+
+    PetSellProtectBig = true,
+    PetSellProtectHuge = true,
+    PetSellProtectRainbow = true,
+    PetSellProtectSpecial = true,
 
     PetSellKeepAmount = 1,
     PetSellBatchAmount = 5,
@@ -13492,6 +13499,11 @@ function HolySaveShopSettings()
         AutoSellPets =
             HOLY_SHOP_STATE.AutoSellPets == true,
 
+        PetSellRules =
+            HolyPetSellNormalizeRules(
+                HOLY_SHOP_STATE.PetSellRules
+            ),
+
         PetSellNames =
             HolyPetSellNormalizePetSelection(
                 HOLY_SHOP_STATE.PetSellNames
@@ -13508,6 +13520,18 @@ function HolySaveShopSettings()
                 HOLY_SHOP_STATE.PetSellVariants,
                 false
             ),
+
+        PetSellProtectBig =
+            HOLY_SHOP_STATE.PetSellProtectBig == true,
+
+        PetSellProtectHuge =
+            HOLY_SHOP_STATE.PetSellProtectHuge == true,
+
+        PetSellProtectRainbow =
+            HOLY_SHOP_STATE.PetSellProtectRainbow == true,
+
+        PetSellProtectSpecial =
+            HOLY_SHOP_STATE.PetSellProtectSpecial == true,
 
         PetSellKeepAmount =
             HolyPetSellReadKeepAmount(
@@ -13877,6 +13901,82 @@ function HolyLoadShopSettings()
             data.PetSellVariants,
             data.PetSellVariants == nil
         )
+
+    HOLY_SHOP_STATE.PetSellRules =
+        HolyPetSellNormalizeRules(
+            data.PetSellRules
+        )
+
+    if #HOLY_SHOP_STATE.PetSellRules <= 0
+    and #HOLY_SHOP_STATE.PetSellNames > 0 then
+
+        local legacyRule =
+            HolyPetSellNormalizeRule({
+                Names =
+                    HOLY_SHOP_STATE.PetSellNames,
+
+                Sizes =
+                    HOLY_SHOP_STATE.PetSellSizes,
+
+                Variants =
+                    HOLY_SHOP_STATE.PetSellVariants,
+
+                Enabled =
+                    true,
+            })
+
+        if type(legacyRule) == "table" then
+
+            table.insert(
+                HOLY_SHOP_STATE.PetSellRules,
+                legacyRule
+            )
+        end
+    end
+
+    if type(data.PetSellProtectBig) == "boolean" then
+
+        HOLY_SHOP_STATE.PetSellProtectBig =
+            data.PetSellProtectBig
+
+    else
+
+        HOLY_SHOP_STATE.PetSellProtectBig =
+            true
+    end
+
+    if type(data.PetSellProtectHuge) == "boolean" then
+
+        HOLY_SHOP_STATE.PetSellProtectHuge =
+            data.PetSellProtectHuge
+
+    else
+
+        HOLY_SHOP_STATE.PetSellProtectHuge =
+            true
+    end
+
+    if type(data.PetSellProtectRainbow) == "boolean" then
+
+        HOLY_SHOP_STATE.PetSellProtectRainbow =
+            data.PetSellProtectRainbow
+
+    else
+
+        HOLY_SHOP_STATE.PetSellProtectRainbow =
+            true
+    end
+
+    if type(data.PetSellProtectSpecial) == "boolean" then
+
+        HOLY_SHOP_STATE.PetSellProtectSpecial =
+            data.PetSellProtectSpecial
+
+    else
+
+        HOLY_SHOP_STATE.PetSellProtectSpecial =
+            true
+    end
 
     local loadedPetSellKeepAmount =
         tonumber(
@@ -47218,10 +47318,16 @@ HOLY_PET_SELL_RUNTIME = {
     AutoGeneration = 0,
     AutoQueued = false,
     RerunAfterBusy = false,
+    FilterGeneration = 0,
+    EditingRuleIndex = nil,
+    PetNameValuesSignature = "",
     LastPreviewSignature = "",
     LastPreviewRows = {},
     LastPreviewTotals = {},
     IconCache = {},
+    RulesSurface = nil,
+    RulesSummary = nil,
+    RulesScroll = nil,
 }
 
 function HolyPetSellReadKeepAmount(value)
@@ -47603,6 +47709,234 @@ function HolyPetSellNormalizeVariantSelection(
     return output
 end
 
+function HolyPetSellNormalizeRule(value)
+
+    if type(value) ~= "table" then
+        return nil
+    end
+
+    local rawNames =
+        value.Names
+        or value.PetNames
+        or value.Pets
+        or value.Pet
+
+    if type(rawNames) == "string" then
+
+        rawNames = {
+            rawNames,
+        }
+    end
+
+    local rawSizes =
+        value.Sizes
+        or value.Size
+
+    if type(rawSizes) == "string" then
+
+        rawSizes = {
+            rawSizes,
+        }
+    end
+
+    local rawVariants =
+        value.Variants
+        or value.Variant
+
+    if type(rawVariants) == "string" then
+
+        rawVariants = {
+            rawVariants,
+        }
+    end
+
+    local names =
+        HolyPetSellNormalizePetSelection(
+            rawNames
+        )
+
+    if #names <= 0 then
+        return nil
+    end
+
+    local sizes =
+        HolyPetSellNormalizeSizeSelection(
+            rawSizes,
+            true
+        )
+
+    local variants =
+        HolyPetSellNormalizeVariantSelection(
+            rawVariants,
+            true
+        )
+
+    return {
+        Names = names,
+        Sizes = sizes,
+        Variants = variants,
+
+        Enabled =
+            value.Enabled ~= false,
+    }
+end
+
+function HolyPetSellRuleKey(rule)
+
+    local normalized =
+        HolyPetSellNormalizeRule(
+            rule
+        )
+
+    if type(normalized) ~= "table" then
+        return ""
+    end
+
+    return table.concat(
+        normalized.Names,
+        ","
+    )
+        .. "|"
+        .. table.concat(
+            normalized.Sizes,
+            ","
+        )
+        .. "|"
+        .. table.concat(
+            normalized.Variants,
+            ","
+        )
+end
+
+function HolyPetSellNormalizeRules(value)
+
+    local output =
+        {}
+
+    local seen =
+        {}
+
+    for _, rawRule in ipairs(
+        type(value) == "table"
+        and value
+        or {}
+    ) do
+
+        local rule =
+            HolyPetSellNormalizeRule(
+                rawRule
+            )
+
+        if type(rule) == "table" then
+
+            local ruleKey =
+                HolyPetSellRuleKey(
+                    rule
+                )
+
+            if ruleKey ~= ""
+            and seen[ruleKey] ~= true then
+
+                seen[ruleKey] =
+                    true
+
+                table.insert(
+                    output,
+                    rule
+                )
+            end
+        end
+    end
+
+    return output
+end
+
+function HolyPetSellRulesSignature(rules)
+
+    local parts =
+        {}
+
+    for index, rule in ipairs(
+        HolyPetSellNormalizeRules(
+            rules
+        )
+    ) do
+
+        table.insert(
+            parts,
+            tostring(index)
+                .. ":"
+                .. (
+                    rule.Enabled ~= false
+                    and "1"
+                    or "0"
+                )
+                .. ":"
+                .. HolyPetSellRuleKey(
+                    rule
+                )
+        )
+    end
+
+    return table.concat(
+        parts,
+        ";"
+    )
+end
+
+function HolyPetSellGroupProtectedBySettings(
+    group,
+    filters
+)
+
+    if type(group) ~= "table"
+    or type(filters) ~= "table" then
+
+        return true
+    end
+
+    local sizeKey =
+        HolySniperPetAliasKey(
+            group.Size
+        )
+
+    local variantKey =
+        HolySniperPetAliasKey(
+            group.Variant
+        )
+
+    if filters.ProtectBig == true
+    and sizeKey == "big" then
+
+        return true
+    end
+
+    if filters.ProtectHuge == true
+    and (
+        sizeKey == "huge"
+        or sizeKey == "mega"
+    ) then
+
+        return true
+    end
+
+    if filters.ProtectRainbow == true
+    and variantKey == "rainbow" then
+
+        return true
+    end
+
+    if filters.ProtectSpecial == true
+    and variantKey ~= ""
+    and variantKey ~= "normal"
+    and variantKey ~= "rainbow" then
+
+        return true
+    end
+
+    return false
+end
+
 function HolyPetSellGetPetNameValues()
 
     local values =
@@ -47657,6 +47991,23 @@ function HolyPetSellGetPetNameValues()
         add(
             petName
         )
+    end
+
+    for _, rule in ipairs(
+        HOLY_SHOP_STATE.PetSellRules
+        or {}
+    ) do
+
+        for _, petName in ipairs(
+            type(rule) == "table"
+            and rule.Names
+            or {}
+        ) do
+
+            add(
+                petName
+            )
+        end
     end
 
     for _, row in ipairs(
@@ -47750,43 +48101,181 @@ end
 
 function HolyPetSellCaptureFilters()
 
-    local names =
-        HolyPetSellNormalizePetSelection(
-            HOLY_SHOP_STATE.PetSellNames
+    local rules =
+        HolyPetSellNormalizeRules(
+            HOLY_SHOP_STATE.PetSellRules
         )
+
+    HOLY_SHOP_STATE.PetSellRules =
+        rules
+
+    local activeRules =
+        {}
+
+    local names =
+        {}
 
     local sizes =
-        HolyPetSellNormalizeSizeSelection(
-            HOLY_SHOP_STATE.PetSellSizes,
-            false
-        )
+        {}
 
     local variants =
-        HolyPetSellNormalizeVariantSelection(
-            HOLY_SHOP_STATE.PetSellVariants,
-            false
-        )
+        {}
+
+    local nameMap =
+        {}
+
+    local sizeMap =
+        {}
+
+    local variantMap =
+        {}
+
+    for _, rule in ipairs(
+        rules
+    ) do
+
+        if rule.Enabled ~= false then
+
+            local activeRule = {
+                Names =
+                    rule.Names,
+
+                Sizes =
+                    rule.Sizes,
+
+                Variants =
+                    rule.Variants,
+
+                NameMap =
+                    HolyPetSellSelectionMap(
+                        rule.Names
+                    ),
+
+                SizeMap =
+                    HolyPetSellSelectionMap(
+                        rule.Sizes
+                    ),
+
+                VariantMap =
+                    HolyPetSellSelectionMap(
+                        rule.Variants
+                    ),
+            }
+
+            table.insert(
+                activeRules,
+                activeRule
+            )
+
+            for _, petName in ipairs(
+                rule.Names
+            ) do
+
+                local petKey =
+                    HolySniperPetAliasKey(
+                        petName
+                    )
+
+                if petKey ~= ""
+                and nameMap[petKey] ~= true then
+
+                    nameMap[petKey] =
+                        true
+
+                    table.insert(
+                        names,
+                        petName
+                    )
+                end
+            end
+
+            for _, sizeName in ipairs(
+                rule.Sizes
+            ) do
+
+                local sizeKey =
+                    HolySniperPetAliasKey(
+                        sizeName
+                    )
+
+                if sizeKey ~= ""
+                and sizeMap[sizeKey] ~= true then
+
+                    sizeMap[sizeKey] =
+                        true
+
+                    table.insert(
+                        sizes,
+                        sizeName
+                    )
+                end
+            end
+
+            for _, variantName in ipairs(
+                rule.Variants
+            ) do
+
+                local variantKey =
+                    HolySniperPetAliasKey(
+                        variantName
+                    )
+
+                if variantKey ~= ""
+                and variantMap[variantKey] ~= true then
+
+                    variantMap[variantKey] =
+                        true
+
+                    table.insert(
+                        variants,
+                        variantName
+                    )
+                end
+            end
+        end
+    end
+
+    table.sort(names, function(left, right)
+
+        return tostring(left):lower()
+            < tostring(right):lower()
+    end)
+
+    HolySniperSortSizeValues(
+        sizes
+    )
+
+    HolySniperSortVariantValues(
+        variants
+    )
 
     return {
+        Rules = rules,
+        ActiveRules = activeRules,
         Names = names,
         Sizes = sizes,
         Variants = variants,
-        NameMap =
-            HolyPetSellSelectionMap(
-                names
-            ),
-        SizeMap =
-            HolyPetSellSelectionMap(
-                sizes
-            ),
-        VariantMap =
-            HolyPetSellSelectionMap(
-                variants
-            ),
+        NameMap = nameMap,
+        SizeMap = sizeMap,
+        VariantMap = variantMap,
+
+        ProtectBig =
+            HOLY_SHOP_STATE.PetSellProtectBig == true,
+
+        ProtectHuge =
+            HOLY_SHOP_STATE.PetSellProtectHuge == true,
+
+        ProtectRainbow =
+            HOLY_SHOP_STATE.PetSellProtectRainbow == true,
+
+        ProtectSpecial =
+            HOLY_SHOP_STATE.PetSellProtectSpecial == true,
+
         Keep =
             HolyPetSellReadKeepAmount(
                 HOLY_SHOP_STATE.PetSellKeepAmount
             ),
+
         Batch =
             HolyPetSellReadBatchAmount(
                 HOLY_SHOP_STATE.PetSellBatchAmount
@@ -47800,38 +48289,40 @@ function HolyPetSellGroupMatches(
 )
 
     if type(group) ~= "table"
-    or type(filters) ~= "table"
-    or #(
-        filters.Names
-        or {}
-    ) <= 0
-    or #(
-        filters.Sizes
-        or {}
-    ) <= 0
-    or #(
-        filters.Variants
-        or {}
-    ) <= 0 then
+    or type(filters) ~= "table" then
 
         return false
     end
 
-    return filters.NameMap[
+    local petKey =
         HolySniperPetAliasKey(
             group.Name
         )
-    ] == true
-        and filters.SizeMap[
-            HolySniperPetAliasKey(
-                group.Size
-            )
-        ] == true
-        and filters.VariantMap[
-            HolySniperPetAliasKey(
-                group.Variant
-            )
-        ] == true
+
+    local sizeKey =
+        HolySniperPetAliasKey(
+            group.Size
+        )
+
+    local variantKey =
+        HolySniperPetAliasKey(
+            group.Variant
+        )
+
+    for _, rule in ipairs(
+        filters.ActiveRules
+        or {}
+    ) do
+
+        if rule.NameMap[petKey] == true
+        and rule.SizeMap[sizeKey] == true
+        and rule.VariantMap[variantKey] == true then
+
+            return true
+        end
+    end
+
+    return false
 end
 
 function HolyPetSellScan()
@@ -48353,8 +48844,31 @@ function HolyPetSellBuildPreviewRows(
             filters
         ) == true then
 
+            local globallyProtected =
+                HolyPetSellGroupProtectedBySettings(
+                    group,
+                    filters
+                )
+
+            local protectedCount =
+                globallyProtected == true
+                and (
+                    tonumber(
+                        group.Count
+                    )
+                    or 0
+                )
+                or (
+                    tonumber(
+                        group.Protected
+                    )
+                    or 0
+                )
+
             local willSell =
-                math.min(
+                globallyProtected == true
+                and 0
+                or math.min(
                     math.max(
                         0,
                         (
@@ -48377,9 +48891,10 @@ function HolyPetSellBuildPreviewRows(
                 Size = group.Size,
                 Variant = group.Variant,
                 Owned = group.Count,
-                Protected = group.Protected,
+                Protected = protectedCount,
                 Keep = filters.Keep,
                 WillSell = willSell,
+                GloballyProtected = globallyProtected,
                 Group = group,
             }
 
@@ -48537,6 +49052,1121 @@ function HolyPetSellCreateTextLabel(
         parent
 
     return label
+end
+
+function HolyPetSellRefreshRuleBuilderLabel()
+
+    local index =
+        tonumber(
+            HOLY_PET_SELL_RUNTIME.EditingRuleIndex
+        )
+
+    HolySniperSetLabel(
+        HOLY_SHOP_UI
+        and HOLY_SHOP_UI.PetSellRuleBuilderLabel
+        or nil,
+        index
+            and (
+                "Editing sell filter #"
+                .. tostring(index)
+            )
+            or "Creating a new sell filter."
+    )
+
+    return true
+end
+
+function HolyPetSellRefreshPetNameDropdown(force)
+
+    local dropdown =
+        HOLY_SHOP_UI
+        and HOLY_SHOP_UI.PetSellNamesDropdown
+        or nil
+
+    if type(dropdown) ~= "table" then
+        return false
+    end
+
+    local values =
+        HolyPetSellGetPetNameValues()
+
+    local signature =
+        table.concat(
+            values,
+            "|"
+        )
+
+    if force ~= true
+    and signature
+        == HOLY_PET_SELL_RUNTIME.PetNameValuesSignature then
+
+        return false
+    end
+
+    HOLY_PET_SELL_RUNTIME.PetNameValuesSignature =
+        signature
+
+    HOLY_PET_SELL_RUNTIME.UpdatingUI =
+        true
+
+    pcall(function()
+
+        if type(dropdown.SetValues) == "function" then
+
+            dropdown:SetValues(
+                values
+            )
+        end
+
+        if type(dropdown.SetValue) == "function" then
+
+            dropdown:SetValue(
+                HOLY_SHOP_STATE.PetSellNames,
+                true
+            )
+        end
+    end)
+
+    task.defer(function()
+
+        HOLY_PET_SELL_RUNTIME.UpdatingUI =
+            false
+    end)
+
+    return true
+end
+
+function HolyPetSellSetBuilderValues(
+    names,
+    sizes,
+    variants,
+    editingIndex
+)
+
+    HOLY_SHOP_STATE.PetSellNames =
+        HolyPetSellNormalizePetSelection(
+            names
+        )
+
+    HOLY_SHOP_STATE.PetSellSizes =
+        HolyPetSellNormalizeSizeSelection(
+            sizes,
+            true
+        )
+
+    HOLY_SHOP_STATE.PetSellVariants =
+        HolyPetSellNormalizeVariantSelection(
+            variants,
+            true
+        )
+
+    HOLY_PET_SELL_RUNTIME.EditingRuleIndex =
+        tonumber(
+            editingIndex
+        )
+
+    HOLY_PET_SELL_RUNTIME.UpdatingUI =
+        true
+
+    HolyPetSellRefreshPetNameDropdown(
+        true
+    )
+
+    pcall(function()
+
+        local sizesDropdown =
+            HOLY_SHOP_UI.PetSellSizesDropdown
+
+        if type(sizesDropdown) == "table"
+        and type(sizesDropdown.SetValue) == "function" then
+
+            sizesDropdown:SetValue(
+                HOLY_SHOP_STATE.PetSellSizes,
+                true
+            )
+        end
+
+        local variantsDropdown =
+            HOLY_SHOP_UI.PetSellVariantsDropdown
+
+        if type(variantsDropdown) == "table"
+        and type(variantsDropdown.SetValue) == "function" then
+
+            variantsDropdown:SetValue(
+                HOLY_SHOP_STATE.PetSellVariants,
+                true
+            )
+        end
+    end)
+
+    task.defer(function()
+
+        HOLY_PET_SELL_RUNTIME.UpdatingUI =
+            false
+    end)
+
+    HolyPetSellRefreshRuleBuilderLabel()
+
+    return true
+end
+
+function HolyPetSellFiltersChanged(reason)
+
+    HOLY_SHOP_STATE.PetSellRules =
+        HolyPetSellNormalizeRules(
+            HOLY_SHOP_STATE.PetSellRules
+        )
+
+    HOLY_PET_SELL_RUNTIME.FilterGeneration =
+        (
+            tonumber(
+                HOLY_PET_SELL_RUNTIME.FilterGeneration
+            )
+            or 0
+        )
+        + 1
+
+    HolySaveShopSettings()
+
+    HolyPetSellRefreshPetNameDropdown(
+        false
+    )
+
+    HolyPetSellRenderRules()
+
+    HolyPetSellRefreshPreview(
+        true
+    )
+
+    if HOLY_SHOP_STATE.AutoSellPets == true then
+
+        HolyPetSellQueueAutoRun(
+            reason
+            or "sell filters changed",
+            false
+        )
+    end
+
+    return true
+end
+
+function HolyPetSellClearRuleBuilder()
+
+    HolyPetSellSetBuilderValues(
+        {},
+        {
+            "Normal",
+        },
+        {
+            "Normal",
+        },
+        nil
+    )
+
+    HolySaveShopSettings()
+
+    return true
+end
+
+function HolyPetSellAddOrUpdateRule()
+
+    local rule =
+        HolyPetSellNormalizeRule({
+            Names =
+                HOLY_SHOP_STATE.PetSellNames,
+
+            Sizes =
+                HOLY_SHOP_STATE.PetSellSizes,
+
+            Variants =
+                HOLY_SHOP_STATE.PetSellVariants,
+
+            Enabled =
+                true,
+        })
+
+    if type(rule) ~= "table" then
+
+        HolyNotify(
+            "HOLY Pet Seller",
+            "Select at least one pet before adding the filter.",
+            4
+        )
+
+        return false
+    end
+
+    HOLY_SHOP_STATE.PetSellRules =
+        HolyPetSellNormalizeRules(
+            HOLY_SHOP_STATE.PetSellRules
+        )
+
+    local editingIndex =
+        tonumber(
+            HOLY_PET_SELL_RUNTIME.EditingRuleIndex
+        )
+
+    local targetIndex =
+        nil
+
+    if editingIndex
+    and HOLY_SHOP_STATE.PetSellRules[
+        editingIndex
+    ] ~= nil then
+
+        targetIndex =
+            editingIndex
+
+        rule.Enabled =
+            HOLY_SHOP_STATE.PetSellRules[
+                editingIndex
+            ].Enabled ~= false
+
+    else
+
+        local ruleKey =
+            HolyPetSellRuleKey(
+                rule
+            )
+
+        for index, savedRule in ipairs(
+            HOLY_SHOP_STATE.PetSellRules
+        ) do
+
+            if HolyPetSellRuleKey(
+                savedRule
+            ) == ruleKey then
+
+                targetIndex =
+                    index
+
+                rule.Enabled =
+                    savedRule.Enabled ~= false
+
+                break
+            end
+        end
+    end
+
+    local updated =
+        targetIndex ~= nil
+
+    if updated == true then
+
+        HOLY_SHOP_STATE.PetSellRules[
+            targetIndex
+        ] =
+            rule
+
+    else
+
+        table.insert(
+            HOLY_SHOP_STATE.PetSellRules,
+            rule
+        )
+    end
+
+    HolyPetSellClearRuleBuilder()
+
+    HolyPetSellFiltersChanged(
+        updated == true
+        and "sell filter updated"
+        or "sell filter added"
+    )
+
+    HolyNotify(
+        "HOLY Pet Seller",
+        updated == true
+            and "Sell filter updated."
+            or "Sell filter added.",
+        3
+    )
+
+    return true
+end
+
+function HolyPetSellEditRule(index)
+
+    index =
+        tonumber(
+            index
+        )
+
+    local rule =
+        index
+        and HOLY_SHOP_STATE.PetSellRules[
+            index
+        ]
+        or nil
+
+    rule =
+        HolyPetSellNormalizeRule(
+            rule
+        )
+
+    if type(rule) ~= "table" then
+        return false
+    end
+
+    HolyPetSellSetBuilderValues(
+        rule.Names,
+        rule.Sizes,
+        rule.Variants,
+        index
+    )
+
+    HolySaveShopSettings()
+
+    HolyNotify(
+        "HOLY Pet Seller",
+        "Loaded sell filter #"
+            .. tostring(index)
+            .. " for editing.",
+        3
+    )
+
+    return true
+end
+
+function HolyPetSellRemoveRule(index)
+
+    index =
+        tonumber(
+            index
+        )
+
+    if not index
+    or HOLY_SHOP_STATE.PetSellRules[
+        index
+    ] == nil then
+
+        return false
+    end
+
+    table.remove(
+        HOLY_SHOP_STATE.PetSellRules,
+        index
+    )
+
+    local editingIndex =
+        tonumber(
+            HOLY_PET_SELL_RUNTIME.EditingRuleIndex
+        )
+
+    if editingIndex == index then
+
+        HolyPetSellClearRuleBuilder()
+
+    elseif editingIndex
+    and editingIndex > index then
+
+        HOLY_PET_SELL_RUNTIME.EditingRuleIndex =
+            editingIndex - 1
+
+        HolyPetSellRefreshRuleBuilderLabel()
+    end
+
+    HolyPetSellFiltersChanged(
+        "sell filter removed"
+    )
+
+    return true
+end
+
+function HolyPetSellToggleRule(index)
+
+    index =
+        tonumber(
+            index
+        )
+
+    local rule =
+        index
+        and HOLY_SHOP_STATE.PetSellRules[
+            index
+        ]
+        or nil
+
+    if type(rule) ~= "table" then
+        return false
+    end
+
+    rule.Enabled =
+        rule.Enabled == false
+
+    HolyPetSellFiltersChanged(
+        "sell filter toggled"
+    )
+
+    return true
+end
+
+function HolyPetSellCreateRuleButton(
+    parent,
+    name,
+    text,
+    position,
+    size,
+    color
+)
+
+    local button =
+        Instance.new(
+            "TextButton"
+        )
+
+    button.Name =
+        name
+
+    button.AutoButtonColor =
+        true
+
+    button.BackgroundColor3 =
+        color
+        or Library.Scheme.MainColor
+
+    button.BorderSizePixel =
+        0
+
+    button.Position =
+        position
+
+    button.Size =
+        size
+
+    button.Font =
+        Enum.Font.GothamBold
+
+    button.Text =
+        text
+
+    button.TextColor3 =
+        Library.Scheme.FontColor
+
+    button.TextSize =
+        9
+
+    button.Parent =
+        parent
+
+    local corner =
+        Instance.new(
+            "UICorner"
+        )
+
+    corner.CornerRadius =
+        UDim.new(
+            0,
+            3
+        )
+
+    corner.Parent =
+        button
+
+    return button
+end
+
+function HolyPetSellCreateRulesSurface()
+
+    local surface =
+        Instance.new(
+            "Frame"
+        )
+
+    surface.Name =
+        "HolyPetSellRulesSurface"
+
+    surface.BackgroundTransparency =
+        1
+
+    surface.BorderSizePixel =
+        0
+
+    surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            252
+        )
+
+    local summary =
+        HolyPetSellCreateTextLabel(
+            surface,
+            "Summary",
+            UDim2.fromOffset(
+                1,
+                0
+            ),
+            UDim2.new(
+                1,
+                -2,
+                0,
+                21
+            ),
+            "No saved sell filters.",
+            10,
+            Enum.TextXAlignment.Left,
+            Library.Scheme.FontColor
+        )
+
+    local scroll =
+        Instance.new(
+            "ScrollingFrame"
+        )
+
+    scroll.Name =
+        "Rules"
+
+    scroll.Active =
+        true
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            0
+        )
+
+    scroll.Position =
+        UDim2.fromOffset(
+            0,
+            25
+        )
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.ScrollBarThickness =
+        3
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            227
+        )
+
+    scroll.Parent =
+        surface
+
+    local layout =
+        Instance.new(
+            "UIListLayout"
+        )
+
+    layout.Name =
+        "Layout"
+
+    layout.Padding =
+        UDim.new(
+            0,
+            4
+        )
+
+    layout.SortOrder =
+        Enum.SortOrder.LayoutOrder
+
+    layout.Parent =
+        scroll
+
+    HOLY_PET_SELL_RUNTIME.RulesSurface =
+        surface
+
+    HOLY_PET_SELL_RUNTIME.RulesSummary =
+        summary
+
+    HOLY_PET_SELL_RUNTIME.RulesScroll =
+        scroll
+
+    return surface
+end
+
+function HolyPetSellRenderRules()
+
+    local summary =
+        HOLY_PET_SELL_RUNTIME.RulesSummary
+
+    local scroll =
+        HOLY_PET_SELL_RUNTIME.RulesScroll
+
+    if typeof(summary) ~= "Instance"
+    or typeof(scroll) ~= "Instance" then
+
+        return false
+    end
+
+    HOLY_SHOP_STATE.PetSellRules =
+        HolyPetSellNormalizeRules(
+            HOLY_SHOP_STATE.PetSellRules
+        )
+
+    for _, child in ipairs(
+        scroll:GetChildren()
+    ) do
+
+        if child.Name ~= "Layout" then
+
+            child:Destroy()
+        end
+    end
+
+    local rules =
+        HOLY_SHOP_STATE.PetSellRules
+
+    local enabledCount =
+        0
+
+    for _, rule in ipairs(
+        rules
+    ) do
+
+        if rule.Enabled ~= false then
+
+            enabledCount =
+                enabledCount
+                + 1
+        end
+    end
+
+    summary.Text =
+        tostring(#rules)
+            .. " saved filter"
+            .. (
+                #rules == 1
+                and ""
+                or "s"
+            )
+            .. " · "
+            .. tostring(enabledCount)
+            .. " enabled"
+
+    if #rules <= 0 then
+
+        local empty =
+            Instance.new(
+                "Frame"
+            )
+
+        empty.Name =
+            "Empty"
+
+        empty.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        empty.BackgroundTransparency =
+            0.30
+
+        empty.BorderSizePixel =
+            0
+
+        empty.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                42
+            )
+
+        empty.Parent =
+            scroll
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                3
+            )
+
+        corner.Parent =
+            empty
+
+        HolyPetSellCreateTextLabel(
+            empty,
+            "Message",
+            UDim2.fromOffset(
+                7,
+                0
+            ),
+            UDim2.new(
+                1,
+                -14,
+                1,
+                0
+            ),
+            "Create your first sell filter above.",
+            10,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+        scroll.CanvasSize =
+            UDim2.fromOffset(
+                0,
+                42
+            )
+
+        return true
+    end
+
+    local snapshot =
+        HolyPetSellScan()
+
+    local iconGroups =
+        {}
+
+    for _, group in pairs(
+        snapshot.Groups
+        or {}
+    ) do
+
+        local petKey =
+            HolySniperPetAliasKey(
+                group.Name
+            )
+
+        if iconGroups[petKey] == nil then
+
+            iconGroups[petKey] =
+                group
+        end
+    end
+
+    for index, rule in ipairs(
+        rules
+    ) do
+
+        local ruleIndex =
+            index
+
+        local row =
+            Instance.new(
+                "Frame"
+            )
+
+        row.Name =
+            "Rule"
+            .. tostring(index)
+
+        row.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        row.BackgroundTransparency =
+            index % 2 == 0
+            and 0.35
+            or 0.25
+
+        row.BorderSizePixel =
+            0
+
+        row.LayoutOrder =
+            index
+
+        row.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                50
+            )
+
+        row.Parent =
+            scroll
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                3
+            )
+
+        corner.Parent =
+            row
+
+        local iconGroup =
+            nil
+
+        for _, petName in ipairs(
+            rule.Names
+        ) do
+
+            iconGroup =
+                iconGroups[
+                    HolySniperPetAliasKey(
+                        petName
+                    )
+                ]
+
+            if type(iconGroup) == "table" then
+                break
+            end
+        end
+
+        local icon =
+            Instance.new(
+                "ImageLabel"
+            )
+
+        icon.Name =
+            "Icon"
+
+        icon.BackgroundTransparency =
+            1
+
+        icon.Position =
+            UDim2.fromOffset(
+                5,
+                10
+            )
+
+        icon.ScaleType =
+            Enum.ScaleType.Fit
+
+        icon.Size =
+            UDim2.fromOffset(
+                30,
+                30
+            )
+
+        icon.Image =
+            type(iconGroup) == "table"
+            and HolyPetSellResolveGroupIcon(
+                iconGroup
+            )
+            or ""
+
+        icon.Visible =
+            icon.Image ~= ""
+
+        icon.Parent =
+            row
+
+        local textOffset =
+            icon.Visible == true
+            and 41
+            or 7
+
+        local namesText =
+            table.concat(
+                rule.Names,
+                ", "
+            )
+
+        local detailsText =
+            table.concat(
+                rule.Sizes,
+                " + "
+            )
+                .. " · "
+                .. table.concat(
+                    rule.Variants,
+                    " + "
+                )
+
+        local nameLabel =
+            HolyPetSellCreateTextLabel(
+                row,
+                "Names",
+                UDim2.fromOffset(
+                    textOffset,
+                    3
+                ),
+                UDim2.new(
+                    1,
+                    -(textOffset + 124),
+                    0,
+                    22
+                ),
+                namesText,
+                10,
+                Enum.TextXAlignment.Left,
+                Library.Scheme.FontColor
+            )
+
+        nameLabel.Font =
+            Enum.Font.GothamBold
+
+        HolyPetSellCreateTextLabel(
+            row,
+            "Details",
+            UDim2.fromOffset(
+                textOffset,
+                24
+            ),
+            UDim2.new(
+                1,
+                -(textOffset + 124),
+                0,
+                19
+            ),
+            detailsText,
+            9,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+        local enabled =
+            rule.Enabled ~= false
+
+        local activeButton =
+            HolyPetSellCreateRuleButton(
+                row,
+                "Enabled",
+                enabled
+                    and "ON"
+                    or "OFF",
+                UDim2.new(
+                    1,
+                    -119,
+                    0,
+                    8
+                ),
+                UDim2.fromOffset(
+                    42,
+                    34
+                ),
+                enabled
+                    and Color3.fromRGB(
+                        24,
+                        128,
+                        72
+                    )
+                    or Color3.fromRGB(
+                        71,
+                        85,
+                        105
+                    )
+            )
+
+        activeButton.MouseButton1Click:Connect(function()
+
+            HolyPetSellToggleRule(
+                ruleIndex
+            )
+        end)
+
+        local editButton =
+            HolyPetSellCreateRuleButton(
+                row,
+                "Edit",
+                "Edit",
+                UDim2.new(
+                    1,
+                    -72,
+                    0,
+                    8
+                ),
+                UDim2.fromOffset(
+                    41,
+                    34
+                ),
+                Library.Scheme.AccentColor
+            )
+
+        editButton.MouseButton1Click:Connect(function()
+
+            HolyPetSellEditRule(
+                ruleIndex
+            )
+        end)
+
+        local removeButton =
+            HolyPetSellCreateRuleButton(
+                row,
+                "Remove",
+                "×",
+                UDim2.new(
+                    1,
+                    -26,
+                    0,
+                    8
+                ),
+                UDim2.fromOffset(
+                    22,
+                    34
+                ),
+                Color3.fromRGB(
+                    145,
+                    38,
+                    38
+                )
+            )
+
+        removeButton.TextSize =
+            15
+
+        removeButton.MouseButton1Click:Connect(function()
+
+            HolyPetSellRemoveRule(
+                ruleIndex
+            )
+        end)
+    end
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            math.max(
+                0,
+                #rules * 54
+                    - 4
+            )
+        )
+
+    return true
+end
+
+function HolyPetSellBuildRulesUI(groupbox)
+
+    if type(groupbox) ~= "table"
+    or type(groupbox.AddUIPassthrough) ~= "function" then
+
+        return false
+    end
+
+    local surface =
+        HolyPetSellCreateRulesSurface()
+
+    HOLY_SHOP_UI.PetSellRulesPassthrough =
+        groupbox:AddUIPassthrough(
+            "HolyShopPetSellRulesSurface",
+            {
+                Instance =
+                    surface,
+
+                Height =
+                    252,
+
+                Visible =
+                    true,
+            }
+        )
+
+    HolyPetSellRenderRules()
+
+    return true
 end
 
 function HolyPetSellCreatePreviewSurface()
@@ -48851,24 +50481,20 @@ function HolyPetSellRenderPreview(
     end
 
     if #(
-        filters.Names
+        filters.Rules
         or {}
     ) <= 0 then
 
         summary.Text =
-            "Select at least one pet name. Nothing matches while empty."
+            "Add at least one sell filter."
 
     elseif #(
-        filters.Sizes
-        or {}
-    ) <= 0
-    or #(
-        filters.Variants
+        filters.ActiveRules
         or {}
     ) <= 0 then
 
         summary.Text =
-            "Select at least one size and variant."
+            "Enable at least one saved sell filter."
 
     else
 
@@ -48952,11 +50578,16 @@ function HolyPetSellRenderPreview(
                 0
             ),
             #(
-                filters.Names
+                filters.Rules
                 or {}
             ) <= 0
-                and "No pet names selected."
-                or "No matching pet groups in inventory.",
+                and "No sell filters saved."
+                or #(
+                    filters.ActiveRules
+                    or {}
+                ) <= 0
+                    and "All sell filters are disabled."
+                    or "No matching pet groups in inventory.",
             10,
             Enum.TextXAlignment.Left,
             Color3.fromRGB(
@@ -49288,18 +50919,26 @@ function HolyPetSellRefreshPreview(
         )
 
     local signatureParts = {
-        table.concat(
-            filters.Names,
-            ","
+        HolyPetSellRulesSignature(
+            filters.Rules
         ),
-        table.concat(
-            filters.Sizes,
-            ","
+
+        tostring(
+            filters.ProtectBig
         ),
-        table.concat(
-            filters.Variants,
-            ","
+
+        tostring(
+            filters.ProtectHuge
         ),
+
+        tostring(
+            filters.ProtectRainbow
+        ),
+
+        tostring(
+            filters.ProtectSpecial
+        ),
+
         tostring(
             filters.Keep
         ),
@@ -49360,17 +50999,16 @@ function HolyPetSellRefreshPreview(
 
     if runtime.Busy ~= true then
 
-        if #filters.Names <= 0 then
+        if #filters.Rules <= 0 then
 
             HolyPetSellSetStatus(
-                "Status: Select at least one pet name."
+                "Status: Add at least one sell filter."
             )
 
-        elseif #filters.Sizes <= 0
-        or #filters.Variants <= 0 then
+        elseif #filters.ActiveRules <= 0 then
 
             HolyPetSellSetStatus(
-                "Status: Select at least one size and variant."
+                "Status: Enable at least one sell filter."
             )
 
         elseif HOLY_SHOP_STATE.AutoSellPets == true then
@@ -49741,51 +51379,44 @@ function HolyPetSellStart(automatic)
     local filters =
         HolyPetSellCaptureFilters()
 
-    if #filters.Names <= 0 then
+    if #filters.Rules <= 0 then
 
         if automatic ~= true then
 
             HolyNotify(
                 "HOLY Pet Seller",
-                "Select at least one pet name first.",
+                "Add at least one sell filter first.",
                 4
             )
         end
 
         HolyPetSellSetStatus(
-            "Status: Select at least one pet name."
+            "Status: Add at least one sell filter."
         )
 
         return false
     end
 
-    if #filters.Sizes <= 0
-    or #filters.Variants <= 0 then
+    if #filters.ActiveRules <= 0 then
 
         if automatic ~= true then
 
             HolyNotify(
                 "HOLY Pet Seller",
-                "Select at least one size and variant first.",
+                "Enable at least one sell filter first.",
                 4
             )
         end
 
         HolyPetSellSetStatus(
-            "Status: Select at least one size and variant."
+            "Status: Enable at least one sell filter."
         )
 
         return false
     end
 
-    HOLY_SHOP_STATE.PetSellNames =
-        filters.Names
-
-    HOLY_SHOP_STATE.PetSellSizes =
-        filters.Sizes
-
-    HOLY_SHOP_STATE.PetSellVariants =
-        filters.Variants
+    HOLY_SHOP_STATE.PetSellRules =
+        filters.Rules
 
     HOLY_SHOP_STATE.PetSellKeepAmount =
         filters.Keep
@@ -49794,6 +51425,9 @@ function HolyPetSellStart(automatic)
         filters.Batch
 
     HolySaveShopSettings()
+
+    local filterGeneration =
+        HOLY_PET_SELL_RUNTIME.FilterGeneration
 
     local token =
         {}
@@ -49950,6 +51584,23 @@ function HolyPetSellStart(automatic)
 
                 while soldTotal < plannedTotal
                 and runtime.Token == token do
+
+                    if runtime.FilterGeneration
+                        ~= filterGeneration
+                    then
+                        if automatic == true then
+
+                            retryWhenStable =
+                                true
+
+                        else
+
+                            failureReason =
+                                "Sell filters changed. Selling stopped before the next batch."
+                        end
+
+                        return
+                    end
 
                     local beforeBatch =
                         HolyPetSellScan()
@@ -50576,6 +52227,12 @@ function HolyPetSellStart(automatic)
 end
 
 function HolyPetSellHandleInventoryChanged()
+
+    HolyPetSellRefreshPetNameDropdown(
+        false
+    )
+
+    HolyPetSellRenderRules()
 
     local changed =
         HolyPetSellRefreshPreview(
@@ -169691,7 +171348,7 @@ ShopFiltersBox =
     HolyAddLeftGroupbox(
         Tabs.Shop,
         "Shop.FruitFilters",
-        "Fruit Filters",
+        "banana",
         "filter"
     )
 
@@ -169701,6 +171358,14 @@ ShopPetSellerBox =
         "Shop.PetSeller",
         "Pet Seller",
         "paw-print"
+    )
+
+ShopPetSellFiltersBox =
+    HolyAddLeftGroupbox(
+        Tabs.Shop,
+        "Shop.PetSellFilters",
+        "Sell Filters",
+        "list"
     )
 
 ShopPetSellPreviewBox =
@@ -185111,6 +186776,11 @@ function HolyShopRefreshMode()
     )
 
     HolySetGroupboxVisible(
+        ShopPetSellFiltersBox,
+        not isBuy
+    )
+
+    HolySetGroupboxVisible(
         ShopPetSellPreviewBox,
         not isBuy
     )
@@ -188229,6 +189899,11 @@ HOLY_SHOP_STATE.PetSellVariants =
         true
     )
 
+HOLY_SHOP_STATE.PetSellRules =
+    HolyPetSellNormalizeRules(
+        HOLY_SHOP_STATE.PetSellRules
+    )
+
 HOLY_SHOP_UI.PetSellAutoToggle =
     ShopPetSellerBox:AddToggle(
         "HolyShopAutoSellPets",
@@ -188263,7 +189938,7 @@ HOLY_SHOP_UI.PetSellNamesDropdown =
         "HolyShopPetSellNames",
         {
             Text =
-                "Pet Names",
+                "Filter Pets",
 
             Values =
                 HolyPetSellGetPetNameValues(),
@@ -188287,24 +189962,16 @@ HOLY_SHOP_UI.PetSellNamesDropdown =
 
 HOLY_SHOP_UI.PetSellNamesDropdown:OnChanged(function(value)
 
+    if HOLY_PET_SELL_RUNTIME.UpdatingUI == true then
+        return
+    end
+
     HOLY_SHOP_STATE.PetSellNames =
         HolyPetSellNormalizePetSelection(
             value
         )
 
     HolySaveShopSettings()
-
-    HolyPetSellRefreshPreview(
-        true
-    )
-
-    if HOLY_SHOP_STATE.AutoSellPets == true then
-
-        HolyPetSellQueueAutoRun(
-            "pet-name filters changed",
-            false
-        )
-    end
 end)
 
 HOLY_SHOP_UI.PetSellSizesDropdown =
@@ -188312,7 +189979,7 @@ HOLY_SHOP_UI.PetSellSizesDropdown =
         "HolyShopPetSellSizes",
         {
             Text =
-                "Sizes",
+                "Filter Sizes",
 
             Values =
                 HolyPetSellGetSizeValues(),
@@ -188336,6 +190003,10 @@ HOLY_SHOP_UI.PetSellSizesDropdown =
 
 HOLY_SHOP_UI.PetSellSizesDropdown:OnChanged(function(value)
 
+    if HOLY_PET_SELL_RUNTIME.UpdatingUI == true then
+        return
+    end
+
     HOLY_SHOP_STATE.PetSellSizes =
         HolyPetSellNormalizeSizeSelection(
             value,
@@ -188343,18 +190014,6 @@ HOLY_SHOP_UI.PetSellSizesDropdown:OnChanged(function(value)
         )
 
     HolySaveShopSettings()
-
-    HolyPetSellRefreshPreview(
-        true
-    )
-
-    if HOLY_SHOP_STATE.AutoSellPets == true then
-
-        HolyPetSellQueueAutoRun(
-            "size filters changed",
-            false
-        )
-    end
 end)
 
 HOLY_SHOP_UI.PetSellVariantsDropdown =
@@ -188362,7 +190021,7 @@ HOLY_SHOP_UI.PetSellVariantsDropdown =
         "HolyShopPetSellVariants",
         {
             Text =
-                "Variants",
+                "Filter Variants",
 
             Values =
                 HolyPetSellGetVariantValues(),
@@ -188386,6 +190045,10 @@ HOLY_SHOP_UI.PetSellVariantsDropdown =
 
 HOLY_SHOP_UI.PetSellVariantsDropdown:OnChanged(function(value)
 
+    if HOLY_PET_SELL_RUNTIME.UpdatingUI == true then
+        return
+    end
+
     HOLY_SHOP_STATE.PetSellVariants =
         HolyPetSellNormalizeVariantSelection(
             value,
@@ -188393,18 +190056,129 @@ HOLY_SHOP_UI.PetSellVariantsDropdown:OnChanged(function(value)
         )
 
     HolySaveShopSettings()
+end)
 
-    HolyPetSellRefreshPreview(
-        true
+HOLY_SHOP_UI.PetSellRuleBuilderLabel =
+    HolySniperAddLabel(
+        ShopPetSellerBox,
+        "Creating a new sell filter."
     )
 
-    if HOLY_SHOP_STATE.AutoSellPets == true then
+HOLY_SHOP_UI.PetSellSaveFilterButton =
+    ShopPetSellerBox:AddButton({
+        Text =
+            "+ Add / Save Filter",
 
-        HolyPetSellQueueAutoRun(
-            "variant filters changed",
-            false
-        )
-    end
+        Tooltip =
+            "Adds a new sell filter or saves the filter currently being edited.",
+
+        Func =
+            function()
+
+                HolyPetSellAddOrUpdateRule()
+            end,
+    })
+
+HOLY_SHOP_UI.PetSellSaveFilterButton:AddButton({
+    Text =
+        "Clear Builder",
+
+    Tooltip =
+        "Clears the filter builder without removing saved filters.",
+
+    Func =
+        function()
+
+            HolyPetSellClearRuleBuilder()
+        end,
+})
+
+ShopPetSellerBox:AddToggle(
+    "HolyShopPetSellProtectBig",
+    {
+        Text =
+            "Protect Big",
+
+        Default =
+            HOLY_SHOP_STATE.PetSellProtectBig == true,
+
+        Tooltip =
+            "Prevents Big pets from being sold.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellProtectBig =
+        value == true
+
+    HolyPetSellFiltersChanged(
+        "Big protection changed"
+    )
+end)
+
+ShopPetSellerBox:AddToggle(
+    "HolyShopPetSellProtectHuge",
+    {
+        Text =
+            "Protect Huge",
+
+        Default =
+            HOLY_SHOP_STATE.PetSellProtectHuge == true,
+
+        Tooltip =
+            "Prevents Huge pets from being sold.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellProtectHuge =
+        value == true
+
+    HolyPetSellFiltersChanged(
+        "Huge protection changed"
+    )
+end)
+
+ShopPetSellerBox:AddToggle(
+    "HolyShopPetSellProtectRainbow",
+    {
+        Text =
+            "Protect Rainbow",
+
+        Default =
+            HOLY_SHOP_STATE.PetSellProtectRainbow == true,
+
+        Tooltip =
+            "Prevents Rainbow pets from being sold.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellProtectRainbow =
+        value == true
+
+    HolyPetSellFiltersChanged(
+        "Rainbow protection changed"
+    )
+end)
+
+ShopPetSellerBox:AddToggle(
+    "HolyShopPetSellProtectSpecial",
+    {
+        Text =
+            "Protect Special Variants",
+
+        Default =
+            HOLY_SHOP_STATE.PetSellProtectSpecial == true,
+
+        Tooltip =
+            "Prevents special pet variants from being sold.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SHOP_STATE.PetSellProtectSpecial =
+        value == true
+
+    HolyPetSellFiltersChanged(
+        "special-variant protection changed"
+    )
 end)
 
 HOLY_SHOP_UI.PetSellKeepInput =
@@ -188445,19 +190219,9 @@ HOLY_SHOP_UI.PetSellKeepInput:OnChanged(function(value)
             value
         )
 
-    HolySaveShopSettings()
-
-    HolyPetSellRefreshPreview(
-        true
+    HolyPetSellFiltersChanged(
+        "keep amount changed"
     )
-
-    if HOLY_SHOP_STATE.AutoSellPets == true then
-
-        HolyPetSellQueueAutoRun(
-            "keep amount changed",
-            false
-        )
-    end
 end)
 
 HOLY_SHOP_UI.PetSellBatchInput =
@@ -188498,7 +190262,9 @@ HOLY_SHOP_UI.PetSellBatchInput:OnChanged(function(value)
             value
         )
 
-    HolySaveShopSettings()
+    HolyPetSellFiltersChanged(
+        "batch amount changed"
+    )
 end)
 
 HOLY_SHOP_UI.PetSellStartButton =
@@ -188554,6 +190320,12 @@ HOLY_SHOP_UI.PetSellStatusLabel =
         ShopPetSellerBox,
         "Loading pet-sell preview..."
     )
+
+HolyPetSellRefreshRuleBuilderLabel()
+
+HolyPetSellBuildRulesUI(
+    ShopPetSellFiltersBox
+)
 
 HolyPetSellBuildPreviewUI(
     ShopPetSellPreviewBox
