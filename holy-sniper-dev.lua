@@ -65310,6 +65310,960 @@ if HOLY_SNIPER_STATE.DefendBoughtPets == true then
     HolyDefenseMonitorScan()
 end
 
+--==================================================
+-- [2.44D] BOUGHT PET CLEANUP V2
+-- Persistent filters, pending PetIds, and idle worker
+--==================================================
+
+if type(
+    HOLY_BOUGHT_CLEANUP_WORKER_TOKEN
+) == "table" then
+
+    HOLY_BOUGHT_CLEANUP_WORKER_TOKEN.Active =
+        false
+end
+
+function HolyBoughtPetCleanupNormalizePendingRecord(value)
+
+    if type(value) ~= "table" then
+        return nil
+    end
+
+    local petId =
+        HolyCleanText(
+            value.PetId
+            or value.PetID
+            or value.UUID
+            or ""
+        )
+
+    if petId == "" then
+        return nil
+    end
+
+    local savedOwner =
+        HolyCleanText(
+            value.OwnerUserId
+            or ""
+        )
+
+    local currentOwner =
+        tostring(
+            LocalPlayer.UserId
+        )
+
+    if savedOwner ~= ""
+    and savedOwner ~= currentOwner then
+
+        return nil
+    end
+
+    local petName =
+        HolySniperResolvePetDisplay(
+            value.Pet
+            or value.PetName
+            or "Pet"
+        )
+
+    local boughtAt =
+        tonumber(
+            value.BoughtAt
+        )
+        or 0
+
+    if boughtAt < 1000000000 then
+
+        boughtAt =
+            os.time()
+    end
+
+    return {
+        OwnerUserId =
+            currentOwner,
+
+        PetId =
+            petId,
+
+        Pet =
+            petName,
+
+        PetKey =
+            HolySniperResolvePetKey(
+                value.PetKey
+                or petName
+            ),
+
+        Size =
+            HolySniperNormalizeSizeName(
+                value.Size
+                or "Normal"
+            ),
+
+        Variant =
+            HolySniperNormalizeVariantName(
+                value.Variant
+                or "Normal"
+            ),
+
+        Icon =
+            HolyCleanText(
+                value.Icon
+                or ""
+            ):sub(
+                1,
+                240
+            ),
+
+        BoughtAt =
+            boughtAt,
+
+        Attempts =
+            0,
+
+        SkipThisServer =
+            false,
+
+        LastError =
+            "",
+    }
+end
+
+function HolyBoughtPetCleanupNormalizePendingQueue(value)
+
+    local output = {}
+
+    for _,
+        rawRecord in pairs(
+            type(value) == "table"
+            and value
+            or {}
+        ) do
+
+        local record =
+            HolyBoughtPetCleanupNormalizePendingRecord(
+                rawRecord
+            )
+
+        if type(record) == "table" then
+
+            local matches =
+                true
+
+            if type(
+                HolyBoughtPetCleanupMatchesAnyRule
+            ) == "function" then
+
+                matches =
+                    HolyBoughtPetCleanupMatchesAnyRule(
+                        record
+                    ) == true
+            end
+
+            if matches == true then
+
+                output[
+                    record.PetId
+                ] =
+                    record
+            end
+        end
+    end
+
+    return output
+end
+
+function HolyBoughtPetCleanupEnsure()
+
+    HOLY_SNIPER_STATE =
+        type(HOLY_SNIPER_STATE) == "table"
+        and HOLY_SNIPER_STATE
+        or {}
+
+    HOLY_SNIPER_RUNTIME =
+        type(HOLY_SNIPER_RUNTIME) == "table"
+        and HOLY_SNIPER_RUNTIME
+        or {}
+
+    HOLY_SNIPER_STATE.AutoDropBoughtPets =
+        HOLY_SNIPER_STATE.AutoDropBoughtPets == true
+
+    HOLY_SNIPER_STATE.ProtectNonNormalBoughtPets =
+        HOLY_SNIPER_STATE.ProtectNonNormalBoughtPets ~= false
+
+    HOLY_SNIPER_STATE.BoughtCleanupBuilderPet =
+        HolySniperResolvePetDisplay(
+            HOLY_SNIPER_STATE.BoughtCleanupBuilderPet
+            or "Bunny"
+        )
+
+    HOLY_SNIPER_STATE.BoughtCleanupBuilderSizes =
+        HolySniperNormalizeSizeSelection(
+            HOLY_SNIPER_STATE.BoughtCleanupBuilderSizes
+        )
+
+    HOLY_SNIPER_STATE.BoughtCleanupBuilderVariants =
+        HolySniperNormalizeVariantSelection(
+            HOLY_SNIPER_STATE.BoughtCleanupBuilderVariants
+        )
+
+    HOLY_SNIPER_STATE.BoughtCleanupRules =
+        HolyBoughtPetCleanupNormalizeRules(
+            HOLY_SNIPER_STATE.BoughtCleanupRules
+        )
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupQueue =
+        type(
+            HOLY_SNIPER_RUNTIME.BoughtCleanupQueue
+        ) == "table"
+        and HOLY_SNIPER_RUNTIME.BoughtCleanupQueue
+        or {}
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupRunning =
+        HOLY_SNIPER_RUNTIME.BoughtCleanupRunning == true
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupSavePending =
+        HOLY_SNIPER_RUNTIME.BoughtCleanupSavePending == true
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupSaveError =
+        HolyCleanText(
+            HOLY_SNIPER_RUNTIME.BoughtCleanupSaveError
+            or ""
+        )
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupIconCache =
+        type(
+            HOLY_SNIPER_RUNTIME.BoughtCleanupIconCache
+        ) == "table"
+        and HOLY_SNIPER_RUNTIME.BoughtCleanupIconCache
+        or {}
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupNextWorkerAt =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BoughtCleanupNextWorkerAt
+        )
+        or 0
+
+    return HOLY_SNIPER_STATE,
+        HOLY_SNIPER_RUNTIME
+end
+
+function HolyBoughtPetCleanupSerializePendingQueue()
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    local output = {}
+
+    for _,
+        rawRecord in pairs(
+            runtime.BoughtCleanupQueue
+        ) do
+
+        local record =
+            HolyBoughtPetCleanupNormalizePendingRecord(
+                rawRecord
+            )
+
+        if type(record) == "table" then
+
+            local matches =
+                HolyBoughtPetCleanupMatchesAnyRule(
+                    record
+                ) == true
+
+            if matches == true then
+
+                table.insert(
+                    output,
+                    record
+                )
+            end
+        end
+    end
+
+    table.sort(output, function(left, right)
+
+        local leftTime =
+            tonumber(
+                left.BoughtAt
+            )
+            or 0
+
+        local rightTime =
+            tonumber(
+                right.BoughtAt
+            )
+            or 0
+
+        if leftTime ~= rightTime then
+            return leftTime < rightTime
+        end
+
+        return tostring(
+            left.PetId
+        ) < tostring(
+            right.PetId
+        )
+    end)
+
+    return output
+end
+
+function HolyBoughtPetCleanupQueueSignature()
+
+    local parts = {}
+
+    for _,
+        record in ipairs(
+            HolyBoughtPetCleanupSerializePendingQueue()
+        ) do
+
+        table.insert(
+            parts,
+            table.concat({
+                tostring(
+                    record.PetId
+                ),
+
+                tostring(
+                    record.PetKey
+                ),
+
+                tostring(
+                    record.Size
+                ),
+
+                tostring(
+                    record.Variant
+                ),
+
+                tostring(
+                    record.BoughtAt
+                ),
+            }, "|")
+        )
+    end
+
+    return table.concat(
+        parts,
+        "\n"
+    )
+end
+
+function HolyBoughtPetCleanupPendingCount()
+
+    return #(
+        HolyBoughtPetCleanupSerializePendingQueue()
+    )
+end
+
+function HolyBoughtPetCleanupPersistNow(reason)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    if type(
+        HolySaveSniperSettings
+    ) ~= "function" then
+
+        runtime.BoughtCleanupSaveError =
+            "Sniper save function is unavailable."
+
+        return false,
+            runtime.BoughtCleanupSaveError
+    end
+
+    local callOk,
+        saved,
+        saveReason =
+        pcall(
+            HolySaveSniperSettings
+        )
+
+    if callOk ~= true then
+
+        runtime.BoughtCleanupSaveError =
+            tostring(
+                saved
+            )
+
+        return false,
+            runtime.BoughtCleanupSaveError
+    end
+
+    if saved ~= true then
+
+        runtime.BoughtCleanupSaveError =
+            tostring(
+                saveReason
+                or reason
+                or "The settings file could not be verified."
+            )
+
+        return false,
+            runtime.BoughtCleanupSaveError
+    end
+
+    runtime.BoughtCleanupSaveError =
+        ""
+
+    runtime.BoughtCleanupLastSavedSignature =
+        HolyBoughtPetCleanupQueueSignature()
+
+    return true,
+        tostring(
+            saveReason
+            or "Saved and verified."
+        )
+end
+
+function HolyBoughtPetCleanupRequestPersist()
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    if runtime.BoughtCleanupSavePending == true then
+        return false
+    end
+
+    runtime.BoughtCleanupSavePending =
+        true
+
+    task.delay(0.15, function()
+
+        local _,
+            currentRuntime =
+            HolyBoughtPetCleanupEnsure()
+
+        currentRuntime.BoughtCleanupSavePending =
+            false
+
+        HolyBoughtPetCleanupPersistNow(
+            "pending-pet ledger"
+        )
+    end)
+
+    return true
+end
+
+function HolyBoughtPetCleanupRefreshAll()
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    if type(
+        HolyBoughtPetCleanupRefreshBuilderPreview
+    ) == "function" then
+
+        HolyBoughtPetCleanupRefreshBuilderPreview()
+    end
+
+    if type(
+        HolyBoughtPetCleanupRefreshSavedFilters
+    ) == "function" then
+
+        HolyBoughtPetCleanupRefreshSavedFilters()
+    end
+
+    if type(
+        HolyBoughtPetCleanupRefreshPreview
+    ) == "function" then
+
+        HolyBoughtPetCleanupRefreshPreview(
+            true
+        )
+    end
+
+    local signature =
+        HolyBoughtPetCleanupQueueSignature()
+
+    if signature ~= tostring(
+        runtime.BoughtCleanupLastSavedSignature
+        or ""
+    ) then
+
+        HolyBoughtPetCleanupRequestPersist()
+    end
+end
+
+function HolyBoughtPetCleanupAddBuilderRule()
+
+    local state =
+        HolyBoughtPetCleanupEnsure()
+
+    local rule =
+        HolyBoughtPetCleanupNormalizeRule({
+            Pet =
+                state.BoughtCleanupBuilderPet,
+
+            Sizes =
+                state.BoughtCleanupBuilderSizes,
+
+            Variants =
+                state.BoughtCleanupBuilderVariants,
+
+            Enabled =
+                true,
+        })
+
+    if type(rule) ~= "table" then
+
+        return false,
+            "The drop filter is invalid."
+    end
+
+    local ruleKey =
+        HolyBoughtPetCleanupRuleKey(
+            rule
+        )
+
+    local replaced =
+        false
+
+    for index,
+        existing in ipairs(
+            state.BoughtCleanupRules
+        ) do
+
+        if HolyBoughtPetCleanupRuleKey(
+            existing
+        ) == ruleKey then
+
+            state.BoughtCleanupRules[index] =
+                rule
+
+            replaced =
+                true
+
+            break
+        end
+    end
+
+    if replaced ~= true then
+
+        table.insert(
+            state.BoughtCleanupRules,
+            rule
+        )
+    end
+
+    local saved,
+        saveReason =
+        HolyBoughtPetCleanupPersistNow(
+            "drop filter"
+        )
+
+    HolyBoughtPetCleanupRefreshAll()
+
+    if saved ~= true then
+
+        return false,
+            "Filter is active for this session, but it could not be saved: "
+            .. tostring(
+                saveReason
+            )
+    end
+
+    return true,
+        replaced == true
+        and "Updated and verified the matching drop filter."
+        or "Saved and verified the new drop filter."
+end
+
+function HolyBoughtPetCleanupRemoveRuleAt(index)
+
+    local state,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    index =
+        math.floor(
+            tonumber(
+                index
+            )
+            or 0
+        )
+
+    if index < 1
+    or state.BoughtCleanupRules[index] == nil then
+
+        return false,
+            "That saved filter no longer exists."
+    end
+
+    local removed =
+        table.remove(
+            state.BoughtCleanupRules,
+            index
+        )
+
+    for petId,
+        record in pairs(
+            runtime.BoughtCleanupQueue
+        ) do
+
+        if HolyBoughtPetCleanupMatchesAnyRule(
+            record
+        ) ~= true then
+
+            runtime.BoughtCleanupQueue[
+                petId
+            ] =
+                nil
+        end
+    end
+
+    local saved,
+        saveReason =
+        HolyBoughtPetCleanupPersistNow(
+            "removed drop filter"
+        )
+
+    HolyBoughtPetCleanupRefreshAll()
+
+    if saved ~= true then
+
+        return false,
+            "Removed for this session, but the file could not be verified: "
+            .. tostring(
+                saveReason
+            )
+    end
+
+    return true,
+        "Removed and verified "
+        .. tostring(
+            type(removed) == "table"
+            and removed.Pet
+            or "the filter"
+        )
+        .. "."
+end
+
+function HolyBoughtPetCleanupRemoveSelectedRule()
+
+    local state =
+        HolyBoughtPetCleanupEnsure()
+
+    return HolyBoughtPetCleanupRemoveRuleAt(
+        state.BoughtCleanupSelectedRuleIndex
+    )
+end
+
+function HolyBoughtPetCleanupTrack(entry)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    local petId =
+        HolySniperEntryKey(
+            entry
+        )
+
+    if petId == "" then
+        return false
+    end
+
+    local record =
+        runtime.BoughtCleanupQueue[
+            petId
+        ]
+
+    if type(record) ~= "table" then
+
+        record = {
+            OwnerUserId =
+                tostring(
+                    LocalPlayer.UserId
+                ),
+
+            PetId =
+                petId,
+
+            BoughtAt =
+                os.time(),
+
+            Attempts =
+                0,
+
+            SkipThisServer =
+                false,
+
+            LastError =
+                "",
+        }
+    end
+
+    record.OwnerUserId =
+        tostring(
+            LocalPlayer.UserId
+        )
+
+    record.Pet =
+        HolySniperResolvePetDisplay(
+            entry.Pet
+            or entry.PetName
+            or record.Pet
+            or "Pet"
+        )
+
+    record.PetKey =
+        HolySniperResolvePetKey(
+            entry.PetKey
+            or entry.Pet
+            or record.Pet
+        )
+
+    record.Size =
+        HolySniperNormalizeSizeName(
+            entry.Size
+            or record.Size
+            or "Normal"
+        )
+
+    record.Variant =
+        HolySniperNormalizeVariantName(
+            entry.Variant
+            or record.Variant
+            or "Normal"
+        )
+
+    record.BoughtAt =
+        tonumber(
+            record.BoughtAt
+        )
+        or os.time()
+
+    record.Entry =
+        entry
+
+    record.SkipThisServer =
+        false
+
+    record.LastError =
+        ""
+
+    if HolyBoughtPetCleanupMatchesAnyRule(
+        record
+    ) ~= true then
+
+        runtime.BoughtCleanupQueue[
+            petId
+        ] =
+            nil
+
+        return false
+    end
+
+    runtime.BoughtCleanupQueue[
+        petId
+    ] =
+        record
+
+    HolyBoughtPetCleanupRequestPersist()
+
+    HolyBoughtPetCleanupRefreshAll()
+
+    return true
+end
+
+function HolyBoughtPetCleanupClassify(record)
+
+    if type(record) ~= "table" then
+
+        return nil,
+            ""
+    end
+
+    if HolyBoughtPetCleanupMatchesAnyRule(
+        record
+    ) ~= true then
+
+        return nil,
+            "No matching drop filter"
+    end
+
+    local tool =
+        HolyBoughtPetCleanupFindTool(
+            record.PetId
+        )
+
+    if typeof(tool) ~= "Instance" then
+
+        return "Waiting",
+            "Waiting for exact PetId"
+    end
+
+    HolyBoughtPetCleanupUpdateFromTool(
+        record,
+        tool
+    )
+
+    if record.SkipThisServer == true then
+
+        return "Protected",
+            record.LastError ~= ""
+            and (
+                "Kept · "
+                .. record.LastError
+            )
+            or "Kept after retries"
+    end
+
+    local protected,
+        reason =
+        HolyBoughtPetCleanupProtection(
+            record,
+            tool
+        )
+
+    if protected == true then
+
+        return "Protected",
+            reason
+    end
+
+    return "Drop",
+        "Matches saved filter"
+end
+
+HOLY_SNIPER_BASE_STILL_ACTIVE_BOUGHT_CLEANUP =
+    HOLY_SNIPER_BASE_STILL_ACTIVE_BOUGHT_CLEANUP
+    or HolySniperStillActive
+
+function HolySniperStillActive(token)
+
+    local state,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    if type(token) == "table"
+    and runtime.BoughtCleanupWorkerToken == token then
+
+        return token.Active == true
+            and state.AutoDropBoughtPets == true
+            and state.ActivateSniper == true
+    end
+
+    return HOLY_SNIPER_BASE_STILL_ACTIVE_BOUGHT_CLEANUP(
+        token
+    )
+end
+
+function HolyBoughtPetCleanupStopWorker()
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    if type(
+        runtime.BoughtCleanupWorkerToken
+    ) == "table" then
+
+        runtime.BoughtCleanupWorkerToken.Active =
+            false
+    end
+
+    if type(
+        HOLY_BOUGHT_CLEANUP_WORKER_TOKEN
+    ) == "table" then
+
+        HOLY_BOUGHT_CLEANUP_WORKER_TOKEN.Active =
+            false
+    end
+
+    runtime.BoughtCleanupWorkerToken =
+        nil
+
+    return true
+end
+
+function HolyBoughtPetCleanupStartWorker()
+
+    local state,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    HolyBoughtPetCleanupStopWorker()
+
+    if state.AutoDropBoughtPets ~= true then
+        return false
+    end
+
+    local token = {
+        Active = true,
+    }
+
+    runtime.BoughtCleanupWorkerToken =
+        token
+
+    HOLY_BOUGHT_CLEANUP_WORKER_TOKEN =
+        token
+
+    task.spawn(function()
+
+        task.wait(
+            1.5
+        )
+
+        while token.Active == true
+        and HOLY_BOUGHT_CLEANUP_WORKER_TOKEN == token do
+
+            state,
+                runtime =
+                HolyBoughtPetCleanupEnsure()
+
+            if state.AutoDropBoughtPets == true
+            and state.ActivateSniper == true
+            and #state.BoughtCleanupRules > 0
+            and runtime.BoughtCleanupRunning ~= true
+            and os.clock() >= runtime.BoughtCleanupNextWorkerAt then
+
+                local busy =
+                    HolyBoughtPetCleanupBusy()
+
+                if busy ~= true then
+
+                    local candidates =
+                        HolyBoughtPetCleanupCandidates()
+
+                    if #candidates > 0 then
+
+                        local cleanupOk =
+                            HolyBoughtPetCleanupRun(
+                                token
+                            )
+
+                        runtime.BoughtCleanupNextWorkerAt =
+                            os.clock()
+                            + (
+                                cleanupOk == true
+                                and 0.45
+                                or 1.5
+                            )
+                    end
+                end
+            end
+
+            task.wait(
+                0.65
+            )
+        end
+    end)
+
+    return true
+end
+
 function HolySniperEnsureRunning()
 
     if HOLY_SNIPER_STATE.ActivateSniper == true then
@@ -65408,6 +66362,12 @@ function HolySaveSniperSettings()
             HolyBoughtPetCleanupNormalizeRules(
                 HOLY_SNIPER_STATE.BoughtCleanupRules
             ),
+
+        BoughtCleanupPendingPets =
+            HolyBoughtPetCleanupSerializePendingQueue(),
+
+        BoughtCleanupPersistenceVersion =
+            2,
 
         DefendBoughtPets =
             HOLY_SNIPER_STATE.DefendBoughtPets == true,
@@ -65545,7 +66505,8 @@ function HolySaveSniperSettings()
         return false
     end
 
-    local writeOk =
+    local writeOk,
+        writeError =
         pcall(function()
 
             writefile(
@@ -65554,13 +66515,91 @@ function HolySaveSniperSettings()
             )
         end)
 
-    return writeOk == true
+    if writeOk ~= true then
+
+        return false,
+            "writefile failed: "
+            .. tostring(
+                writeError
+            )
+    end
+
+    local readbackOk,
+        readback =
+        pcall(function()
+
+            return readfile(
+                SNIPER_SETTINGS_FILE
+            )
+        end)
+
+    if readbackOk ~= true
+    or type(readback) ~= "string"
+    or readback == "" then
+
+        return false,
+            "The saved file could not be read back."
+    end
+
+    if readback ~= encoded then
+
+        return false,
+            "The settings readback did not match the written data."
+    end
+
+    local verifyOk,
+        verifiedData =
+        pcall(function()
+
+            return HttpService:JSONDecode(
+                readback
+            )
+        end)
+
+    if verifyOk ~= true
+    or type(verifiedData) ~= "table" then
+
+        return false,
+            "The saved settings JSON failed verification."
+    end
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    runtime.BoughtCleanupSaveError =
+        ""
+
+    runtime.BoughtCleanupLastSavedSignature =
+        HolyBoughtPetCleanupQueueSignature()
+
+    return true,
+        "Saved and verified."
 end
 
 function HolyLoadSniperSettings()
 
+    HOLY_SNIPER_RUNTIME =
+        type(HOLY_SNIPER_RUNTIME) == "table"
+        and HOLY_SNIPER_RUNTIME
+        or {}
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupLoadedFromFile =
+        false
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupLoadError =
+        ""
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupLoadMessage =
+        ""
+
     if HolyCanUseFiles() ~= true then
-        return false
+
+        HOLY_SNIPER_RUNTIME.BoughtCleanupLoadError =
+            "Executor file APIs are unavailable."
+
+        return false,
+            HOLY_SNIPER_RUNTIME.BoughtCleanupLoadError
     end
 
     local exists =
@@ -65702,6 +66741,15 @@ function HolyLoadSniperSettings()
         HolyBoughtPetCleanupNormalizeRules(
             data.BoughtCleanupRules
         )
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupQueue =
+        HolyBoughtPetCleanupNormalizePendingQueue(
+            data.BoughtCleanupPendingPets
+            or {}
+        )
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupLastSavedSignature =
+        HolyBoughtPetCleanupQueueSignature()
 
     HOLY_SNIPER_STATE.DefendBoughtPets =
         data.DefendBoughtPets ~= false
@@ -65859,7 +66907,36 @@ function HolyLoadSniperSettings()
         and "Scanning"
         or "Ready"
 
-    return true
+    HOLY_SNIPER_RUNTIME.BoughtCleanupLoadedFromFile =
+        true
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupLoadError =
+        ""
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupLoadMessage =
+        "Loaded "
+        .. tostring(
+            #HOLY_SNIPER_STATE.BoughtCleanupRules
+        )
+        .. " drop filter"
+        .. (
+            #HOLY_SNIPER_STATE.BoughtCleanupRules == 1
+            and ""
+            or "s"
+        )
+        .. " · "
+        .. tostring(
+            HolyBoughtPetCleanupPendingCount()
+        )
+        .. " pending bought pet"
+        .. (
+            HolyBoughtPetCleanupPendingCount() == 1
+            and ""
+            or "s"
+        )
+
+    return true,
+        HOLY_SNIPER_RUNTIME.BoughtCleanupLoadMessage
 end
 
 function HolySniperSaveFilterFromBuilder()
@@ -181996,6 +183073,1171 @@ function HolyBoughtPetCleanupRegisterTheme(
     return object
 end
 
+function HolyBoughtPetCleanupCreateText(
+    parent,
+    name,
+    position,
+    size,
+    text,
+    textSize,
+    alignment,
+    color
+)
+
+    local label =
+        Instance.new(
+            "TextLabel"
+        )
+
+    label.Name =
+        name
+
+    label.BackgroundTransparency =
+        1
+
+    label.Position =
+        position
+
+    label.Size =
+        size
+
+    label.FontFace =
+        Library.Scheme.Font
+
+    label.Text =
+        tostring(
+            text
+            or ""
+        )
+
+    label.TextColor3 =
+        color
+        or Library.Scheme.FontColor
+
+    label.TextSize =
+        textSize
+        or 10
+
+    label.TextTruncate =
+        Enum.TextTruncate.AtEnd
+
+    label.TextXAlignment =
+        alignment
+        or Enum.TextXAlignment.Left
+
+    label.Parent =
+        parent
+
+    HolyBoughtPetCleanupRegisterTheme(
+        label,
+        {
+            FontFace =
+                "Font",
+
+            TextColor3 =
+                color == nil
+                and "FontColor"
+                or nil,
+        }
+    )
+
+    return label
+end
+
+function HolyBoughtPetCleanupResolveIcon(
+    petName,
+    petKey,
+    tool
+)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    petName =
+        HolySniperResolvePetDisplay(
+            petName
+            or "Pet"
+        )
+
+    petKey =
+        HolySniperResolvePetKey(
+            petKey
+            or petName
+        )
+
+    local cacheKey =
+        HolySniperPetAliasKey(
+            petKey ~= ""
+            and petKey
+            or petName
+        )
+
+    local cached =
+        runtime.BoughtCleanupIconCache[
+            cacheKey
+        ]
+
+    if type(cached) == "string"
+    and cached ~= "" then
+
+        return cached
+    end
+
+    local catalogs = {}
+    local icon = ""
+
+    if type(
+        HolyAccountInventoryLoadCatalogs
+    ) == "function" then
+
+        local catalogsOk,
+            result =
+            pcall(
+                HolyAccountInventoryLoadCatalogs
+            )
+
+        if catalogsOk == true
+        and type(result) == "table" then
+
+            catalogs =
+                result
+        end
+    end
+
+    if type(catalogs.Pets) == "table"
+    and type(
+        HolyAccountInventoryFirstIcon
+    ) == "function" then
+
+        local nameKey =
+            type(
+                HolyAccountInventoryKey
+            ) == "function"
+            and HolyAccountInventoryKey(
+                petName
+            )
+            or HolySniperPetAliasKey(
+                petName
+            )
+
+        local internalKey =
+            type(
+                HolyAccountInventoryKey
+            ) == "function"
+            and HolyAccountInventoryKey(
+                petKey
+            )
+            or HolySniperPetAliasKey(
+                petKey
+            )
+
+        icon =
+            HolyAccountInventoryFirstIcon(
+                catalogs,
+                catalogs.Pets[nameKey],
+                catalogs.Pets[internalKey]
+            )
+    end
+
+    if icon == ""
+    and typeof(tool) == "Instance"
+    and type(
+        HolyAccountInventoryClassify
+    ) == "function"
+    and type(
+        HolyAccountInventoryReadIcon
+    ) == "function" then
+
+        pcall(function()
+
+            local record =
+                HolyAccountInventoryClassify(
+                    tool,
+                    catalogs
+                )
+
+            if type(record) == "table" then
+
+                icon =
+                    HolyAccountInventoryReadIcon(
+                        tool,
+                        record,
+                        catalogs
+                    )
+            end
+        end)
+    end
+
+    if icon == ""
+    and type(
+        HolyGlobalPetSnipeResolveThumbnail
+    ) == "function" then
+
+        local petData =
+            HolySniperGetPetData()
+
+        local data =
+            type(petData[petKey]) == "table"
+            and petData[petKey]
+            or {}
+
+        local iconOk,
+            resolved =
+            pcall(
+                HolyGlobalPetSnipeResolveThumbnail,
+                {},
+                {},
+                data,
+                petName,
+                petKey,
+                "Normal",
+                "Normal",
+                "Normal"
+            )
+
+        if iconOk == true then
+
+            icon =
+                HolyCleanText(
+                    resolved
+                    or ""
+                )
+        end
+    end
+
+    if icon ~= "" then
+
+        runtime.BoughtCleanupIconCache[
+            cacheKey
+        ] =
+            icon
+    end
+
+    return icon
+end
+
+function HolyBoughtPetCleanupCreateIconSlot(
+    parent,
+    position,
+    size
+)
+
+    local holder =
+        Instance.new(
+            "Frame"
+        )
+
+    holder.Name =
+        "IconHolder"
+
+    holder.BackgroundColor3 =
+        Library.Scheme.OutlineColor
+
+    holder.BackgroundTransparency =
+        0.55
+
+    holder.BorderSizePixel =
+        0
+
+    holder.Position =
+        position
+
+    holder.Size =
+        size
+
+    holder.Parent =
+        parent
+
+    HolyBoughtPetCleanupRegisterTheme(
+        holder,
+        {
+            BackgroundColor3 =
+                "OutlineColor",
+        }
+    )
+
+    local corner =
+        Instance.new(
+            "UICorner"
+        )
+
+    corner.CornerRadius =
+        UDim.new(
+            0,
+            5
+        )
+
+    corner.Parent =
+        holder
+
+    local image =
+        Instance.new(
+            "ImageLabel"
+        )
+
+    image.Name =
+        "Image"
+
+    image.BackgroundTransparency =
+        1
+
+    image.Position =
+        UDim2.fromOffset(
+            3,
+            3
+        )
+
+    image.ScaleType =
+        Enum.ScaleType.Fit
+
+    image.Size =
+        UDim2.new(
+            1,
+            -6,
+            1,
+            -6
+        )
+
+    image.Parent =
+        holder
+
+    local fallback =
+        HolyBoughtPetCleanupCreateText(
+            holder,
+            "Fallback",
+            UDim2.fromOffset(
+                0,
+                0
+            ),
+            UDim2.new(
+                1,
+                0,
+                1,
+                0
+            ),
+            "?",
+            15,
+            Enum.TextXAlignment.Center,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+    fallback.TextYAlignment =
+        Enum.TextYAlignment.Center
+
+    return {
+        Holder =
+            holder,
+
+        Image =
+            image,
+
+        Fallback =
+            fallback,
+    }
+end
+
+function HolyBoughtPetCleanupUpdateIconSlot(
+    slot,
+    image
+)
+
+    if type(slot) ~= "table"
+    or typeof(slot.Image) ~= "Instance"
+    or typeof(slot.Fallback) ~= "Instance" then
+
+        return false
+    end
+
+    image =
+        HolyCleanText(
+            image
+            or ""
+        )
+
+    slot.Image.Image =
+        image
+
+    slot.Image.Visible =
+        image ~= ""
+
+    slot.Fallback.Visible =
+        image == ""
+
+    return true
+end
+
+function HolyBoughtPetCleanupCreateBuilderSurface()
+
+    local surface =
+        Instance.new(
+            "Frame"
+        )
+
+    surface.Name =
+        "HolyBoughtPetCleanupBuilderPreview"
+
+    surface.BackgroundColor3 =
+        Library.Scheme.MainColor
+
+    surface.BackgroundTransparency =
+        0.22
+
+    surface.BorderSizePixel =
+        0
+
+    surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            48
+        )
+
+    HolyBoughtPetCleanupRegisterTheme(
+        surface,
+        {
+            BackgroundColor3 =
+                "MainColor",
+        }
+    )
+
+    local corner =
+        Instance.new(
+            "UICorner"
+        )
+
+    corner.CornerRadius =
+        UDim.new(
+            0,
+            5
+        )
+
+    corner.Parent =
+        surface
+
+    local icon =
+        HolyBoughtPetCleanupCreateIconSlot(
+            surface,
+            UDim2.fromOffset(
+                5,
+                5
+            ),
+            UDim2.fromOffset(
+                38,
+                38
+            )
+        )
+
+    local name =
+        HolyBoughtPetCleanupCreateText(
+            surface,
+            "PetName",
+            UDim2.fromOffset(
+                50,
+                5
+            ),
+            UDim2.new(
+                1,
+                -56,
+                0,
+                20
+            ),
+            "Bunny",
+            11,
+            Enum.TextXAlignment.Left
+        )
+
+    local description =
+        HolyBoughtPetCleanupCreateText(
+            surface,
+            "Description",
+            UDim2.fromOffset(
+                50,
+                24
+            ),
+            UDim2.new(
+                1,
+                -56,
+                0,
+                17
+            ),
+            "Selected filter pet",
+            9,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+    HOLY_SNIPER_UI.BoughtCleanupBuilderPreview = {
+        Surface =
+            surface,
+
+        Icon =
+            icon,
+
+        Name =
+            name,
+
+        Description =
+            description,
+    }
+
+    return surface
+end
+
+function HolyBoughtPetCleanupRefreshBuilderPreview()
+
+    local state =
+        HolyBoughtPetCleanupEnsure()
+
+    local preview =
+        HOLY_SNIPER_UI
+        and HOLY_SNIPER_UI.BoughtCleanupBuilderPreview
+        or nil
+
+    if type(preview) ~= "table"
+    or typeof(preview.Surface) ~= "Instance" then
+
+        return false
+    end
+
+    local petName =
+        HolySniperResolvePetDisplay(
+            state.BoughtCleanupBuilderPet
+            or "Bunny"
+        )
+
+    local petKey =
+        HolySniperResolvePetKey(
+            petName
+        )
+
+    preview.Name.Text =
+        petName
+
+    preview.Description.Text =
+        HolySniperShortArrayText(
+            state.BoughtCleanupBuilderSizes,
+            "Any"
+        )
+        .. " · "
+        .. HolySniperShortArrayText(
+            state.BoughtCleanupBuilderVariants,
+            "Any"
+        )
+
+    HolyBoughtPetCleanupUpdateIconSlot(
+        preview.Icon,
+        HolyBoughtPetCleanupResolveIcon(
+            petName,
+            petKey,
+            nil
+        )
+    )
+
+    return true
+end
+
+function HolyBoughtPetCleanupBuildBuilderPreviewUI(groupbox)
+
+    if type(groupbox) ~= "table"
+    or type(groupbox.AddUIPassthrough) ~= "function" then
+
+        return false
+    end
+
+    local surface =
+        HolyBoughtPetCleanupCreateBuilderSurface()
+
+    HOLY_SNIPER_UI.BoughtCleanupBuilderPassthrough =
+        groupbox:AddUIPassthrough(
+            "HolyBoughtPetCleanupBuilderPreview",
+            {
+                Instance =
+                    surface,
+
+                Height =
+                    48,
+
+                Visible =
+                    true,
+            }
+        )
+
+    HolyBoughtPetCleanupRefreshBuilderPreview()
+
+    return true
+end
+
+function HolyBoughtPetCleanupCreateSavedFiltersSurface()
+
+    local surface =
+        Instance.new(
+            "Frame"
+        )
+
+    surface.Name =
+        "HolyBoughtPetCleanupSavedFilters"
+
+    surface.BackgroundTransparency =
+        1
+
+    surface.BorderSizePixel =
+        0
+
+    surface.Size =
+        UDim2.new(
+            1,
+            0,
+            0,
+            176
+        )
+
+    local summary =
+        HolyBoughtPetCleanupCreateText(
+            surface,
+            "Summary",
+            UDim2.fromOffset(
+                1,
+                0
+            ),
+            UDim2.new(
+                1,
+                -2,
+                0,
+                21
+            ),
+            "Saved Drop Filters",
+            10,
+            Enum.TextXAlignment.Left
+        )
+
+    local scroll =
+        Instance.new(
+            "ScrollingFrame"
+        )
+
+    scroll.Name =
+        "Rows"
+
+    scroll.Active =
+        true
+
+    scroll.AutomaticCanvasSize =
+        Enum.AutomaticSize.Y
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            0
+        )
+
+    scroll.Position =
+        UDim2.fromOffset(
+            0,
+            24
+        )
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            0,
+            1,
+            -24
+        )
+
+    scroll.ScrollBarThickness =
+        3
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.Parent =
+        surface
+
+    HolyBoughtPetCleanupRegisterTheme(
+        scroll,
+        {
+            ScrollBarImageColor3 =
+                "AccentColor",
+        }
+    )
+
+    local layout =
+        Instance.new(
+            "UIListLayout"
+        )
+
+    layout.Name =
+        "Layout"
+
+    layout.Padding =
+        UDim.new(
+            0,
+            4
+        )
+
+    layout.SortOrder =
+        Enum.SortOrder.LayoutOrder
+
+    layout.Parent =
+        scroll
+
+    HOLY_SNIPER_UI.BoughtCleanupSavedFilters = {
+        Surface =
+            surface,
+
+        Summary =
+            summary,
+
+        Scroll =
+            scroll,
+    }
+
+    return surface
+end
+
+function HolyBoughtPetCleanupRefreshSavedFilters()
+
+    local state =
+        HolyBoughtPetCleanupEnsure()
+
+    local ui =
+        HOLY_SNIPER_UI
+        and HOLY_SNIPER_UI.BoughtCleanupSavedFilters
+        or nil
+
+    if type(ui) ~= "table"
+    or typeof(ui.Scroll) ~= "Instance" then
+
+        return false
+    end
+
+    for _,
+        child in ipairs(
+            ui.Scroll:GetChildren()
+        ) do
+
+        if child.Name ~= "Layout" then
+
+            child:Destroy()
+        end
+    end
+
+    ui.Summary.Text =
+        "Saved Drop Filters · "
+        .. tostring(
+            #state.BoughtCleanupRules
+        )
+        .. " saved"
+
+    if #state.BoughtCleanupRules <= 0 then
+
+        local empty =
+            Instance.new(
+                "Frame"
+            )
+
+        empty.Name =
+            "Empty"
+
+        empty.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        empty.BackgroundTransparency =
+            0.28
+
+        empty.BorderSizePixel =
+            0
+
+        empty.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                42
+            )
+
+        empty.Parent =
+            ui.Scroll
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                4
+            )
+
+        corner.Parent =
+            empty
+
+        HolyBoughtPetCleanupCreateText(
+            empty,
+            "Message",
+            UDim2.fromOffset(
+                7,
+                0
+            ),
+            UDim2.new(
+                1,
+                -14,
+                1,
+                0
+            ),
+            "Create your first drop filter above.",
+            10,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+        return true
+    end
+
+    for index,
+        rule in ipairs(
+            state.BoughtCleanupRules
+        ) do
+
+        local ruleIndex =
+            index
+
+        local row =
+            Instance.new(
+                "Frame"
+            )
+
+        row.Name =
+            "SavedFilter"
+            .. tostring(
+                index
+            )
+
+        row.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        row.BackgroundTransparency =
+            index % 2 == 0
+            and 0.34
+            or 0.24
+
+        row.BorderSizePixel =
+            0
+
+        row.LayoutOrder =
+            index
+
+        row.Size =
+            UDim2.new(
+                1,
+                -4,
+                0,
+                52
+            )
+
+        row.Parent =
+            ui.Scroll
+
+        HolyBoughtPetCleanupRegisterTheme(
+            row,
+            {
+                BackgroundColor3 =
+                    "MainColor",
+            }
+        )
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                4
+            )
+
+        corner.Parent =
+            row
+
+        local icon =
+            HolyBoughtPetCleanupCreateIconSlot(
+                row,
+                UDim2.fromOffset(
+                    5,
+                    7
+                ),
+                UDim2.fromOffset(
+                    38,
+                    38
+                )
+            )
+
+        HolyBoughtPetCleanupUpdateIconSlot(
+            icon,
+            HolyBoughtPetCleanupResolveIcon(
+                rule.Pet,
+                rule.PetKey,
+                nil
+            )
+        )
+
+        HolyBoughtPetCleanupCreateText(
+            row,
+            "Pet",
+            UDim2.fromOffset(
+                49,
+                4
+            ),
+            UDim2.new(
+                1,
+                -100,
+                0,
+                21
+            ),
+            tostring(
+                rule.Pet
+            ),
+            10,
+            Enum.TextXAlignment.Left
+        )
+
+        HolyBoughtPetCleanupCreateText(
+            row,
+            "Details",
+            UDim2.fromOffset(
+                49,
+                25
+            ),
+            UDim2.new(
+                1,
+                -100,
+                0,
+                18
+            ),
+            HolySniperShortArrayText(
+                rule.Sizes,
+                "Any"
+            )
+            .. " · "
+            .. HolySniperShortArrayText(
+                rule.Variants,
+                "Any"
+            ),
+            9,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+        local remove =
+            Instance.new(
+                "TextButton"
+            )
+
+        remove.Name =
+            "Remove"
+
+        remove.AutoButtonColor =
+            false
+
+        remove.BackgroundColor3 =
+            Color3.fromRGB(
+                125,
+                43,
+                51
+            )
+
+        remove.BorderSizePixel =
+            0
+
+        remove.Position =
+            UDim2.new(
+                1,
+                -46,
+                0,
+                9
+            )
+
+        remove.Size =
+            UDim2.fromOffset(
+                40,
+                34
+            )
+
+        remove.Font =
+            Enum.Font.GothamBold
+
+        remove.Text =
+            "×"
+
+        remove.TextColor3 =
+            Color3.fromRGB(
+                255,
+                255,
+                255
+            )
+
+        remove.TextSize =
+            15
+
+        remove.Parent =
+            row
+
+        local removeCorner =
+            Instance.new(
+                "UICorner"
+            )
+
+        removeCorner.CornerRadius =
+            UDim.new(
+                0,
+                4
+            )
+
+        removeCorner.Parent =
+            remove
+
+        remove.MouseButton1Click:Connect(function()
+
+            local _,
+                runtime =
+                HolyBoughtPetCleanupEnsure()
+
+            local now =
+                os.clock()
+
+            if runtime.BoughtCleanupPendingRemoveIndex == ruleIndex
+            and now - (
+                tonumber(
+                    runtime.BoughtCleanupPendingRemoveAt
+                )
+                or 0
+            ) <= 1.5 then
+
+                runtime.BoughtCleanupPendingRemoveIndex =
+                    nil
+
+                runtime.BoughtCleanupPendingRemoveAt =
+                    0
+
+                local success,
+                    reason =
+                    HolyBoughtPetCleanupRemoveRuleAt(
+                        ruleIndex
+                    )
+
+                HolyNotify(
+                    "Bought Pet Cleanup",
+                    tostring(
+                        reason
+                    ),
+                    success == true
+                    and 3
+                    or 5
+                )
+
+                return
+            end
+
+            runtime.BoughtCleanupPendingRemoveIndex =
+                ruleIndex
+
+            runtime.BoughtCleanupPendingRemoveAt =
+                now
+
+            remove.Text =
+                "Again"
+
+            remove.TextSize =
+                9
+
+            task.delay(1.5, function()
+
+                if typeof(remove) == "Instance"
+                and remove.Parent ~= nil then
+
+                    local _,
+                        currentRuntime =
+                        HolyBoughtPetCleanupEnsure()
+
+                    if currentRuntime.BoughtCleanupPendingRemoveIndex == ruleIndex then
+
+                        currentRuntime.BoughtCleanupPendingRemoveIndex =
+                            nil
+
+                        currentRuntime.BoughtCleanupPendingRemoveAt =
+                            0
+                    end
+
+                    remove.Text =
+                        "×"
+
+                    remove.TextSize =
+                        15
+                end
+            end)
+        end)
+    end
+
+    return true
+end
+
+function HolyBoughtPetCleanupBuildSavedFiltersUI(groupbox)
+
+    if type(groupbox) ~= "table"
+    or type(groupbox.AddUIPassthrough) ~= "function" then
+
+        return false
+    end
+
+    local surface =
+        HolyBoughtPetCleanupCreateSavedFiltersSurface()
+
+    HOLY_SNIPER_UI.BoughtCleanupSavedFiltersPassthrough =
+        groupbox:AddUIPassthrough(
+            "HolyBoughtPetCleanupSavedFilters",
+            {
+                Instance =
+                    surface,
+
+                Height =
+                    176,
+
+                Visible =
+                    true,
+            }
+        )
+
+    HolyBoughtPetCleanupRefreshSavedFilters()
+
+    return true
+end
+
 function HolyBoughtPetCleanupCreatePreviewColumn(
     parent,
     name,
@@ -182056,123 +184298,24 @@ function HolyBoughtPetCleanupCreatePreviewColumn(
     corner.Parent =
         panel
 
-    local stroke =
-        Instance.new(
-            "UIStroke"
-        )
-
-    stroke.Color =
-        Library.Scheme.OutlineColor
-
-    stroke.Transparency =
-        0.35
-
-    stroke.Thickness =
-        1
-
-    stroke.Parent =
-        panel
-
-    HolyBoughtPetCleanupRegisterTheme(
-        stroke,
-        {
-            Color =
-                "OutlineColor",
-        }
-    )
-
     local header =
-        Instance.new(
-            "TextLabel"
+        HolyBoughtPetCleanupCreateText(
+            panel,
+            "Header",
+            UDim2.fromOffset(
+                7,
+                3
+            ),
+            UDim2.new(
+                1,
+                -14,
+                0,
+                21
+            ),
+            title,
+            9,
+            Enum.TextXAlignment.Left
         )
-
-    header.Name =
-        "Header"
-
-    header.BackgroundTransparency =
-        1
-
-    header.Position =
-        UDim2.fromOffset(
-            8,
-            4
-        )
-
-    header.Size =
-        UDim2.new(
-            1,
-            -16,
-            0,
-            20
-        )
-
-    header.FontFace =
-        Library.Scheme.Font
-
-    header.Text =
-        title
-
-    header.TextColor3 =
-        Library.Scheme.FontColor
-
-    header.TextSize =
-        10
-
-    header.TextXAlignment =
-        Enum.TextXAlignment.Left
-
-    header.Parent =
-        panel
-
-    HolyBoughtPetCleanupRegisterTheme(
-        header,
-        {
-            FontFace =
-                "Font",
-
-            TextColor3 =
-                "FontColor",
-        }
-    )
-
-    local divider =
-        Instance.new(
-            "Frame"
-        )
-
-    divider.BackgroundColor3 =
-        Library.Scheme.OutlineColor
-
-    divider.BackgroundTransparency =
-        0.35
-
-    divider.BorderSizePixel =
-        0
-
-    divider.Position =
-        UDim2.fromOffset(
-            7,
-            25
-        )
-
-    divider.Size =
-        UDim2.new(
-            1,
-            -14,
-            0,
-            1
-        )
-
-    divider.Parent =
-        panel
-
-    HolyBoughtPetCleanupRegisterTheme(
-        divider,
-        {
-            BackgroundColor3 =
-                "OutlineColor",
-        }
-    )
 
     local scroll =
         Instance.new(
@@ -182202,16 +184345,16 @@ function HolyBoughtPetCleanupCreatePreviewColumn(
 
     scroll.Position =
         UDim2.fromOffset(
-            6,
-            31
+            5,
+            27
         )
 
     scroll.Size =
         UDim2.new(
             1,
-            -12,
+            -10,
             1,
-            -37
+            -32
         )
 
     scroll.ScrollBarThickness =
@@ -182231,71 +184374,25 @@ function HolyBoughtPetCleanupCreatePreviewColumn(
         }
     )
 
-    local text =
+    local layout =
         Instance.new(
-            "TextLabel"
+            "UIListLayout"
         )
 
-    text.Name =
-        "Text"
+    layout.Name =
+        "Layout"
 
-    text.AutomaticSize =
-        Enum.AutomaticSize.Y
-
-    text.BackgroundTransparency =
-        1
-
-    text.Position =
-        UDim2.fromOffset(
-            2,
-            1
-        )
-
-    text.Size =
-        UDim2.new(
-            1,
-            -6,
+    layout.Padding =
+        UDim.new(
             0,
-            20
+            4
         )
 
-    text.FontFace =
-        Library.Scheme.Font
+    layout.SortOrder =
+        Enum.SortOrder.LayoutOrder
 
-    text.Text =
-        "Nothing queued."
-
-    text.TextColor3 =
-        Library.Scheme.FontColor
-
-    text.TextSize =
-        10
-
-    text.TextTransparency =
-        0.08
-
-    text.TextWrapped =
-        true
-
-    text.TextXAlignment =
-        Enum.TextXAlignment.Left
-
-    text.TextYAlignment =
-        Enum.TextYAlignment.Top
-
-    text.Parent =
+    layout.Parent =
         scroll
-
-    HolyBoughtPetCleanupRegisterTheme(
-        text,
-        {
-            FontFace =
-                "Font",
-
-            TextColor3 =
-                "FontColor",
-        }
-    )
 
     return {
         Panel =
@@ -182306,9 +184403,6 @@ function HolyBoughtPetCleanupCreatePreviewColumn(
 
         Scroll =
             scroll,
-
-        Text =
-            text,
     }
 end
 
@@ -182333,62 +184427,27 @@ function HolyBoughtPetCleanupCreatePreviewSurface()
             1,
             0,
             0,
-            204
+            228
         )
 
     local summary =
-        Instance.new(
-            "TextLabel"
+        HolyBoughtPetCleanupCreateText(
+            surface,
+            "Summary",
+            UDim2.fromOffset(
+                1,
+                0
+            ),
+            UDim2.new(
+                1,
+                -2,
+                0,
+                22
+            ),
+            "Nothing pending",
+            10,
+            Enum.TextXAlignment.Left
         )
-
-    summary.Name =
-        "Summary"
-
-    summary.BackgroundTransparency =
-        1
-
-    summary.Position =
-        UDim2.fromOffset(
-            1,
-            0
-        )
-
-    summary.Size =
-        UDim2.new(
-            1,
-            -2,
-            0,
-            22
-        )
-
-    summary.FontFace =
-        Library.Scheme.Font
-
-    summary.Text =
-        "Current server · nothing queued"
-
-    summary.TextColor3 =
-        Library.Scheme.FontColor
-
-    summary.TextSize =
-        10
-
-    summary.TextXAlignment =
-        Enum.TextXAlignment.Left
-
-    summary.Parent =
-        surface
-
-    HolyBoughtPetCleanupRegisterTheme(
-        summary,
-        {
-            FontFace =
-                "Font",
-
-            TextColor3 =
-                "FontColor",
-        }
-    )
 
     local willDrop =
         HolyBoughtPetCleanupCreatePreviewColumn(
@@ -182405,7 +184464,7 @@ function HolyBoughtPetCleanupCreatePreviewSurface()
         HolyBoughtPetCleanupCreatePreviewColumn(
             surface,
             "Protected",
-            "PROTECTED / KEPT",
+            "PROTECTED / WAITING",
             UDim2.new(
                 0.5,
                 4,
@@ -182431,7 +184490,269 @@ function HolyBoughtPetCleanupCreatePreviewSurface()
     return surface
 end
 
-function HolyBoughtPetCleanupRefreshPreview()
+function HolyBoughtPetCleanupRenderPreviewColumn(
+    column,
+    groups,
+    emptyText
+)
+
+    if type(column) ~= "table"
+    or typeof(column.Scroll) ~= "Instance" then
+
+        return false
+    end
+
+    for _,
+        child in ipairs(
+            column.Scroll:GetChildren()
+        ) do
+
+        if child.Name ~= "Layout" then
+
+            child:Destroy()
+        end
+    end
+
+    if #groups <= 0 then
+
+        local empty =
+            HolyBoughtPetCleanupCreateText(
+                column.Scroll,
+                "Empty",
+                UDim2.fromOffset(
+                    4,
+                    0
+                ),
+                UDim2.new(
+                    1,
+                    -8,
+                    0,
+                    34
+                ),
+                emptyText,
+                9,
+                Enum.TextXAlignment.Left,
+                Color3.fromRGB(
+                    148,
+                    163,
+                    184
+                )
+            )
+
+        empty.AutomaticSize =
+            Enum.AutomaticSize.Y
+
+        empty.TextWrapped =
+            true
+
+        return true
+    end
+
+    for index,
+        group in ipairs(
+            groups
+        ) do
+
+        local row =
+            Instance.new(
+                "Frame"
+            )
+
+        row.Name =
+            "PetRow"
+            .. tostring(
+                index
+            )
+
+        row.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        row.BackgroundTransparency =
+            index % 2 == 0
+            and 0.36
+            or 0.26
+
+        row.BorderSizePixel =
+            0
+
+        row.LayoutOrder =
+            index
+
+        row.Size =
+            UDim2.new(
+                1,
+                -3,
+                0,
+                58
+            )
+
+        row.Parent =
+            column.Scroll
+
+        HolyBoughtPetCleanupRegisterTheme(
+            row,
+            {
+                BackgroundColor3 =
+                    "MainColor",
+            }
+        )
+
+        local corner =
+            Instance.new(
+                "UICorner"
+            )
+
+        corner.CornerRadius =
+            UDim.new(
+                0,
+                4
+            )
+
+        corner.Parent =
+            row
+
+        local tool =
+            type(group.Record) == "table"
+            and HolyBoughtPetCleanupFindTool(
+                group.Record.PetId
+            )
+            or nil
+
+        local icon =
+            HolyBoughtPetCleanupCreateIconSlot(
+                row,
+                UDim2.fromOffset(
+                    4,
+                    12
+                ),
+                UDim2.fromOffset(
+                    32,
+                    32
+                )
+            )
+
+        HolyBoughtPetCleanupUpdateIconSlot(
+            icon,
+            HolyBoughtPetCleanupResolveIcon(
+                group.Pet,
+                group.PetKey,
+                tool
+            )
+        )
+
+        HolyBoughtPetCleanupCreateText(
+            row,
+            "Name",
+            UDim2.fromOffset(
+                41,
+                3
+            ),
+            UDim2.new(
+                1,
+                -67,
+                0,
+                18
+            ),
+            tostring(
+                group.Pet
+            ),
+            9,
+            Enum.TextXAlignment.Left
+        )
+
+        HolyBoughtPetCleanupCreateText(
+            row,
+            "Count",
+            UDim2.new(
+                1,
+                -27,
+                0,
+                3
+            ),
+            UDim2.fromOffset(
+                23,
+                18
+            ),
+            "×"
+            .. tostring(
+                group.Count
+            ),
+            9,
+            Enum.TextXAlignment.Right
+        )
+
+        HolyBoughtPetCleanupCreateText(
+            row,
+            "Details",
+            UDim2.fromOffset(
+                41,
+                20
+            ),
+            UDim2.new(
+                1,
+                -45,
+                0,
+                16
+            ),
+            tostring(
+                group.Size
+            )
+            .. " · "
+            .. tostring(
+                group.Variant
+            ),
+            8,
+            Enum.TextXAlignment.Left,
+            Color3.fromRGB(
+                148,
+                163,
+                184
+            )
+        )
+
+        HolyBoughtPetCleanupCreateText(
+            row,
+            "Reason",
+            UDim2.fromOffset(
+                41,
+                36
+            ),
+            UDim2.new(
+                1,
+                -45,
+                0,
+                16
+            ),
+            tostring(
+                group.Reason
+                or ""
+            ),
+            8,
+            Enum.TextXAlignment.Left,
+            group.Classification == "Drop"
+            and Color3.fromRGB(
+                74,
+                222,
+                128
+            )
+            or group.Classification == "Waiting"
+                and Color3.fromRGB(
+                    250,
+                    204,
+                    21
+                )
+                or Color3.fromRGB(
+                    96,
+                    165,
+                    250
+                )
+        )
+    end
+
+    return true
+end
+
+function HolyBoughtPetCleanupRefreshPreview(force)
 
     local state,
         runtime =
@@ -182449,12 +184770,15 @@ function HolyBoughtPetCleanupRefreshPreview()
     end
 
     local dropGroups = {}
-    local protectedGroups = {}
+    local keptGroups = {}
 
     local dropTotal =
         0
 
     local protectedTotal =
+        0
+
+    local waitingTotal =
         0
 
     for _,
@@ -182471,7 +184795,8 @@ function HolyBoughtPetCleanupRefreshPreview()
                 )
 
             if classification == "Drop"
-            or classification == "Protected" then
+            or classification == "Protected"
+            or classification == "Waiting" then
 
                 local petName =
                     tostring(
@@ -182489,32 +184814,26 @@ function HolyBoughtPetCleanupRefreshPreview()
                         record.Variant
                     )
 
-                local groupKey =
-                    petName:lower()
-                    .. "|"
-                    .. sizeName:lower()
-                    .. "|"
-                    .. variantName:lower()
-                    .. (
-                        classification == "Protected"
-                        and (
-                            "|"
-                            .. tostring(
-                                reason
-                            ):lower()
-                        )
-                        or ""
-                    )
+                local key =
+                    table.concat({
+                        petName:lower(),
+                        sizeName:lower(),
+                        variantName:lower(),
+                        tostring(
+                            classification
+                        ):lower(),
+                        tostring(
+                            reason
+                        ):lower(),
+                    }, "|")
 
-                local targetGroups =
+                local target =
                     classification == "Drop"
                     and dropGroups
-                    or protectedGroups
+                    or keptGroups
 
                 local group =
-                    targetGroups[
-                        groupKey
-                    ]
+                    target[key]
 
                 if type(group) ~= "table" then
 
@@ -182522,11 +184841,17 @@ function HolyBoughtPetCleanupRefreshPreview()
                         Pet =
                             petName,
 
+                        PetKey =
+                            record.PetKey,
+
                         Size =
                             sizeName,
 
                         Variant =
                             variantName,
+
+                        Classification =
+                            classification,
 
                         Reason =
                             tostring(
@@ -182536,11 +184861,12 @@ function HolyBoughtPetCleanupRefreshPreview()
 
                         Count =
                             0,
+
+                        Record =
+                            record,
                     }
 
-                    targetGroups[
-                        groupKey
-                    ] =
+                    target[key] =
                         group
                 end
 
@@ -182552,6 +184878,11 @@ function HolyBoughtPetCleanupRefreshPreview()
                     dropTotal +=
                         1
 
+                elseif classification == "Waiting" then
+
+                    waitingTotal +=
+                        1
+
                 else
 
                     protectedTotal +=
@@ -182561,115 +184892,72 @@ function HolyBoughtPetCleanupRefreshPreview()
         end
     end
 
-    local dropKeys = {}
-    local protectedKeys = {}
-
-    for key in pairs(
-        dropGroups
-    ) do
-
-        table.insert(
-            dropKeys,
-            key
-        )
-    end
-
-    for key in pairs(
-        protectedGroups
-    ) do
-
-        table.insert(
-            protectedKeys,
-            key
-        )
-    end
-
-    table.sort(
-        dropKeys
-    )
-
-    table.sort(
-        protectedKeys
-    )
-
-    local dropLines = {}
-    local protectedLines = {}
+    local dropRows = {}
+    local keptRows = {}
 
     for _,
-        key in ipairs(
-            dropKeys
+        group in pairs(
+            dropGroups
         ) do
 
-        local group =
-            dropGroups[key]
-
         table.insert(
-            dropLines,
-            tostring(
-                group.Pet
-            )
-                .. " ×"
-                .. tostring(
-                    group.Count
-                )
-                .. "\n"
-                .. tostring(
-                    group.Size
-                )
-                .. " · "
-                .. tostring(
-                    group.Variant
-                )
+            dropRows,
+            group
         )
     end
 
     for _,
-        key in ipairs(
-            protectedKeys
+        group in pairs(
+            keptGroups
         ) do
 
-        local group =
-            protectedGroups[key]
-
         table.insert(
-            protectedLines,
-            tostring(
-                group.Pet
-            )
-                .. " ×"
-                .. tostring(
-                    group.Count
-                )
-                .. "\n"
-                .. tostring(
-                    group.Size
-                )
-                .. " · "
-                .. tostring(
-                    group.Variant
-                )
-                .. "\n"
-                .. tostring(
-                    group.Reason
-                )
+            keptRows,
+            group
         )
     end
 
-    preview.WillDrop.Text.Text =
-        #dropLines > 0
-        and table.concat(
-            dropLines,
-            "\n\n"
-        )
-        or "Nothing queued."
+    local sorter =
+        function(left, right)
 
-    preview.Protected.Text.Text =
-        #protectedLines > 0
-        and table.concat(
-            protectedLines,
-            "\n\n"
-        )
-        or "Nothing protected."
+            local leftKey =
+                tostring(
+                    left.Pet
+                ):lower()
+                .. "|"
+                .. tostring(
+                    left.Size
+                ):lower()
+                .. "|"
+                .. tostring(
+                    left.Variant
+                ):lower()
+
+            local rightKey =
+                tostring(
+                    right.Pet
+                ):lower()
+                .. "|"
+                .. tostring(
+                    right.Size
+                ):lower()
+                .. "|"
+                .. tostring(
+                    right.Variant
+                ):lower()
+
+            return leftKey < rightKey
+        end
+
+    table.sort(
+        dropRows,
+        sorter
+    )
+
+    table.sort(
+        keptRows,
+        sorter
+    )
 
     preview.Summary.Text =
         (
@@ -182681,98 +184969,101 @@ function HolyBoughtPetCleanupRefreshPreview()
         .. tostring(
             dropTotal
         )
-        .. " will drop · "
+        .. " drop · "
         .. tostring(
             protectedTotal
         )
-        .. " protected"
-
-    return true
-end
-
-function HolyBoughtPetCleanupRefreshFilterDropdown()
-
-    local state,
-        runtime =
-        HolyBoughtPetCleanupEnsure()
-
-    local dropdown =
-        HOLY_SNIPER_UI
-        and HOLY_SNIPER_UI.BoughtCleanupRulesDropdown
-        or nil
-
-    if type(dropdown) ~= "table" then
-        return false
-    end
-
-    local values = {}
-    local displayMap = {}
-
-    for index,
-        rule in ipairs(
-            state.BoughtCleanupRules
-        ) do
-
-        local display =
-            HolyBoughtPetCleanupRuleDisplay(
-                rule,
-                index
-            )
-
-        table.insert(
-            values,
-            display
+        .. " protected · "
+        .. tostring(
+            waitingTotal
+        )
+        .. " waiting"
+        .. (
+            runtime.BoughtCleanupSaveError ~= ""
+            and " · SAVE ERROR"
+            or ""
         )
 
-        displayMap[display] =
-            index
+    local signatureParts = {
+        tostring(
+            state.AutoDropBoughtPets
+        ),
+
+        tostring(
+            dropTotal
+        ),
+
+        tostring(
+            protectedTotal
+        ),
+
+        tostring(
+            waitingTotal
+        ),
+    }
+
+    for _,
+        group in ipairs(
+            dropRows
+        ) do
+
+        table.insert(
+            signatureParts,
+            table.concat({
+                group.Pet,
+                group.Size,
+                group.Variant,
+                group.Classification,
+                group.Reason,
+                group.Count,
+            }, "|")
+        )
     end
 
-    if #values <= 0 then
+    for _,
+        group in ipairs(
+            keptRows
+        ) do
 
-        values = {
-            "No saved drop filters",
-        }
+        table.insert(
+            signatureParts,
+            table.concat({
+                group.Pet,
+                group.Size,
+                group.Variant,
+                group.Classification,
+                group.Reason,
+                group.Count,
+            }, "|")
+        )
     end
 
-    runtime.BoughtCleanupRuleDisplayMap =
-        displayMap
+    local signature =
+        table.concat(
+            signatureParts,
+            "\n"
+        )
 
-    runtime.BoughtCleanupUpdatingUI =
-        true
+    if force ~= true
+    and runtime.BoughtCleanupPreviewSignature == signature then
 
-    pcall(function()
+        return true
+    end
 
-        if type(dropdown.SetValues) == "function" then
+    runtime.BoughtCleanupPreviewSignature =
+        signature
 
-            dropdown:SetValues(
-                values
-            )
-        end
+    HolyBoughtPetCleanupRenderPreviewColumn(
+        preview.WillDrop,
+        dropRows,
+        "No matching bought pets are ready to drop."
+    )
 
-        if type(dropdown.SetValue) == "function" then
-
-            local selectedIndex =
-                math.clamp(
-                    math.floor(
-                        tonumber(
-                            state.BoughtCleanupSelectedRuleIndex
-                        )
-                        or 1
-                    ),
-                    1,
-                    #values
-                )
-
-            dropdown:SetValue(
-                values[selectedIndex],
-                true
-            )
-        end
-    end)
-
-    runtime.BoughtCleanupUpdatingUI =
-        false
+    HolyBoughtPetCleanupRenderPreviewColumn(
+        preview.Protected,
+        keptRows,
+        "No bought pets are protected or waiting."
+    )
 
     return true
 end
@@ -182796,7 +185087,7 @@ function HolyBoughtPetCleanupBuildPreviewUI(groupbox)
                     surface,
 
                 Height =
-                    204,
+                    228,
 
                 Visible =
                     true,
@@ -182827,12 +185118,14 @@ function HolyBoughtPetCleanupBuildPreviewUI(groupbox)
             HolyBoughtPetCleanupRefreshPreview()
 
             task.wait(
-                0.75
+                0.85
             )
         end
     end)
 
-    HolyBoughtPetCleanupRefreshPreview()
+    HolyBoughtPetCleanupRefreshPreview(
+        true
+    )
 
     return true
 end
@@ -185348,13 +187641,13 @@ SniperBoughtCleanupBox:AddToggle(
     "HolySniperAutoDropBoughtPets",
     {
         Text =
-            "Auto Drop Before Hop",
+            "Auto Drop Bought Pets",
 
         Default =
             HOLY_SNIPER_STATE.AutoDropBoughtPets == true,
 
         Tooltip =
-            "Before Auto Hop, sequentially drops exact pets bought by this sniper in the current server when they match a saved drop filter.",
+            "Continuously drops exact PetIds bought by this sniper when idle. It also works with Auto Hop disabled and restores pending PetIds after rejoin.",
     }
 ):OnChanged(function(value)
 
@@ -185365,9 +187658,36 @@ SniperBoughtCleanupBox:AddToggle(
         "bought cleanup toggle changed"
     )
 
-    HolySaveSniperSettings()
+    local saved,
+        saveReason =
+        HolyBoughtPetCleanupPersistNow(
+            "Auto Drop setting"
+        )
 
-    HolyBoughtPetCleanupRefreshPreview()
+    if HOLY_SNIPER_STATE.AutoDropBoughtPets == true then
+
+        HolyBoughtPetCleanupStartWorker()
+
+    else
+
+        HolyBoughtPetCleanupStopWorker()
+    end
+
+    HolyBoughtPetCleanupRefreshPreview(
+        true
+    )
+
+    if saved ~= true then
+
+        HolyNotify(
+            "Bought Pet Cleanup",
+            "Auto Drop changed for this session, but could not be saved: "
+            .. tostring(
+                saveReason
+            ),
+            5
+        )
+    end
 end)
 
 SniperBoughtCleanupBox:AddToggle(
@@ -185403,9 +187723,25 @@ SniperBoughtCleanupBox:AddToggle(
         end
     end
 
-    HolySaveSniperSettings()
+    local saved,
+        saveReason =
+        HolyBoughtPetCleanupPersistNow(
+            "protection setting"
+        )
 
-    HolyBoughtPetCleanupRefreshPreview()
+    HolyBoughtPetCleanupRefreshAll()
+
+    if saved ~= true then
+
+        HolyNotify(
+            "Bought Pet Cleanup",
+            "Protection changed for this session, but could not be saved: "
+            .. tostring(
+                saveReason
+            ),
+            5
+        )
+    end
 end)
 
 SniperBoughtCleanupBox:AddDropdown(
@@ -185433,7 +187769,7 @@ SniperBoughtCleanupBox:AddDropdown(
             8,
 
         Tooltip =
-            "Pet bought by the sniper that this drop filter should match.",
+            "Choose which pet this persistent drop filter should match.",
     }
 ):OnChanged(function(value)
 
@@ -185449,9 +187785,17 @@ SniperBoughtCleanupBox:AddDropdown(
                 selected
             )
 
-        HolySaveSniperSettings()
+        HolyBoughtPetCleanupPersistNow(
+            "selected cleanup pet"
+        )
+
+        HolyBoughtPetCleanupRefreshBuilderPreview()
     end
 end)
+
+HolyBoughtPetCleanupBuildBuilderPreviewUI(
+    SniperBoughtCleanupBox
+)
 
 SniperBoughtCleanupBox:AddDropdown(
     "HolySniperBoughtCleanupSizes",
@@ -185477,7 +187821,7 @@ SniperBoughtCleanupBox:AddDropdown(
             4,
 
         Tooltip =
-            "Sizes eligible for this drop filter. Protection can still override the match.",
+            "Sizes eligible for this drop filter. Universal protection can still override the match.",
     }
 ):OnChanged(function(value)
 
@@ -185486,7 +187830,11 @@ SniperBoughtCleanupBox:AddDropdown(
             value
         )
 
-    HolySaveSniperSettings()
+    HolyBoughtPetCleanupPersistNow(
+        "cleanup size selection"
+    )
+
+    HolyBoughtPetCleanupRefreshBuilderPreview()
 end)
 
 SniperBoughtCleanupBox:AddDropdown(
@@ -185513,7 +187861,7 @@ SniperBoughtCleanupBox:AddDropdown(
             4,
 
         Tooltip =
-            "Variants eligible for this drop filter. Protection can still override the match.",
+            "Variants eligible for this drop filter. Universal protection can still override the match.",
     }
 ):OnChanged(function(value)
 
@@ -185522,7 +187870,11 @@ SniperBoughtCleanupBox:AddDropdown(
             value
         )
 
-    HolySaveSniperSettings()
+    HolyBoughtPetCleanupPersistNow(
+        "cleanup variant selection"
+    )
+
+    HolyBoughtPetCleanupRefreshBuilderPreview()
 end)
 
 SniperBoughtCleanupBox:AddButton({
@@ -185530,7 +187882,7 @@ SniperBoughtCleanupBox:AddButton({
         "Save Drop Filter",
 
     Tooltip =
-        "Adds this Pet, Size, and Variant combination to Bought Pet Cleanup.",
+        "Saves and verifies this Pet, Size, and Variant filter. It remains active after rejoin and re-execution.",
 
     Func =
         function()
@@ -185546,99 +187898,14 @@ SniperBoughtCleanupBox:AddButton({
                 ),
                 success == true
                 and 3
-                or 4
+                or 5
             )
         end,
 })
 
-HOLY_SNIPER_UI.BoughtCleanupRulesDropdown =
-    SniperBoughtCleanupBox:AddDropdown(
-        "HolySniperBoughtCleanupSavedFilters",
-        {
-            Text =
-                "Saved Drop Filters",
-
-            Values = {
-                "No saved drop filters",
-            },
-
-            Default =
-                1,
-
-            Multi =
-                false,
-
-            Searchable =
-                false,
-
-            MaxVisibleDropdownItems =
-                6,
-
-            Tooltip =
-                "Select a saved drop filter to remove it.",
-        }
-    )
-
-HOLY_SNIPER_UI.BoughtCleanupRulesDropdown:OnChanged(function(value)
-
-    local runtime =
-        HOLY_SNIPER_RUNTIME
-
-    if runtime.BoughtCleanupUpdatingUI == true then
-        return
-    end
-
-    local display =
-        HolyBoughtPetCleanupReadSingleValue(
-            value
-        )
-
-    local index =
-        type(
-            runtime.BoughtCleanupRuleDisplayMap
-        ) == "table"
-        and runtime.BoughtCleanupRuleDisplayMap[
-            display
-        ]
-        or nil
-
-    HOLY_SNIPER_STATE.BoughtCleanupSelectedRuleIndex =
-        tonumber(
-            index
-        )
-end)
-
-SniperBoughtCleanupBox:AddButton({
-    Text =
-        "Remove Selected Filter",
-
-    Risky =
-        true,
-
-    DoubleClick =
-        true,
-
-    Tooltip =
-        "Double click to remove the selected bought-pet drop filter.",
-
-    Func =
-        function()
-
-            local success,
-                reason =
-                HolyBoughtPetCleanupRemoveSelectedRule()
-
-            HolyNotify(
-                "Bought Pet Cleanup",
-                tostring(
-                    reason
-                ),
-                success == true
-                and 3
-                or 4
-            )
-        end,
-})
+HolyBoughtPetCleanupBuildSavedFiltersUI(
+    SniperBoughtCleanupBox
+)
 
 HolyBoughtPetCleanupBuildPreviewUI(
     SniperBoughtCleanupBox
@@ -185646,9 +187913,42 @@ HolyBoughtPetCleanupBuildPreviewUI(
 
 task.defer(function()
 
-    HolyBoughtPetCleanupRefreshFilterDropdown()
+    HolyBoughtPetCleanupRefreshAll()
 
-    HolyBoughtPetCleanupRefreshPreview()
+    if HOLY_SNIPER_STATE.AutoDropBoughtPets == true then
+
+        HolyBoughtPetCleanupStartWorker()
+    end
+
+    local runtime =
+        HOLY_SNIPER_RUNTIME
+
+    if HolyCleanText(
+        runtime.BoughtCleanupLoadError
+        or ""
+    ) ~= "" then
+
+        HolyNotify(
+            "Bought Pet Cleanup",
+            "Settings load failed: "
+            .. tostring(
+                runtime.BoughtCleanupLoadError
+            ),
+            6
+        )
+
+    elseif runtime.BoughtCleanupLoadedFromFile == true
+    and HolyCleanText(
+        runtime.BoughtCleanupLoadMessage
+        or ""
+    ) ~= "" then
+
+        HolyNotify(
+            "Bought Pet Cleanup",
+            runtime.BoughtCleanupLoadMessage,
+            4
+        )
+    end
 end)
 
 HOLY_SNIPER_UI.DefenseToggle =
