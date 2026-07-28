@@ -50405,44 +50405,80 @@ function HolyPetSellStart(automatic)
 
         if failureReason ~= nil then
 
-            local autoWasEnabled =
+            local autoIsEnabled =
                 HOLY_SHOP_STATE.AutoSellPets == true
 
-            if autoWasEnabled == true then
+            if autoIsEnabled == true then
 
-                HolyPetSellDisableAuto(
-                    failureReason
+                HolyPetSellSetStatus(
+                    "Watching · last attempt failed: "
+                        .. tostring(
+                            failureReason
+                        )
+                        .. " · sold "
+                        .. tostring(
+                            soldTotal
+                        )
+                )
+
+                local retryGeneration =
+                    runtime.AutoGeneration
+
+                task.delay(
+                    3,
+                    function()
+
+                        if HOLY_PET_SELL_RUNTIME
+                            ~= runtime
+                        or HOLY_SHOP_STATE.AutoSellPets
+                            ~= true
+                        or runtime.AutoGeneration
+                            ~= retryGeneration
+                        then
+                            return
+                        end
+
+                        HolyPetSellQueueAutoRun(
+                            "retry after failed sell",
+                            true
+                        )
+                    end
+                )
+
+            else
+
+                HolyPetSellSetStatus(
+                    "Stopped: "
+                        .. tostring(
+                            failureReason
+                        )
+                        .. " · sold "
+                        .. tostring(
+                            soldTotal
+                        )
                 )
             end
 
-            HolyPetSellSetStatus(
-                "Stopped: "
-                    .. tostring(
+            if automatic ~= true then
+
+                HolyNotify(
+                    "HOLY Pet Seller",
+                    tostring(
                         failureReason
                     )
-                    .. " · sold "
-                    .. tostring(
-                        soldTotal
-                    )
-            )
-
-            HolyNotify(
-                "HOLY Pet Seller",
-                tostring(
-                    failureReason
+                        .. " Sold "
+                        .. tostring(
+                            soldTotal
+                        )
+                        .. " pet(s)."
+                        .. (
+                            autoIsEnabled == true
+                            and " Auto Sell is still on."
+                            or ""
+                        ),
+                    6
                 )
-                    .. " Sold "
-                    .. tostring(
-                        soldTotal
-                    )
-                    .. " pet(s) before stopping."
-                    .. (
-                        autoWasEnabled == true
-                        and " Auto Sell is off."
-                        or ""
-                    ),
-                6
-            )
+            end
 
         elseif retryWhenStable == true
         and HOLY_SHOP_STATE.AutoSellPets == true then
@@ -125110,29 +125146,28 @@ function HolyMailClaimInbox(manual)
         HOLY_MAIL_RUNTIME.InboxLastError =
             cleanMessage
 
-        HOLY_MAIL_RUNTIME.InboxStatus =
-            "Stopped: "
-            .. cleanMessage
-
         if HOLY_MAIL_STATE.AutoClaim == true then
-            HOLY_MAIL_STATE.AutoClaim =
-                false
 
-            HolyMailStopInboxWorker()
+            HOLY_MAIL_RUNTIME.InboxStatus =
+                "Watching · last check failed: "
+                .. cleanMessage
 
-            HolyMailSyncInboxToggle(
-                false
-            )
+        else
 
-            HolyMailSaveSettings()
+            HOLY_MAIL_RUNTIME.InboxStatus =
+                "Claim failed: "
+                .. cleanMessage
         end
 
-        HolyNotify(
-            "HOLY Mail",
-            "Auto Claim stopped: "
-                .. cleanMessage,
-            5
-        )
+        if manual == true then
+
+            HolyNotify(
+                "HOLY Mail",
+                "Mail claim failed: "
+                    .. cleanMessage,
+                5
+            )
+        end
     end
 
     HolyMailRefreshControlUI()
