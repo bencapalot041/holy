@@ -102,7 +102,7 @@ local env =
     or _G
 
 local VERSION =
-    "HOLY_EARLY_PERFORMANCE_V1"
+    "HOLY_EARLY_PERFORMANCE_V2"
 
 local SETTINGS_FILE =
     "HolyGAG2/HolyDevUISettings.json"
@@ -112,7 +112,6 @@ local PROFILE_KEYS = {
     "PerformanceMode",
     "UnloadOwnGarden",
     "HideMiddle",
-    "DeleteBackpack",
 }
 
 local function readProfile()
@@ -189,7 +188,7 @@ local function readProfile()
                 end
 
                 profile.DeleteBackpack =
-                    data.DeleteBackpack == true
+                    false
             end
         end
     end
@@ -451,6 +450,26 @@ local function simplifyInstance(instance)
             or runtime.Profile.PerformanceMode ~= true
             or typeof(instance) ~= "Instance"
             or instance.Parent == nil then
+
+                return false
+            end
+
+            local character =
+                player.Character
+
+            if instance:IsA("Tool")
+            or instance:FindFirstAncestorWhichIsA(
+                "Tool"
+            )
+            or (
+                typeof(character) == "Instance"
+                and (
+                    instance == character
+                    or instance:IsDescendantOf(
+                        character
+                    )
+                )
+            ) then
 
                 return false
             end
@@ -792,49 +811,212 @@ local function watchMap(map)
     end
 end
 
-local function watchPlantContainer(plants)
-
-    if typeof(plants) ~= "Instance"
-    or runtime.WatchedPlantContainers[plants] then
-
-        return
-    end
-
-    runtime.WatchedPlantContainers[plants] =
-        true
-
-    addConnection(
-        plants.ChildAdded:Connect(function(child)
-
-            if runtime.Profile.PerformanceMode == true
-            and runtime.Profile.UnloadOwnGarden ~= true then
-
-                removeInstance(
-                    child,
-                    "OwnPlantModelsRemoved"
-                )
-            end
-        end)
-    )
-
-    if runtime.Profile.PerformanceMode == true
-    and runtime.Profile.UnloadOwnGarden ~= true then
-
-        for _, child in ipairs(plants:GetChildren()) do
-
-            removeInstance(
-                child,
-                "OwnPlantModelsRemoved"
-            )
-        end
-    end
-end
-
 local ownContainerNames = {
     Plants = true,
     Sprinklers = true,
     Props = true,
 }
+
+local function ownContainerShouldUnload(container)
+
+    if runtime.Active ~= true
+    or typeof(container) ~= "Instance"
+    or ownContainerNames[container.Name] ~= true then
+
+        return false
+    end
+
+    if runtime.Profile.UnloadOwnGarden == true then
+        return true
+    end
+
+    return runtime.Profile.PerformanceMode == true
+        and container.Name == "Plants"
+end
+
+local function ownRootIsProtected(instance)
+
+    if typeof(instance) ~= "Instance"
+    or instance.Parent == nil then
+
+        return true
+    end
+
+    if instance:IsA("Tool")
+    or instance:IsA("Backpack")
+    or instance:IsA("PlayerGui") then
+
+        return true
+    end
+
+    local character =
+        player.Character
+
+    if typeof(character) == "Instance"
+    and (
+        instance == character
+        or instance:IsDescendantOf(
+            character
+        )
+    ) then
+
+        return true
+    end
+
+    return false
+end
+
+local function startOwnCleanupWorker()
+
+    runtime.OwnCleanupQueue =
+        type(runtime.OwnCleanupQueue) == "table"
+        and runtime.OwnCleanupQueue
+        or {}
+
+    if runtime.OwnCleanupWorkerRunning == true then
+        return false
+    end
+
+    runtime.OwnCleanupWorkerRunning =
+        true
+
+    task.defer(function()
+
+        while runtime.Active == true do
+
+            local batch = {}
+
+            for instance in pairs(
+                runtime.OwnCleanupQueue
+            ) do
+
+                runtime.OwnCleanupQueue[
+                    instance
+                ] =
+                    nil
+
+                batch[
+                    #batch + 1
+                ] =
+                    instance
+
+                if #batch >= 64 then
+                    break
+                end
+            end
+
+            if #batch <= 0 then
+                break
+            end
+
+            for _, instance in ipairs(batch) do
+
+                if ownRootIsProtected(
+                    instance
+                ) ~= true then
+
+                    detachInstance(
+                        instance,
+                        "OwnWorldRootsRemoved"
+                    )
+                end
+            end
+
+            if next(
+                runtime.OwnCleanupQueue
+            ) ~= nil then
+
+                task.wait()
+            end
+        end
+
+        runtime.OwnCleanupWorkerRunning =
+            false
+
+        if runtime.Active == true
+        and next(
+            runtime.OwnCleanupQueue
+        ) ~= nil then
+
+            startOwnCleanupWorker()
+        end
+    end)
+
+    return true
+end
+
+local function queueOwnRoot(instance)
+
+    if ownRootIsProtected(
+        instance
+    ) == true then
+
+        return false
+    end
+
+    runtime.OwnCleanupQueue =
+        type(runtime.OwnCleanupQueue) == "table"
+        and runtime.OwnCleanupQueue
+        or {}
+
+    runtime.OwnCleanupQueue[
+        instance
+    ] =
+        true
+
+    startOwnCleanupWorker()
+
+    return true
+end
+
+local function watchPlantContainer(
+    container,
+    plot
+)
+
+    if ownContainerShouldUnload(
+        container
+    ) ~= true
+    or runtime.WatchedPlantContainers[
+        container
+    ] then
+
+        return
+    end
+
+    runtime.WatchedPlantContainers[
+        container
+    ] =
+        true
+
+    runtime.OwnContainersPreserved =
+        true
+
+    addConnection(
+        container.ChildAdded:Connect(function(child)
+
+            if runtime.Active == true
+            and isOwnPlot(plot) == true
+            and ownContainerShouldUnload(
+                container
+            ) == true then
+
+                queueOwnRoot(
+                    child
+                )
+            end
+        end)
+    )
+
+    for _, child in ipairs(
+        container:GetChildren()
+    ) do
+
+        queueOwnRoot(
+            child
+        )
+    end
+end
 
 local function processOwnPlot(plot)
 
@@ -844,33 +1026,26 @@ local function processOwnPlot(plot)
         return
     end
 
-    if runtime.Profile.UnloadOwnGarden == true then
-
-        for _, child in ipairs(plot:GetChildren()) do
-
-            if ownContainerNames[child.Name] == true then
-
-                detachInstance(
-                    child,
-                    "OwnContainersRemoved"
-                )
-            end
-        end
+    if runtime.Profile.UnloadOwnGarden ~= true
+    and runtime.Profile.PerformanceMode ~= true then
 
         return
     end
 
-    if runtime.Profile.PerformanceMode == true then
+    for _, child in ipairs(
+        plot:GetChildren()
+    ) do
 
-        local plants =
-            plot:FindFirstChild(
-                "Plants"
-            )
-
-        if plants then
+        if ownContainerNames[
+            child.Name
+        ] == true
+        and ownContainerShouldUnload(
+            child
+        ) == true then
 
             watchPlantContainer(
-                plants
+                child,
+                plot
             )
         end
     end
@@ -899,19 +1074,16 @@ local function watchPlot(plot)
                     return
                 end
 
-                if runtime.Profile.UnloadOwnGarden == true
-                and ownContainerNames[child.Name] == true then
-
-                    detachInstance(
-                        child,
-                        "OwnContainersRemoved"
-                    )
-
-                elseif runtime.Profile.PerformanceMode == true
-                and child.Name == "Plants" then
+                if ownContainerNames[
+                    child.Name
+                ] == true
+                and ownContainerShouldUnload(
+                    child
+                ) == true then
 
                     watchPlantContainer(
-                        child
+                        child,
+                        plot
                     )
                 end
             end)
@@ -1517,6 +1689,9 @@ runtime.ReadyAt =
             end
         end
 
+        profile.DeleteBackpack =
+            false
+
         return profile.PerformanceMode == true
             or profile.UnloadOwnGarden == true
             or profile.HideMiddle == true
@@ -1555,7 +1730,8 @@ runtime.ReadyAt =
         end
 
         if earlyEnv.HOLY_EARLY_PERFORMANCE_QUEUED_FROM_JOB
-            == game.JobId then
+            == tostring(game.JobId)
+                .. ":V2" then
 
             return true
         end
@@ -1576,7 +1752,8 @@ runtime.ReadyAt =
         if ok == true then
 
             earlyEnv.HOLY_EARLY_PERFORMANCE_QUEUED_FROM_JOB =
-                game.JobId
+                tostring(game.JobId)
+                    .. ":V2"
         end
 
         return ok
@@ -1686,61 +1863,101 @@ local env =
     or _G
 
 local VERSION =
-    "HOLY_FAST_LOADER_PRODUCTION_V1"
+    "HOLY_FAST_LOADER_PRODUCTION_V2"
 
 local SETTINGS_FILE =
     "HolyGAG2/HolyDevUISettings.json"
 
-local function readEnabled()
+local function readProfile()
 
-    if env.HOLY_FAST_LOADER_FORCE_ENABLED == true then
-        return true
-    end
+    local profile = {
+        UnloadOtherGardens = false,
+        UnloadOwnGarden = false,
+    }
 
-    if type(readfile) ~= "function"
-    or type(isfile) ~= "function" then
-        return false
-    end
+    if type(readfile) == "function"
+    and type(isfile) == "function" then
 
-    local exists =
-        false
+        local exists =
+            false
 
-    pcall(function()
-
-        exists =
-            isfile(
-                SETTINGS_FILE
-            )
-    end)
-
-    if exists ~= true then
-        return false
-    end
-
-    local ok,
-        data =
         pcall(function()
 
-            return HttpService:JSONDecode(
-                readfile(
+            exists =
+                isfile(
                     SETTINGS_FILE
                 )
-            )
         end)
 
-    if ok ~= true
-    or type(data) ~= "table" then
-        return false
+        if exists == true then
+
+            local ok,
+                data =
+                pcall(function()
+
+                    return HttpService:JSONDecode(
+                        readfile(
+                            SETTINGS_FILE
+                        )
+                    )
+                end)
+
+            if ok == true
+            and type(data) == "table" then
+
+                if type(data.UnloadOtherGardens)
+                    == "boolean" then
+
+                    profile.UnloadOtherGardens =
+                        data.UnloadOtherGardens
+
+                else
+
+                    profile.UnloadOtherGardens =
+                        data.DeleteOtherGardens == true
+                end
+
+                if type(data.UnloadOwnGarden)
+                    == "boolean" then
+
+                    profile.UnloadOwnGarden =
+                        data.UnloadOwnGarden
+
+                else
+
+                    profile.UnloadOwnGarden =
+                        data.DeleteOwnGarden == true
+                end
+            end
+        end
     end
 
-    if type(data.UnloadOtherGardens) == "boolean" then
-        return data.UnloadOtherGardens
+    if env.HOLY_FAST_LOADER_FORCE_ENABLED == true then
+
+        profile.UnloadOtherGardens =
+            true
     end
 
-    return data.DeleteOtherGardens == true
+    local forced =
+        env.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE
+
+    if type(forced) == "table"
+    and type(forced.UnloadOwnGarden)
+        == "boolean" then
+
+        profile.UnloadOwnGarden =
+            forced.UnloadOwnGarden
+    end
+
+    return profile
 end
 
-if readEnabled() ~= true then
+local profile =
+    readProfile()
+
+if profile.UnloadOtherGardens ~= true
+and profile.UnloadOwnGarden ~= true then
+
     return
 end
 
@@ -1760,14 +1977,30 @@ end
 local existing =
     env.HOLY_FAST_LOADER_RUNTIME
 
-if type(existing) == "table"
-and existing.JobId == game.JobId
-and existing.Version == VERSION then
+local sameProfile =
+    type(existing) == "table"
+    and existing.JobId == game.JobId
+    and existing.Version == VERSION
+    and type(existing.Profile) == "table"
+    and existing.Profile.UnloadOtherGardens
+        == profile.UnloadOtherGardens
+    and existing.Profile.UnloadOwnGarden
+        == profile.UnloadOwnGarden
+
+if sameProfile == true then
 
     existing.Active =
         true
 
     return
+end
+
+if type(existing) == "table"
+and type(existing.Stop) == "function" then
+
+    pcall(
+        existing.Stop
+    )
 end
 
 local runtime = {
@@ -1776,6 +2009,7 @@ local runtime = {
     PlaceId = game.PlaceId,
     Active = true,
     StartedAt = os.clock(),
+    Profile = profile,
     Connections = {},
     WatchedPetFolders = setmetatable({}, { __mode = "k" }),
     WatchedPetParts = setmetatable({}, { __mode = "k" }),
@@ -1837,6 +2071,13 @@ function runtime.Stop()
     table.clear(
         runtime.Connections
     )
+
+    if env.HOLY_FAST_LOADER_RUNTIME
+        == runtime then
+
+        env.HOLY_FAST_LOADER_RUNTIME =
+            nil
+    end
 
     return true
 end
@@ -1924,6 +2165,7 @@ end
 local function suppressPetPart(part)
 
     if runtime.Active ~= true
+    or runtime.Profile.UnloadOtherGardens ~= true
     or isPetPart(part) ~= true
     or runtime.WatchedPetParts[part] then
 
@@ -2000,6 +2242,7 @@ end
 local function installPetFilter(root)
 
     if runtime.Active ~= true
+    or runtime.Profile.UnloadOtherGardens ~= true
     or typeof(root) ~= "Instance" then
 
         return false
@@ -2064,6 +2307,7 @@ local contentContainers = {
 local function detachOtherRoot(child, container, plot)
 
     if runtime.Active ~= true
+    or runtime.Profile.UnloadOtherGardens ~= true
     or typeof(child) ~= "Instance"
     or child.Parent ~= container
     or isOtherPlot(plot) ~= true then
@@ -2093,6 +2337,7 @@ end
 local function watchContainer(container, plot)
 
     if runtime.Active ~= true
+    or runtime.Profile.UnloadOtherGardens ~= true
     or runtime.WatchedContainers[container]
     or contentContainers[container.Name] ~= true then
 
@@ -2210,6 +2455,7 @@ end
 local function installGardenFilter(gardens)
 
     if runtime.Active ~= true
+    or runtime.Profile.UnloadOtherGardens ~= true
     or typeof(gardens) ~= "Instance" then
 
         return false
@@ -2649,10 +2895,10 @@ do
                 )
             end
 
-            local localEntries =
+            local keptEntries =
                 {}
 
-            local localEntityTotal =
+            local keptEntityTotal =
                 0
 
             for _, entry in ipairs(
@@ -2661,18 +2907,23 @@ do
                 or {}
             ) do
 
-                if tonumber(entry.userId) == player.UserId then
+                local isLocal =
+                    tonumber(entry.userId)
+                        == player.UserId
 
-                    table.insert(
-                        localEntries,
-                        entry
+                local shouldSkip =
+                    (
+                        isLocal == true
+                        and runtime.Profile
+                            .UnloadOwnGarden == true
+                    )
+                    or (
+                        isLocal ~= true
+                        and runtime.Profile
+                            .UnloadOtherGardens == true
                     )
 
-                    localEntityTotal +=
-                        tonumber(entry.entityCount)
-                        or 0
-
-                else
+                if shouldSkip == true then
 
                     runtime.GardenEntriesSkipped +=
                         1
@@ -2680,13 +2931,24 @@ do
                     runtime.GardenEntitiesSkipped +=
                         tonumber(entry.entityCount)
                         or 0
+
+                else
+
+                    table.insert(
+                        keptEntries,
+                        entry
+                    )
+
+                    keptEntityTotal +=
+                        tonumber(entry.entityCount)
+                        or 0
                 end
             end
 
             return original(
                 self,
-                localEntries,
-                localEntityTotal
+                keptEntries,
+                keptEntityTotal
             )
         end
 
@@ -2710,8 +2972,26 @@ do
 
         module.SpawnPlantFromData = function(self, userId, ...)
 
-            if runtime.Active == true
-            and tonumber(userId) ~= player.UserId then
+            local isLocal =
+                tonumber(userId)
+                    == player.UserId
+
+            local shouldSkip =
+                runtime.Active == true
+                and (
+                    (
+                        isLocal == true
+                        and runtime.Profile
+                            .UnloadOwnGarden == true
+                    )
+                    or (
+                        isLocal ~= true
+                        and runtime.Profile
+                            .UnloadOtherGardens == true
+                    )
+                )
+
+            if shouldSkip == true then
 
                 runtime.DirectPlantSpawnsSkipped +=
                     1
@@ -2783,51 +3063,89 @@ runtime.FinishedAt =
 
     local function readEnabled()
 
-        if env.HOLY_FAST_LOADER_FORCE_ENABLED == true then
-            return true
-        end
+        local unloadOther =
+            env.HOLY_FAST_LOADER_FORCE_ENABLED
+                == true
 
-        if type(readfile) ~= "function"
-        or type(isfile) ~= "function" then
-            return false
-        end
-
-        local exists =
+        local unloadOwn =
             false
 
-        pcall(function()
+        if type(readfile) == "function"
+        and type(isfile) == "function" then
 
-            exists =
-                isfile(
-                    settingsFile
-                )
-        end)
+            local exists =
+                false
 
-        if exists ~= true then
-            return false
-        end
-
-        local ok,
-            data =
             pcall(function()
 
-                return HttpService:JSONDecode(
-                    readfile(
+                exists =
+                    isfile(
                         settingsFile
                     )
-                )
             end)
 
-        if ok ~= true
-        or type(data) ~= "table" then
-            return false
+            if exists == true then
+
+                local ok,
+                    data =
+                    pcall(function()
+
+                        return HttpService:JSONDecode(
+                            readfile(
+                                settingsFile
+                            )
+                        )
+                    end)
+
+                if ok == true
+                and type(data) == "table" then
+
+                    if type(data.UnloadOtherGardens)
+                        == "boolean" then
+
+                        unloadOther =
+                            data.UnloadOtherGardens
+
+                    else
+
+                        unloadOther =
+                            data.DeleteOtherGardens == true
+                    end
+
+                    if type(data.UnloadOwnGarden)
+                        == "boolean" then
+
+                        unloadOwn =
+                            data.UnloadOwnGarden
+
+                    else
+
+                        unloadOwn =
+                            data.DeleteOwnGarden == true
+                    end
+                end
+            end
         end
 
-        if type(data.UnloadOtherGardens) == "boolean" then
-            return data.UnloadOtherGardens
+        if env.HOLY_FAST_LOADER_FORCE_ENABLED == true then
+
+            unloadOther =
+                true
         end
 
-        return data.DeleteOtherGardens == true
+        local forced =
+            env.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE
+
+        if type(forced) == "table"
+        and type(forced.UnloadOwnGarden)
+            == "boolean" then
+
+            unloadOwn =
+                forced.UnloadOwnGarden
+        end
+
+        return unloadOther == true
+            or unloadOwn == true
     end
 
     local function findQueueFunction()
@@ -2861,7 +3179,10 @@ runtime.FinishedAt =
             return false
         end
 
-        if env.HOLY_FAST_LOADER_QUEUED_FROM_JOB == game.JobId then
+        if env.HOLY_FAST_LOADER_QUEUED_FROM_JOB
+            == tostring(game.JobId)
+                .. ":V2" then
+
             return true
         end
 
@@ -2881,7 +3202,8 @@ runtime.FinishedAt =
         if ok == true then
 
             env.HOLY_FAST_LOADER_QUEUED_FROM_JOB =
-                game.JobId
+                tostring(game.JobId)
+                    .. ":V2"
         end
 
         return ok
@@ -2891,18 +3213,6 @@ runtime.FinishedAt =
 
         if readEnabled() ~= true then
             return false
-        end
-
-        local existing =
-            env.HOLY_FAST_LOADER_RUNTIME
-
-        if type(existing) == "table"
-        and existing.JobId == game.JobId then
-
-            existing.Active =
-                true
-
-            return true
         end
 
         local compiler =
@@ -10651,7 +10961,7 @@ function HolySaveUISettings()
             HOLY_DEV_UI_STATE.HideMiddle == true,
 
         DeleteBackpack =
-            HOLY_DEV_UI_STATE.DeleteBackpack == true,
+            false,
     }
 
     local encodeOk,
@@ -11010,11 +11320,8 @@ function HolyLoadUISettings()
             data.UnloadMiddle
     end
 
-    if type(data.DeleteBackpack) == "boolean" then
-
-        HOLY_DEV_UI_STATE.DeleteBackpack =
-            data.DeleteBackpack
-    end
+    HOLY_DEV_UI_STATE.DeleteBackpack =
+        false
 
     return true
 end
@@ -98295,32 +98602,22 @@ end
 function HolyPerformanceStartDeleteBackpack(reason)
 
     HOLY_DEV_UI_STATE.DeleteBackpack =
-        true
+        false
+
+    HolyPerformanceSetEarlyFeature(
+        "DeleteBackpack",
+        false
+    )
+
+    HolyPerformanceDisconnectBackpackWatcher()
+
+    HolyPerformanceSetStatus(
+        "Backpack deletion was removed to protect tools and inventory controllers."
+    )
 
     HolySaveUISettings()
 
-    if HolyPerformanceSetEarlyFeature(
-        "DeleteBackpack",
-        true
-    ) == true then
-
-        HolyPerformanceDisconnectBackpackWatcher()
-
-        HolyPerformanceSetStatus(
-            "Backpack deletion is active from the early bootstrap."
-        )
-
-        return true
-    end
-
-    HolyPerformanceConnectBackpackWatcher()
-
-    HolyPerformanceDeleteBackpackOnce(
-        reason
-        or "performance"
-    )
-
-    return true
+    return false
 end
 
 function HolyPerformanceStopDeleteBackpack(reason)
@@ -98728,6 +99025,27 @@ function HolyPerformanceModeSimplifyInstance(instance)
 
             if typeof(instance) ~= "Instance"
             or instance.Parent == nil then
+
+                return false
+            end
+
+            local character =
+                LocalPlayer
+                and LocalPlayer.Character
+
+            if instance:IsA("Tool")
+            or instance:FindFirstAncestorWhichIsA(
+                "Tool"
+            )
+            or (
+                typeof(character) == "Instance"
+                and (
+                    instance == character
+                    or instance:IsDescendantOf(
+                        character
+                    )
+                )
+            ) then
 
                 return false
             end
@@ -118311,8 +118629,26 @@ function HolyDevStartErrorMonitor()
                 row.LastAt =
                     os.time()
 
-                if type(HolyDevTrace)
-                == "function" then
+                local now =
+                    os.clock()
+
+                local shouldTrace =
+                    row.Count == 1
+                    or now
+                        - (
+                            tonumber(
+                                row.LastTraceClock
+                            )
+                            or 0
+                        )
+                        >= 2
+
+                if shouldTrace == true
+                and type(HolyDevTrace)
+                    == "function" then
+
+                    row.LastTraceClock =
+                        now
 
                     pcall(
                         HolyDevTrace,
@@ -118329,12 +118665,31 @@ function HolyDevStartErrorMonitor()
                                 HolyDevSafeValue(
                                     source
                                 ),
+
+                            Count =
+                                row.Count,
                         },
                         "Error"
                     )
                 end
 
-                HolyDevRefreshErrorStatus()
+                if runtime.ErrorStatusRefreshQueued
+                    ~= true then
+
+                    runtime.ErrorStatusRefreshQueued =
+                        true
+
+                    task.delay(
+                        0.50,
+                        function()
+
+                            runtime.ErrorStatusRefreshQueued =
+                                false
+
+                            HolyDevRefreshErrorStatus()
+                        end
+                    )
+                end
             end)
         end)
 
@@ -187745,13 +188100,17 @@ function HolyFruitAutomationTryDropInfo(info)
 end
 
 function HolyFruitAutomationDropAllowed()
-    HolyFruitAutomationEnsureState()
+
+    local state =
+        type(HOLY_FRUIT_AUTOMATION_STATE)
+            == "table"
+        and HOLY_FRUIT_AUTOMATION_STATE
+        or {}
 
     local runtime =
         HolyFruitAutomationEnsureRuntime()
 
-    return HOLY_FRUIT_AUTOMATION_STATE
-        .AutoDropFruits == true
+    return state.AutoDropFruits == true
         or runtime.DropManualRequested == true
         or runtime.DropManualActive == true
 end
@@ -188042,7 +188401,7 @@ function HolyFruitAutomationRunDropWorker(token)
                 )
 
                 task.wait(
-                    0.12
+                    0.35
                 )
 
                 continue
@@ -188249,67 +188608,147 @@ function HolyFruitAutomationStartDrop(reason)
     return true
 end
 
+function HolyFruitAutomationScheduleCleanupRetry()
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    if runtime.CleanupRetryScheduled == true
+    or runtime.CleanupQueued ~= true then
+        return false
+    end
+
+    runtime.CleanupRetryScheduled =
+        true
+
+    runtime.CleanupRetryDelay =
+        math.min(
+            math.max(
+                tonumber(
+                    runtime.CleanupRetryDelay
+                )
+                or 0.35,
+                0.35
+            )
+            * 1.6,
+            2
+        )
+
+    local retryDelay =
+        runtime.CleanupRetryDelay
+
+    local generation =
+        tonumber(
+            runtime.CleanupRetryGeneration
+        )
+        or 0
+
+    task.delay(
+        retryDelay,
+        function()
+
+            if (
+                tonumber(
+                    runtime.CleanupRetryGeneration
+                )
+                or 0
+            ) ~= generation then
+
+                return
+            end
+
+            runtime.CleanupRetryScheduled =
+                false
+
+            if runtime.CleanupQueued == true
+            and HolyFruitAutomationDropAllowed()
+                == true then
+
+                HolyFruitAutomationStartCleanupManager()
+            end
+        end
+    )
+
+    return true
+end
+
 function HolyFruitAutomationStartCleanupManager()
     local runtime =
         HolyFruitAutomationEnsureRuntime()
 
-    if runtime.CleanupManagerRunning == true then
+    if runtime.CleanupManagerRunning == true
+    or runtime.CleanupQueued ~= true then
+
         return false
     end
 
     runtime.CleanupManagerRunning =
         true
 
-    task.spawn(function()
-        while runtime.CleanupQueued == true do
-            if HolyFruitAutomationDropAllowed() ~= true then
-                break
-            end
+    task.defer(function()
 
-            if runtime.DropRunning == true then
-                task.wait(
-                    0.12
-                )
+        if runtime.CleanupQueued ~= true
+        or HolyFruitAutomationDropAllowed()
+            ~= true then
 
-                continue
-            end
-
-            local blockReason =
-                HolyFruitAutomationDropBlockReason()
-
-            if blockReason ~= nil then
-                HolyFruitAutomationSetDropBlockedStatus(
-                    blockReason
-                )
-
-                task.wait(
-                    0.12
-                )
-
-                continue
-            end
-
-            runtime.CleanupQueued =
+            runtime.CleanupManagerRunning =
                 false
 
+            return
+        end
+
+        if runtime.DropRunning == true then
+
+            runtime.CleanupManagerRunning =
+                false
+
+            HolyFruitAutomationScheduleCleanupRetry()
+
+            return
+        end
+
+        local blockReason =
+            HolyFruitAutomationDropBlockReason()
+
+        if blockReason ~= nil then
+
+            HolyFruitAutomationSetDropBlockedStatus(
+                blockReason
+            )
+
+            runtime.CleanupManagerRunning =
+                false
+
+            HolyFruitAutomationScheduleCleanupRetry()
+
+            return
+        end
+
+        runtime.CleanupQueued =
+            false
+
+        runtime.CleanupRetryDelay =
+            0.35
+
+        runtime.LastDropBlockReason =
+            nil
+
+        runtime.CleanupManagerRunning =
+            false
+
+        local started =
             HolyFruitAutomationStartDrop(
                 runtime.CleanupReason
                 or "queued cleanup"
             )
 
-            task.wait(
-                0.05
-            )
-        end
+        if started ~= true
+        and HolyFruitAutomationDropAllowed()
+            == true then
 
-        runtime.CleanupManagerRunning =
-            false
+            runtime.CleanupQueued =
+                true
 
-        if runtime.CleanupQueued == true
-        and HolyFruitAutomationDropAllowed() == true then
-            task.defer(function()
-                HolyFruitAutomationStartCleanupManager()
-            end)
+            HolyFruitAutomationScheduleCleanupRetry()
         end
     end)
 
@@ -188332,6 +188771,24 @@ function HolyFruitAutomationQueueCleanup(
         .AutoDropFruits ~= true then
         return false
     end
+
+    runtime.CleanupRetryGeneration =
+        (
+            tonumber(
+                runtime.CleanupRetryGeneration
+            )
+            or 0
+        )
+        + 1
+
+    runtime.CleanupRetryScheduled =
+        false
+
+    runtime.CleanupRetryDelay =
+        0.35
+
+    runtime.LastDropBlockReason =
+        nil
 
     runtime.CleanupQueued =
         true
@@ -197221,33 +197678,9 @@ SettingsPerformanceBox:AddToggle(
     end
 end)
 
-SettingsPerformanceBox:AddToggle(
-    "HolyDeleteBackpack",
-    {
-        Text =
-            "Auto Delete Backpack",
-
-        Default =
-            HOLY_DEV_UI_STATE.DeleteBackpack == true,
-
-        Tooltip =
-            "Destroys the local Backpack and automatically removes it again if recreated. Reduces memory, but disables seeds, tools, pets, sprinklers, Pet Inventory, and inventory-based automation. Turning this off does not restore the Backpack; disable it, then rejoin.",
-    }
-):OnChanged(function(value)
-
-    if value == true then
-
-        HolyPerformanceStartDeleteBackpack(
-            "toggle on"
-        )
-
-    else
-
-        HolyPerformanceStopDeleteBackpack(
-            "toggle off"
-        )
-    end
-end)
+SettingsPerformanceBox:AddLabel(
+    "Backpack protection is always active. HOLY will not delete Backpack, Tool, Character, PlayerGui, or CoreGui containers."
+)
 
 if HOLY_DEV_UI_STATE.PerformanceMode == true then
 
