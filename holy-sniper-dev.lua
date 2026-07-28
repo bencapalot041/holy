@@ -3926,6 +3926,7 @@ end
 
 HOLY_VISUAL_STATE = {
     FruitValueOverlay = false,
+    LiveFruitPrices = false,
     FruitTotalValue = false,
 
     GardenFruitESP = false,
@@ -3972,11 +3973,20 @@ HOLY_VISUAL_RUNTIME = {
     MutationMultipliers = nil,
     ValueCachesLoaded = false,
 
+    LiveFruitValueCache = {},
+    LiveFruitValuePending = {},
+    LiveFruitValueInFlight = 0,
+    LiveFruitValueGeneration = 0,
+    LiveFruitValueMaximumInFlight = 3,
+    LiveFruitValueCacheLifetime = 30,
+    LiveFruitValueFailureLifetime = 4,
+
     UpdateDelay = 0.75,
 }
 
 HOLY_VISUAL_UI = {
     FruitValueOverlayToggle = nil,
+    LiveFruitPricesToggle = nil,
     FruitTotalValueToggle = nil,
 
     GardenFruitESPToggle = nil,
@@ -12545,6 +12555,9 @@ function HolyVisualEnsureState()
     HOLY_VISUAL_STATE.FruitValueOverlay =
         HOLY_VISUAL_STATE.FruitValueOverlay == true
 
+    HOLY_VISUAL_STATE.LiveFruitPrices =
+        HOLY_VISUAL_STATE.LiveFruitPrices == true
+
     HOLY_VISUAL_STATE.FruitTotalValue =
         HOLY_VISUAL_STATE.FruitTotalValue == true
 
@@ -12663,6 +12676,9 @@ function HolySaveVisualSettings()
     local payload = {
         FruitValueOverlay =
             HOLY_VISUAL_STATE.FruitValueOverlay == true,
+
+        LiveFruitPrices =
+            HOLY_VISUAL_STATE.LiveFruitPrices == true,
 
         FruitTotalValue =
             HOLY_VISUAL_STATE.FruitTotalValue == true,
@@ -12814,6 +12830,9 @@ function HolyLoadVisualSettings()
 
     HOLY_VISUAL_STATE.FruitValueOverlay =
         data.FruitValueOverlay == true
+
+    HOLY_VISUAL_STATE.LiveFruitPrices =
+        data.LiveFruitPrices == true
 
     HOLY_VISUAL_STATE.FruitTotalValue =
         data.FruitTotalValue == true
@@ -89426,6 +89445,70 @@ function HolyVisualGetRuntime()
         and runtime.Labels
         or {}
 
+    runtime.LiveFruitValueCache =
+        type(runtime.LiveFruitValueCache) == "table"
+        and runtime.LiveFruitValueCache
+        or {}
+
+    runtime.LiveFruitValuePending =
+        type(runtime.LiveFruitValuePending) == "table"
+        and runtime.LiveFruitValuePending
+        or {}
+
+    runtime.LiveFruitValueInFlight =
+        math.max(
+            0,
+            math.floor(
+                tonumber(
+                    runtime.LiveFruitValueInFlight
+                )
+                or 0
+            )
+        )
+
+    runtime.LiveFruitValueGeneration =
+        math.max(
+            0,
+            math.floor(
+                tonumber(
+                    runtime.LiveFruitValueGeneration
+                )
+                or 0
+            )
+        )
+
+    runtime.LiveFruitValueMaximumInFlight =
+        math.clamp(
+            math.floor(
+                tonumber(
+                    runtime.LiveFruitValueMaximumInFlight
+                )
+                or 3
+            ),
+            1,
+            3
+        )
+
+    runtime.LiveFruitValueCacheLifetime =
+        math.clamp(
+            tonumber(
+                runtime.LiveFruitValueCacheLifetime
+            )
+            or 30,
+            5,
+            120
+        )
+
+    runtime.LiveFruitValueFailureLifetime =
+        math.clamp(
+            tonumber(
+                runtime.LiveFruitValueFailureLifetime
+            )
+            or 4,
+            1,
+            30
+        )
+
     runtime.GardenFruitLabels =
         type(runtime.GardenFruitLabels) == "table"
         and runtime.GardenFruitLabels
@@ -89789,6 +89872,379 @@ function HolyVisualFormatFruitValue(value)
         .. tostring(
             math.floor(value + 0.5)
         )
+end
+
+function HolyVisualGetLiveFruitId(tool)
+
+    if typeof(tool) ~= "Instance"
+    or tool:IsA("Tool") ~= true then
+
+        return ""
+    end
+
+    local attributes =
+        HolySellGetToolAttributes(
+            tool
+        )
+
+    return HolyCleanText(
+        tostring(
+            attributes.Id
+            or attributes.FruitId
+            or attributes.FruitID
+            or attributes.UUID
+            or attributes.Uuid
+            or ""
+        )
+    )
+end
+
+function HolyVisualQueueLiveFruitValue(row)
+
+    HolyVisualEnsureState()
+
+    if HOLY_VISUAL_STATE.FruitValueOverlay ~= true
+    or HOLY_VISUAL_STATE.LiveFruitPrices ~= true
+    or type(row) ~= "table" then
+
+        return false
+    end
+
+    local runtime =
+        HolyVisualGetRuntime()
+
+    local fruitId =
+        HolyCleanText(
+            tostring(
+                row.FruitId
+                or HolyVisualGetLiveFruitId(
+                    row.Tool
+                )
+                or ""
+            )
+        )
+
+    if fruitId == "" then
+        return false
+    end
+
+    row.FruitId =
+        fruitId
+
+    local cached =
+        runtime.LiveFruitValueCache[
+            fruitId
+        ]
+
+    local cacheAge =
+        type(cached) == "table"
+        and (
+            os.clock()
+            - (
+                tonumber(
+                    cached.QuotedAt
+                )
+                or 0
+            )
+        )
+        or math.huge
+
+    if type(cached) == "table"
+    and cached.Success == true
+    and cacheAge
+        < runtime.LiveFruitValueCacheLifetime
+    then
+        return false
+    end
+
+    if type(cached) == "table"
+    and cached.Success ~= true
+    and cacheAge
+        < runtime.LiveFruitValueFailureLifetime
+    then
+        return false
+    end
+
+    if runtime.LiveFruitValuePending[
+        fruitId
+    ] ~= nil
+    or runtime.LiveFruitValueInFlight
+        >= runtime.LiveFruitValueMaximumInFlight
+    then
+        return false
+    end
+
+    local packet =
+        HolySellResolvePacket(
+            "GetFruitBid"
+        )
+
+    if type(packet) ~= "table"
+    or type(packet.Fire) ~= "function" then
+
+        runtime.LiveFruitValueCache[
+            fruitId
+        ] = {
+            Success =
+                false,
+
+            Error =
+                "GetFruitBid unavailable",
+
+            QuotedAt =
+                os.clock(),
+        }
+
+        return false
+    end
+
+    local requestToken =
+        {}
+
+    local generation =
+        runtime.LiveFruitValueGeneration
+
+    runtime.LiveFruitValuePending[
+        fruitId
+    ] =
+        requestToken
+
+    runtime.LiveFruitValueInFlight =
+        runtime.LiveFruitValueInFlight
+        + 1
+
+    task.spawn(function()
+
+        local success,
+            response =
+            pcall(function()
+
+                return packet:Fire(
+                    fruitId
+                )
+            end)
+
+        local requestStillActive =
+            runtime.LiveFruitValuePending[
+                fruitId
+            ] == requestToken
+
+        if requestStillActive == true then
+
+            runtime.LiveFruitValuePending[
+                fruitId
+            ] =
+                nil
+
+            runtime.LiveFruitValueInFlight =
+                math.max(
+                    0,
+                    runtime.LiveFruitValueInFlight
+                    - 1
+                )
+        end
+
+        if requestStillActive ~= true
+        or runtime.LiveFruitValueGeneration
+            ~= generation
+        or HOLY_VISUAL_STATE.LiveFruitPrices
+            ~= true
+        then
+            return
+        end
+
+        local currentSellValue =
+            success == true
+            and type(response) == "table"
+            and tonumber(
+                response.CurrentSellValue
+            )
+            or nil
+
+        if currentSellValue ~= nil then
+
+            currentSellValue =
+                math.max(
+                    0,
+                    math.floor(
+                        currentSellValue
+                        + 0.5
+                    )
+                )
+
+            runtime.LiveFruitValueCache[
+                fruitId
+            ] = {
+                Success =
+                    true,
+
+                Value =
+                    currentSellValue,
+
+                Text =
+                    HolyVisualFormatFruitValue(
+                        currentSellValue
+                    ),
+
+                Response =
+                    response,
+
+                QuotedAt =
+                    os.clock(),
+            }
+
+        else
+
+            runtime.LiveFruitValueCache[
+                fruitId
+            ] = {
+                Success =
+                    false,
+
+                Error =
+                    success == true
+                    and "CurrentSellValue missing"
+                    or tostring(response),
+
+                Response =
+                    response,
+
+                QuotedAt =
+                    os.clock(),
+            }
+        end
+
+        task.defer(function()
+
+            if runtime.LiveFruitValueGeneration
+                == generation
+            and HOLY_VISUAL_STATE.FruitValueOverlay
+                == true
+            and HOLY_VISUAL_STATE.LiveFruitPrices
+                == true
+            then
+                pcall(
+                    HolyVisualRefreshFruitValueOverlay
+                )
+            end
+        end)
+    end)
+
+    return true
+end
+
+function HolyVisualReadLiveFruitValue(row)
+
+    HolyVisualEnsureState()
+
+    if HOLY_VISUAL_STATE.LiveFruitPrices ~= true
+    or type(row) ~= "table" then
+
+        return nil,
+            nil
+    end
+
+    local runtime =
+        HolyVisualGetRuntime()
+
+    local fruitId =
+        HolyCleanText(
+            tostring(
+                row.FruitId
+                or HolyVisualGetLiveFruitId(
+                    row.Tool
+                )
+                or ""
+            )
+        )
+
+    if fruitId == "" then
+        return nil,
+            nil
+    end
+
+    row.FruitId =
+        fruitId
+
+    local cached =
+        runtime.LiveFruitValueCache[
+            fruitId
+        ]
+
+    local cacheAge =
+        type(cached) == "table"
+        and (
+            os.clock()
+            - (
+                tonumber(
+                    cached.QuotedAt
+                )
+                or 0
+            )
+        )
+        or math.huge
+
+    if type(cached) == "table"
+    and cached.Success == true
+    and cacheAge
+        < runtime.LiveFruitValueCacheLifetime
+    then
+        return tonumber(
+            cached.Value
+        ),
+            tostring(
+                cached.Text
+                or HolyVisualFormatFruitValue(
+                    cached.Value
+                )
+            )
+    end
+
+    HolyVisualQueueLiveFruitValue(
+        row
+    )
+
+    return nil,
+        nil
+end
+
+function HolyVisualSetLiveFruitPrices(value)
+
+    HolyVisualEnsureState()
+
+    local enabled =
+        value == true
+
+    HOLY_VISUAL_STATE.LiveFruitPrices =
+        enabled
+
+    local runtime =
+        HolyVisualGetRuntime()
+
+    runtime.LiveFruitValueGeneration =
+        runtime.LiveFruitValueGeneration
+        + 1
+
+    runtime.LiveFruitValuePending =
+        {}
+
+    runtime.LiveFruitValueInFlight =
+        0
+
+    HolySaveVisualSettings()
+
+    if HOLY_VISUAL_STATE.FruitValueOverlay == true then
+
+        pcall(
+            HolyVisualRefreshFruitValueOverlay
+        )
+
+    else
+
+        HolyVisualClearAllFruitValueLabels()
+    end
+
+    return enabled
 end
 
 function HolyVisualCalculateFruitValue(tool, row)
@@ -91281,8 +91737,30 @@ function HolyVisualRefreshFruitValueOverlay()
 
                     if label then
 
+                        local displayText =
+                            tostring(
+                                row.ValueText
+                            )
+
+                        if HOLY_VISUAL_STATE.LiveFruitPrices
+                            == true
+                        then
+                            local _,
+                                liveValueText =
+                                HolyVisualReadLiveFruitValue(
+                                    row
+                                )
+
+                            if liveValueText ~= nil
+                            and liveValueText ~= ""
+                            then
+                                displayText =
+                                    liveValueText
+                            end
+                        end
+
                         label.Text =
-                            tostring(row.ValueText)
+                            displayText
 
                         label.Visible =
                             true
@@ -123844,11 +124322,65 @@ function HolyMailClampHudPosition(
         return false
     end
 
-    local absolutePosition =
-        window.AbsolutePosition
+    local visualScale =
+        1
+
+    local scaleObject =
+        window:FindFirstChildOfClass(
+            "UIScale"
+        )
+
+    if typeof(scaleObject) == "Instance" then
+
+        visualScale =
+            math.max(
+                0.01,
+                tonumber(
+                    scaleObject.Scale
+                )
+                or 1
+            )
+    end
 
     local absoluteSize =
-        window.AbsoluteSize
+        Vector2.new(
+            math.max(
+                1,
+                (
+                    viewport.X
+                    * window.Size.X.Scale
+                    + window.Size.X.Offset
+                )
+                * visualScale
+            ),
+            math.max(
+                1,
+                (
+                    viewport.Y
+                    * window.Size.Y.Scale
+                    + window.Size.Y.Offset
+                )
+                * visualScale
+            )
+        )
+
+    local anchorPoint =
+        window.AnchorPoint
+
+    local absolutePosition =
+        Vector2.new(
+            viewport.X
+            * window.Position.X.Scale
+            + window.Position.X.Offset
+            - absoluteSize.X
+            * anchorPoint.X,
+
+            viewport.Y
+            * window.Position.Y.Scale
+            + window.Position.Y.Offset
+            - absoluteSize.Y
+            * anchorPoint.Y
+        )
 
     local margin =
         12
@@ -123874,10 +124406,11 @@ function HolyMailClampHudPosition(
             )
     else
         targetLeft =
-            (
-                viewport.X
-                - absoluteSize.X
-            ) / 2
+            math.clamp(
+                absolutePosition.X,
+                maximumLeft,
+                margin
+            )
     end
 
     local targetTop
@@ -123891,10 +124424,11 @@ function HolyMailClampHudPosition(
             )
     else
         targetTop =
-            (
-                viewport.Y
-                - absoluteSize.Y
-            ) / 2
+            math.clamp(
+                absolutePosition.Y,
+                maximumTop,
+                margin
+            )
     end
 
     local deltaX =
@@ -134877,62 +135411,150 @@ function HolyMailCreateHud()
         local dragging =
             false
 
-        local startInput
-        local startPosition
+        local dragInput =
+            nil
 
-        header.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch
+        local startInput =
+            nil
+
+        local startPosition =
+            nil
+
+        local dragHandles = {
+            header,
+            logo,
+            title,
+            subtitle,
+            quotaFrame,
+            quotaText,
+            statusFrame,
+            statusDot,
+            statusText,
+        }
+
+        for _, dragHandle in ipairs(
+            dragHandles
+        ) do
+            if typeof(dragHandle) == "Instance"
+            and dragHandle:IsA("GuiObject")
             then
-                dragging =
+                dragHandle.Active =
                     true
 
-                startInput =
-                    input.Position
+                dragHandle.InputBegan:Connect(function(input)
 
-                startPosition =
-                    window.Position
+                    local inputType =
+                        input.UserInputType
+
+                    if inputType
+                        ~= Enum.UserInputType.MouseButton1
+                    and inputType
+                        ~= Enum.UserInputType.Touch
+                    then
+                        return
+                    end
+
+                    dragging =
+                        true
+
+                    dragInput =
+                        input
+
+                    startInput =
+                        input.Position
+
+                    startPosition =
+                        window.Position
+                end)
             end
-        end)
-
-        header.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch
-            then
-                dragging =
-                    false
-
-                HolyMailClampHudPosition(
-                    true
-                )
-            end
-        end)
+        end
 
         UserInputService.InputChanged:Connect(function(input)
-            if dragging
-                and (
-                    input.UserInputType == Enum.UserInputType.MouseMovement
-                    or input.UserInputType == Enum.UserInputType.Touch
-                )
+
+            if dragging ~= true
+            or startInput == nil
+            or startPosition == nil
             then
-                local delta =
-                    input.Position
-                    - startInput
-
-                window.Position =
-                    UDim2.new(
-                        startPosition.X.Scale,
-                        startPosition.X.Offset
-                            + delta.X,
-                        startPosition.Y.Scale,
-                        startPosition.Y.Offset
-                            + delta.Y
-                    )
-
-                HolyMailClampHudPosition(
-                    false
-                )
+                return
             end
+
+            local inputType =
+                input.UserInputType
+
+            if inputType
+                ~= Enum.UserInputType.MouseMovement
+            and inputType
+                ~= Enum.UserInputType.Touch
+            then
+                return
+            end
+
+            if dragInput
+            and dragInput.UserInputType
+                == Enum.UserInputType.Touch
+            and input ~= dragInput
+            then
+                return
+            end
+
+            local delta =
+                input.Position
+                - startInput
+
+            window.Position =
+                UDim2.new(
+                    startPosition.X.Scale,
+                    startPosition.X.Offset
+                        + delta.X,
+                    startPosition.Y.Scale,
+                    startPosition.Y.Offset
+                        + delta.Y
+                )
+
+            HolyMailClampHudPosition(
+                false
+            )
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+
+            if dragging ~= true then
+                return
+            end
+
+            local inputType =
+                input.UserInputType
+
+            local endedMouse =
+                inputType
+                == Enum.UserInputType.MouseButton1
+
+            local endedTouch =
+                inputType
+                == Enum.UserInputType.Touch
+                and input == dragInput
+
+            if endedMouse ~= true
+            and endedTouch ~= true
+            then
+                return
+            end
+
+            dragging =
+                false
+
+            dragInput =
+                nil
+
+            startInput =
+                nil
+
+            startPosition =
+                nil
+
+            HolyMailClampHudPosition(
+                true
+            )
         end)
     end
 
@@ -187986,6 +188608,32 @@ if type(VisualInventoryBox) == "table" then
         HOLY_VISUAL_UI.FruitValueOverlayToggle:OnChanged(function(value)
 
             HolyVisualSetFruitValueOverlay(
+                value == true
+            )
+        end)
+    end
+
+    HOLY_VISUAL_UI.LiveFruitPricesToggle =
+        VisualInventoryBox:AddToggle(
+            "HolyVisualLiveFruitPrices",
+            {
+                Text =
+                    "Use Live Prices",
+
+                Default =
+                    HOLY_VISUAL_STATE.LiveFruitPrices == true,
+
+                Tooltip =
+                    "Uses live fruit prices.",
+            }
+        )
+
+    if type(HOLY_VISUAL_UI.LiveFruitPricesToggle) == "table"
+    and type(HOLY_VISUAL_UI.LiveFruitPricesToggle.OnChanged) == "function" then
+
+        HOLY_VISUAL_UI.LiveFruitPricesToggle:OnChanged(function(value)
+
+            HolyVisualSetLiveFruitPrices(
                 value == true
             )
         end)
