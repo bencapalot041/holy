@@ -173143,6 +173143,15 @@ SniperFilterBox =
         "paw-print"
     )
 
+SniperWatchlistBox =
+    HolyAddRightGroupbox(
+        Tabs.Sniper,
+        "Sniper.Watchlist",
+        "Sniper Watchlist",
+        "list"
+    )
+
+
 SniperBoughtCleanupBox =
     HolyAddRightGroupbox(
         Tabs.Sniper,
