@@ -58756,6 +58756,15 @@ function HolySniperFireTame(entry)
             "target ref unavailable"
     end
 
+    if type(
+        HolyBoughtPetCleanupCaptureBeforePetIds
+    ) == "function" then
+
+        HolyBoughtPetCleanupCaptureBeforePetIds(
+            entry
+        )
+    end
+
     HOLY_SNIPER_RUNTIME.PendingTames[key] = {
         Entry =
             entry,
@@ -66264,6 +66273,984 @@ function HolyBoughtPetCleanupStartWorker()
     return true
 end
 
+--==================================================
+-- [2.44E] BOUGHT PET CLEANUP EXACT-ID RESOLVER
+--==================================================
+
+function HolyBoughtPetCleanupNormalizePetIdSet(value)
+
+    local output = {}
+
+    if type(value) ~= "table" then
+        return output
+    end
+
+    for key, rawValue in pairs(value) do
+
+        local petId = ""
+
+        if type(key) == "number" then
+
+            petId =
+                HolyCleanText(
+                    rawValue
+                )
+
+        elseif rawValue == true
+        or rawValue == 1
+        or rawValue == "true" then
+
+            petId =
+                HolyCleanText(
+                    key
+                )
+        end
+
+        if petId ~= "" then
+
+            output[
+                petId
+            ] =
+                true
+        end
+    end
+
+    return output
+end
+
+function HolyBoughtPetCleanupCaptureCurrentPetIds()
+
+    local output = {}
+
+    if type(
+        HolyPetSellScan
+    ) == "function" then
+
+        local scanOk,
+            snapshot =
+            pcall(
+                HolyPetSellScan
+            )
+
+        if scanOk == true
+        and type(snapshot) == "table" then
+
+            for _,
+                pet in ipairs(
+                    snapshot.Pets
+                    or {}
+                ) do
+
+                local petId =
+                    HolyCleanText(
+                        type(pet) == "table"
+                        and pet.PetId
+                        or ""
+                    )
+
+                if petId ~= "" then
+
+                    output[
+                        petId
+                    ] =
+                        true
+                end
+            end
+
+            return output
+        end
+    end
+
+    for _,
+        root in ipairs({
+            LocalPlayer:FindFirstChildOfClass(
+                "Backpack"
+            ),
+
+            LocalPlayer.Character,
+        }) do
+
+        if typeof(root) == "Instance" then
+
+            for _,
+                child in ipairs(
+                    root:GetChildren()
+                ) do
+
+                if child:IsA(
+                    "Tool"
+                ) then
+
+                    local petId =
+                        HolyBoughtPetCleanupGetToolPetId(
+                            child
+                        )
+
+                    if petId ~= "" then
+
+                        output[
+                            petId
+                        ] =
+                            true
+                    end
+                end
+            end
+        end
+    end
+
+    return output
+end
+
+function HolyBoughtPetCleanupCaptureBeforePetIds(entry)
+
+    if type(entry) ~= "table" then
+        return false
+    end
+
+    if entry.BoughtCleanupBeforePetIdsCaptured == true then
+        return true
+    end
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    local queueHasRecords =
+        false
+
+    for _ in pairs(
+        runtime.BoughtCleanupQueue
+    ) do
+
+        queueHasRecords =
+            true
+
+        break
+    end
+
+    if runtime.BoughtCleanupInventoryBaselineCaptured ~= true
+    or queueHasRecords ~= true then
+
+        runtime.BoughtCleanupInventoryBaseline =
+            HolyBoughtPetCleanupCaptureCurrentPetIds()
+
+        runtime.BoughtCleanupInventoryBaselineCaptured =
+            true
+    end
+
+    entry.BoughtCleanupBeforePetIdsCaptured =
+        true
+
+    return true
+end
+
+function HolyBoughtPetCleanupNormalizePendingRecord(value)
+
+    if type(value) ~= "table" then
+        return nil
+    end
+
+    local exactPetId =
+        HolyCleanText(
+            value.ExactPetId
+        )
+
+    if exactPetId == "" then
+
+        exactPetId =
+            HolyCleanText(
+                value.InventoryPetId
+                or value.PetId
+                or value.PetID
+                or ""
+            )
+    end
+
+    local sourcePetId =
+        HolyCleanText(
+            value.SourcePetId
+        )
+
+    if sourcePetId == "" then
+
+        sourcePetId =
+            HolyCleanText(
+                value.WildPetId
+                or value.WildPetUUID
+                or value.UUID
+                or ""
+            )
+    end
+
+    if sourcePetId == "" then
+
+        sourcePetId =
+            exactPetId
+    end
+
+    if sourcePetId == ""
+    and exactPetId == "" then
+
+        return nil
+    end
+
+    local currentOwner =
+        tostring(
+            LocalPlayer.UserId
+        )
+
+    local savedOwner =
+        HolyCleanText(
+            value.OwnerUserId
+            or ""
+        )
+
+    if savedOwner ~= ""
+    and savedOwner ~= currentOwner then
+
+        return nil
+    end
+
+    local petName =
+        HolySniperResolvePetDisplay(
+            value.Pet
+            or value.PetName
+            or "Pet"
+        )
+
+    local boughtAt =
+        tonumber(
+            value.BoughtAt
+        )
+        or 0
+
+    if boughtAt < 1000000000 then
+
+        boughtAt =
+            os.time()
+    end
+
+    return {
+        OwnerUserId =
+            currentOwner,
+
+        SourcePetId =
+            sourcePetId,
+
+        PetId =
+            exactPetId,
+
+        ExactPetId =
+            exactPetId,
+
+        Pet =
+            petName,
+
+        PetKey =
+            HolySniperResolvePetKey(
+                value.PetKey
+                or petName
+            ),
+
+        Size =
+            HolySniperNormalizeSizeName(
+                value.Size
+                or "Normal"
+            ),
+
+        Variant =
+            HolySniperNormalizeVariantName(
+                value.Variant
+                or "Normal"
+            ),
+
+        Icon =
+            HolyCleanText(
+                value.Icon
+                or ""
+            ):sub(
+                1,
+                240
+            ),
+
+        BoughtAt =
+            boughtAt,
+
+        Attempts =
+            0,
+
+        SkipThisServer =
+            false,
+
+        LastError =
+            "",
+    }
+end
+
+function HolyBoughtPetCleanupNormalizePendingQueue(value)
+
+    local output = {}
+
+    for _,
+        rawRecord in pairs(
+            type(value) == "table"
+            and value
+            or {}
+        ) do
+
+        local record =
+            HolyBoughtPetCleanupNormalizePendingRecord(
+                rawRecord
+            )
+
+        if type(record) == "table"
+        and HolyBoughtPetCleanupMatchesAnyRule(
+            record
+        ) == true then
+
+            local queueKey =
+                HolyCleanText(
+                    record.SourcePetId
+                    or record.PetId
+                )
+
+            if queueKey ~= "" then
+
+                output[
+                    queueKey
+                ] =
+                    record
+            end
+        end
+    end
+
+    return output
+end
+
+function HolyBoughtPetCleanupRemoveQueueRecord(record)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    local removed =
+        false
+
+    for queueKey,
+        queuedRecord in pairs(
+            runtime.BoughtCleanupQueue
+        ) do
+
+        if queuedRecord == record then
+
+            runtime.BoughtCleanupQueue[
+                queueKey
+            ] =
+                nil
+
+            removed =
+                true
+        end
+    end
+
+    local queueHasRecords =
+        false
+
+    for _ in pairs(
+        runtime.BoughtCleanupQueue
+    ) do
+
+        queueHasRecords =
+            true
+
+        break
+    end
+
+    if queueHasRecords ~= true then
+
+        runtime.BoughtCleanupInventoryBaseline =
+            {}
+
+        runtime.BoughtCleanupInventoryBaselineCaptured =
+            false
+    end
+
+    return removed
+end
+
+function HolyBoughtPetCleanupFindQueuedBySourcePetId(
+    sourcePetId
+)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    sourcePetId =
+        HolyCleanText(
+            sourcePetId
+        )
+
+    if sourcePetId == "" then
+        return nil
+    end
+
+    local direct =
+        runtime.BoughtCleanupQueue[
+            sourcePetId
+        ]
+
+    if type(direct) == "table" then
+        return direct
+    end
+
+    for _,
+        record in pairs(
+            runtime.BoughtCleanupQueue
+        ) do
+
+        if type(record) == "table"
+        and HolyCleanText(
+            record.SourcePetId
+        ) == sourcePetId then
+
+            return record
+        end
+    end
+
+    return nil
+end
+
+function HolyBoughtPetCleanupTrack(entry)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    local sourcePetId =
+        HolySniperEntryKey(
+            entry
+        )
+
+    if sourcePetId == "" then
+        return false
+    end
+
+    if entry.BoughtCleanupBeforePetIdsCaptured ~= true then
+
+        HolyBoughtPetCleanupCaptureBeforePetIds(
+            entry
+        )
+    end
+
+    local record =
+        HolyBoughtPetCleanupFindQueuedBySourcePetId(
+            sourcePetId
+        )
+
+    if type(record) ~= "table" then
+
+        record = {
+            OwnerUserId =
+                tostring(
+                    LocalPlayer.UserId
+                ),
+
+            SourcePetId =
+                sourcePetId,
+
+            PetId =
+                "",
+
+            ExactPetId =
+                "",
+
+            BoughtAt =
+                os.time(),
+
+            Attempts =
+                0,
+
+            SkipThisServer =
+                false,
+
+            LastError =
+                "",
+        }
+    end
+
+    record.OwnerUserId =
+        tostring(
+            LocalPlayer.UserId
+        )
+
+    record.SourcePetId =
+        sourcePetId
+
+    record.Pet =
+        HolySniperResolvePetDisplay(
+            entry.Pet
+            or entry.PetName
+            or record.Pet
+            or "Pet"
+        )
+
+    record.PetKey =
+        HolySniperResolvePetKey(
+            entry.PetKey
+            or entry.Pet
+            or record.Pet
+        )
+
+    record.Size =
+        HolySniperNormalizeSizeName(
+            entry.Size
+            or record.Size
+            or "Normal"
+        )
+
+    record.Variant =
+        HolySniperNormalizeVariantName(
+            entry.Variant
+            or record.Variant
+            or "Normal"
+        )
+
+    record.Entry =
+        entry
+
+    record.SkipThisServer =
+        false
+
+    record.LastError =
+        ""
+
+    if HolyBoughtPetCleanupMatchesAnyRule(
+        record
+    ) ~= true then
+
+        HolyBoughtPetCleanupRemoveQueueRecord(
+            record
+        )
+
+        runtime.BoughtCleanupQueue[
+            sourcePetId
+        ] =
+            nil
+
+        return false
+    end
+
+    runtime.BoughtCleanupQueue[
+        sourcePetId
+    ] =
+        record
+
+    HolyBoughtPetCleanupRequestPersist()
+
+    HolyBoughtPetCleanupRefreshAll()
+
+    return true
+end
+
+function HolyBoughtPetCleanupPetRecordMatches(
+    record,
+    pet
+)
+
+    if type(record) ~= "table"
+    or type(pet) ~= "table" then
+
+        return false
+    end
+
+    local wantedPet =
+        HolySniperPetAliasKey(
+            record.PetKey
+            or record.Pet
+        )
+
+    local candidatePet =
+        HolySniperPetAliasKey(
+            pet.PetName
+            or pet.Pet
+            or ""
+        )
+
+    if wantedPet == ""
+    or wantedPet ~= candidatePet then
+
+        return false
+    end
+
+    if HolySniperNormalizeSizeName(
+        record.Size
+    ) ~= HolySniperNormalizeSizeName(
+        pet.Size
+    ) then
+
+        return false
+    end
+
+    return HolySniperNormalizeVariantName(
+        record.Variant
+    ) == HolySniperNormalizeVariantName(
+        pet.Variant
+    )
+end
+
+function HolyBoughtPetCleanupClaimedExactPetIds(
+    ignoredRecord
+)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    local claimed = {}
+
+    for _,
+        record in pairs(
+            runtime.BoughtCleanupQueue
+        ) do
+
+        if type(record) == "table"
+        and record ~= ignoredRecord then
+
+            local petId =
+                HolyCleanText(
+                    record.ExactPetId
+                    or record.PetId
+                    or ""
+                )
+
+            if petId ~= "" then
+
+                claimed[
+                    petId
+                ] =
+                    true
+            end
+        end
+    end
+
+    return claimed
+end
+
+function HolyBoughtPetCleanupResolveExactTool(record)
+
+    if type(record) ~= "table" then
+
+        return nil,
+            "Invalid pending bought-pet record"
+    end
+
+    local exactPetId =
+        HolyCleanText(
+            record.ExactPetId
+        )
+
+    if exactPetId == "" then
+
+        exactPetId =
+            HolyCleanText(
+                record.PetId
+            )
+    end
+
+    if exactPetId ~= "" then
+
+        local exactTool =
+            HolyBoughtPetCleanupFindTool(
+                exactPetId
+            )
+
+        if typeof(exactTool) == "Instance" then
+
+            record.PetId =
+                exactPetId
+
+            record.ExactPetId =
+                exactPetId
+
+            return exactTool,
+                "Exact inventory PetId"
+        end
+
+        return nil,
+            "Waiting for exact inventory PetId "
+            .. exactPetId
+    end
+
+    local sourcePetId =
+        HolyCleanText(
+            record.SourcePetId
+            or ""
+        )
+
+    if sourcePetId ~= "" then
+
+        local sameIdTool =
+            HolyBoughtPetCleanupFindTool(
+                sourcePetId
+            )
+
+        if typeof(sameIdTool) == "Instance" then
+
+            record.PetId =
+                sourcePetId
+
+            record.ExactPetId =
+                sourcePetId
+
+            HolyBoughtPetCleanupRequestPersist()
+
+            return sameIdTool,
+                "Wild and inventory PetId matched"
+        end
+    end
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    if runtime.BoughtCleanupInventoryBaselineCaptured ~= true then
+
+        return nil,
+            "Pending pet has no safe inventory baseline"
+    end
+
+    if type(
+        HolyPetSellScan
+    ) ~= "function" then
+
+        return nil,
+            "Pet inventory scanner unavailable"
+    end
+
+    local scanOk,
+        snapshot =
+        pcall(
+            HolyPetSellScan
+        )
+
+    if scanOk ~= true
+    or type(snapshot) ~= "table" then
+
+        return nil,
+            "Pet inventory scan failed"
+    end
+
+    local baseline =
+        HolyBoughtPetCleanupNormalizePetIdSet(
+            runtime.BoughtCleanupInventoryBaseline
+        )
+
+    local claimed =
+        HolyBoughtPetCleanupClaimedExactPetIds(
+            record
+        )
+
+    local candidates = {}
+
+    for _,
+        pet in ipairs(
+            snapshot.Pets
+            or {}
+        ) do
+
+        local candidatePetId =
+            HolyCleanText(
+                type(pet) == "table"
+                and pet.PetId
+                or ""
+            )
+
+        if candidatePetId ~= ""
+        and baseline[
+            candidatePetId
+        ] ~= true
+        and claimed[
+            candidatePetId
+        ] ~= true
+        and HolyBoughtPetCleanupPetRecordMatches(
+            record,
+            pet
+        ) == true then
+
+            table.insert(
+                candidates,
+                pet
+            )
+        end
+    end
+
+    table.sort(candidates, function(left, right)
+
+        return tostring(
+            left.PetId
+        ) < tostring(
+            right.PetId
+        )
+    end)
+
+    local candidate =
+        candidates[1]
+
+    if type(candidate) ~= "table"
+    or typeof(candidate.Ref) ~= "Instance" then
+
+        return nil,
+            "Waiting for bought pet to enter inventory"
+    end
+
+    local resolvedPetId =
+        HolyCleanText(
+            candidate.PetId
+        )
+
+    if resolvedPetId == "" then
+
+        return nil,
+            "New matching pet has no exact PetId"
+    end
+
+    record.PetId =
+        resolvedPetId
+
+    record.ExactPetId =
+        resolvedPetId
+
+    record.ResolvedAt =
+        os.time()
+
+    HolyBoughtPetCleanupUpdateFromTool(
+        record,
+        candidate.Ref
+    )
+
+    HolyBoughtPetCleanupRequestPersist()
+
+    return candidate.Ref,
+        "Resolved exact inventory PetId"
+end
+
+function HolyBoughtPetCleanupClassify(record)
+
+    if type(record) ~= "table" then
+
+        return nil,
+            ""
+    end
+
+    if HolyBoughtPetCleanupMatchesAnyRule(
+        record
+    ) ~= true then
+
+        return nil,
+            "No matching drop filter"
+    end
+
+    local tool,
+        resolveReason =
+        HolyBoughtPetCleanupResolveExactTool(
+            record
+        )
+
+    if typeof(tool) ~= "Instance" then
+
+        return "Waiting",
+            tostring(
+                resolveReason
+                or "Waiting for exact inventory PetId"
+            )
+    end
+
+    HolyBoughtPetCleanupUpdateFromTool(
+        record,
+        tool
+    )
+
+    if record.SkipThisServer == true then
+
+        return "Protected",
+            record.LastError ~= ""
+            and (
+                "Kept · "
+                .. record.LastError
+            )
+            or "Kept after retries"
+    end
+
+    local protected,
+        reason =
+        HolyBoughtPetCleanupProtection(
+            record,
+            tool
+        )
+
+    if protected == true then
+
+        return "Protected",
+            reason
+    end
+
+    return "Drop",
+        "Exact PetId "
+        .. tostring(
+            record.PetId
+        )
+end
+
+HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID =
+    HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID
+    or HolyBoughtPetCleanupDropOne
+
+function HolyBoughtPetCleanupDropOne(record, token)
+
+    local tool,
+        resolveReason =
+        HolyBoughtPetCleanupResolveExactTool(
+            record
+        )
+
+    if typeof(tool) ~= "Instance" then
+
+        return false,
+            tostring(
+                resolveReason
+                or "Waiting for exact inventory PetId"
+            ),
+            "paused"
+    end
+
+    local success,
+        reason,
+        code =
+        HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID(
+            record,
+            token
+        )
+
+    if success == true then
+
+        HolyBoughtPetCleanupRemoveQueueRecord(
+            record
+        )
+
+        HolyBoughtPetCleanupRequestPersist()
+    end
+
+    return success,
+        reason,
+        code
+end
+
 function HolySniperEnsureRunning()
 
     if HOLY_SNIPER_STATE.ActivateSniper == true then
@@ -66366,8 +67353,17 @@ function HolySaveSniperSettings()
         BoughtCleanupPendingPets =
             HolyBoughtPetCleanupSerializePendingQueue(),
 
+        BoughtCleanupInventoryBaseline =
+            HolyBoughtPetCleanupNormalizePetIdSet(
+                HOLY_SNIPER_RUNTIME.BoughtCleanupInventoryBaseline
+                or {}
+            ),
+
+        BoughtCleanupInventoryBaselineCaptured =
+            HOLY_SNIPER_RUNTIME.BoughtCleanupInventoryBaselineCaptured == true,
+
         BoughtCleanupPersistenceVersion =
-            2,
+            3,
 
         DefendBoughtPets =
             HOLY_SNIPER_STATE.DefendBoughtPets == true,
@@ -66742,11 +67738,31 @@ function HolyLoadSniperSettings()
             data.BoughtCleanupRules
         )
 
+    local boughtCleanupPersistenceVersion =
+        tonumber(
+            data.BoughtCleanupPersistenceVersion
+        )
+        or 0
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupInventoryBaseline =
+        boughtCleanupPersistenceVersion >= 3
+        and HolyBoughtPetCleanupNormalizePetIdSet(
+            data.BoughtCleanupInventoryBaseline
+            or {}
+        )
+        or {}
+
+    HOLY_SNIPER_RUNTIME.BoughtCleanupInventoryBaselineCaptured =
+        boughtCleanupPersistenceVersion >= 3
+        and data.BoughtCleanupInventoryBaselineCaptured == true
+
     HOLY_SNIPER_RUNTIME.BoughtCleanupQueue =
-        HolyBoughtPetCleanupNormalizePendingQueue(
+        boughtCleanupPersistenceVersion >= 3
+        and HolyBoughtPetCleanupNormalizePendingQueue(
             data.BoughtCleanupPendingPets
             or {}
         )
+        or {}
 
     HOLY_SNIPER_RUNTIME.BoughtCleanupLastSavedSignature =
         HolyBoughtPetCleanupQueueSignature()
