@@ -3455,6 +3455,7 @@ HOLY_DEV_UI_STATE = {
     UnloadOwnGarden = false,
     HideMiddle = false,
     DeleteBackpack = false,
+    HibernateBackpack = false,
     BackpackCleanupMode = "Adaptive",
     BackpackStartDelay = 2,
     BackpackDeletePerCycle = 10,
@@ -3682,6 +3683,24 @@ if type(HOLY_PERFORMANCE_STATE) == "table" then
         )
         + 1
 
+    HOLY_PERFORMANCE_STATE.BackpackHibernationToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackHibernationToken
+            )
+            or 0
+        )
+        + 1
+
+    HOLY_PERFORMANCE_STATE.BackpackWakeToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackWakeToken
+            )
+            or 0
+        )
+        + 1
+
     local function DisconnectConnectionMap(connections)
 
         if type(connections) ~= "table" then
@@ -3781,6 +3800,10 @@ HOLY_PERFORMANCE_STATE = {
     BackpackSawLoadingGui = false,
     BackpackReadySignal = nil,
     BackpackReadyStableAt = nil,
+    BackpackHibernationToken = 0,
+    BackpackHibernationAdaptiveAmount = 4,
+    BackpackWakeToken = 0,
+    BackpackWaking = false,
 
     PerformanceModeConnections = {},
     PerformanceModePlotConnection = nil,
@@ -10809,6 +10832,9 @@ function HolySaveUISettings()
         SafeDeleteBackpack =
             HOLY_DEV_UI_STATE.DeleteBackpack == true,
 
+        HibernateBackpack =
+            HOLY_DEV_UI_STATE.HibernateBackpack == true,
+
         BackpackCleanupMode =
             HolyPerformanceNormalizeBackpackMode(
                 HOLY_DEV_UI_STATE.BackpackCleanupMode
@@ -11195,6 +11221,19 @@ function HolyLoadUISettings()
 
         HOLY_DEV_UI_STATE.DeleteBackpack =
             data.DeleteBackpack
+    end
+
+    if type(data.HibernateBackpack) == "boolean" then
+
+        HOLY_DEV_UI_STATE.HibernateBackpack =
+            data.HibernateBackpack
+    end
+
+    if HOLY_DEV_UI_STATE.HibernateBackpack == true
+    and HOLY_DEV_UI_STATE.DeleteBackpack == true then
+
+        HOLY_DEV_UI_STATE.DeleteBackpack =
+            false
     end
 
     HOLY_DEV_UI_STATE.BackpackCleanupMode =
@@ -105763,6 +105802,40 @@ end
 
 function HolyPerformanceStartDeleteBackpack(reason)
 
+    if HOLY_DEV_UI_STATE.HibernateBackpack == true
+    or HOLY_PERFORMANCE_STATE.BackpackWaking == true
+    or (
+        type(
+            HolyPerformanceCountHibernatedBackpackTools
+        ) == "function"
+        and HolyPerformanceCountHibernatedBackpackTools()
+            > 0
+    ) then
+
+        HOLY_DEV_UI_STATE.DeleteBackpack =
+            false
+
+        HolySaveUISettings()
+
+        if type(
+            HolyPerformanceSyncBackpackToggle
+        ) == "function" then
+
+            HolyPerformanceSyncBackpackToggle(
+                "HolyDeleteBackpack",
+                false
+            )
+        end
+
+        HolyNotify(
+            "HOLY Performance",
+            "Turn off Backpack Hibernation and wait for its tools to restore before enabling Auto Delete Backpack.",
+            6
+        )
+
+        return false
+    end
+
     HOLY_DEV_UI_STATE.DeleteBackpack =
         true
 
@@ -105865,6 +105938,789 @@ function HolyPerformanceStopDeleteBackpack(reason)
     )
 
     return true
+end
+
+function HolyPerformanceGetBackpackHibernationStore()
+
+    local environment =
+        (
+            type(getgenv) == "function"
+            and getgenv()
+        )
+        or _G
+
+    local store =
+        environment.HOLY_BACKPACK_HIBERNATION_STORE
+
+    if type(store) ~= "table"
+    or store.JobId ~= game.JobId
+    or type(store.Tools) ~= "table" then
+
+        store = {
+            JobId = game.JobId,
+            Tools = {},
+        }
+
+        environment.HOLY_BACKPACK_HIBERNATION_STORE =
+            store
+    end
+
+    return store
+end
+
+function HolyPerformanceCountHibernatedBackpackTools()
+
+    local store =
+        HolyPerformanceGetBackpackHibernationStore()
+
+    local count =
+        0
+
+    for tool in pairs(
+        store.Tools
+    ) do
+
+        if typeof(tool) == "Instance"
+        and tool:IsA("Tool")
+        and tool.Parent == nil then
+
+            count +=
+                1
+
+        else
+
+            store.Tools[tool] =
+                nil
+        end
+    end
+
+    return count
+end
+
+function HolyPerformanceSyncBackpackToggle(
+    toggleName,
+    value
+)
+
+    local toggles =
+        type(HOLY_DEV_LIBRARY) == "table"
+        and HOLY_DEV_LIBRARY.Toggles
+        or nil
+
+    local toggle =
+        type(toggles) == "table"
+        and toggles[
+            tostring(toggleName or "")
+        ]
+        or nil
+
+    if type(toggle) ~= "table"
+    or type(toggle.SetValue) ~= "function" then
+
+        return false
+    end
+
+    task.defer(function()
+
+        pcall(function()
+
+            toggle:SetValue(
+                value == true,
+                true
+            )
+        end)
+    end)
+
+    return true
+end
+
+function HolyPerformanceBackpackHibernationWaitCycle(
+    token
+)
+
+    if HOLY_PERFORMANCE_STATE
+        .BackpackHibernationToken ~= token
+    or HOLY_DEV_UI_STATE.HibernateBackpack ~= true then
+
+        return false
+    end
+
+    local delay =
+        HolyPerformanceReadBackpackCleanupDelay(
+            HOLY_DEV_UI_STATE.BackpackCleanupDelay
+        )
+
+    if delay > 0 then
+
+        task.wait(
+            delay
+        )
+
+    else
+
+        RunService.Heartbeat:Wait()
+    end
+
+    return HOLY_PERFORMANCE_STATE
+        .BackpackHibernationToken == token
+        and HOLY_DEV_UI_STATE.HibernateBackpack == true
+end
+
+function HolyPerformanceStartBackpackHibernation(
+    reason
+)
+
+    if HOLY_DEV_UI_STATE.DeleteBackpack == true then
+
+        HOLY_DEV_UI_STATE.HibernateBackpack =
+            false
+
+        HolySaveUISettings()
+
+        HolyPerformanceSyncBackpackToggle(
+            "HolyHibernateBackpack",
+            false
+        )
+
+        HolyNotify(
+            "HOLY Performance",
+            "Turn off Auto Delete Backpack before enabling Backpack Hibernation.",
+            5
+        )
+
+        return false
+    end
+
+    HOLY_DEV_UI_STATE.HibernateBackpack =
+        true
+
+    HOLY_PERFORMANCE_STATE.BackpackWakeToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackWakeToken
+            )
+            or 0
+        )
+        + 1
+
+    HOLY_PERFORMANCE_STATE.BackpackWaking =
+        false
+
+    HOLY_PERFORMANCE_STATE.BackpackHibernationToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackHibernationToken
+            )
+            or 0
+        )
+        + 1
+
+    HOLY_PERFORMANCE_STATE.BackpackHibernationAdaptiveAmount =
+        4
+
+    HOLY_PERFORMANCE_STATE.BackpackSawLoadingGui =
+        false
+
+    HOLY_PERFORMANCE_STATE.BackpackReadySignal =
+        nil
+
+    HOLY_PERFORMANCE_STATE.BackpackReadyStableAt =
+        nil
+
+    local token =
+        HOLY_PERFORMANCE_STATE.BackpackHibernationToken
+
+    HolySaveUISettings()
+
+    HolyPerformanceSetStatus(
+        "Waiting for loading before hibernating Backpack..."
+    )
+
+    task.spawn(function()
+
+        local lastStatusAt =
+            0
+
+        while HOLY_DEV_UI_STATE.HibernateBackpack == true
+        and HOLY_PERFORMANCE_STATE
+            .BackpackHibernationToken == token do
+
+            local ready,
+                loadingReason =
+                HolyPerformanceBackpackLoadingReady()
+
+            if ready == true then
+                break
+            end
+
+            if os.clock() - lastStatusAt >= 0.5 then
+
+                lastStatusAt =
+                    os.clock()
+
+                HolyPerformanceSetStatus(
+                    "Waiting for "
+                    .. tostring(loadingReason)
+                    .. " before hibernating Backpack..."
+                )
+            end
+
+            task.wait(
+                0.10
+            )
+        end
+
+        if HOLY_DEV_UI_STATE.HibernateBackpack ~= true
+        or HOLY_PERFORMANCE_STATE
+            .BackpackHibernationToken ~= token then
+
+            return
+        end
+
+        local readyAt =
+            os.clock()
+
+        local lastShown =
+            nil
+
+        while HOLY_DEV_UI_STATE.HibernateBackpack == true
+        and HOLY_PERFORMANCE_STATE
+            .BackpackHibernationToken == token do
+
+            local remaining =
+                HolyPerformanceReadBackpackStartDelay(
+                    HOLY_DEV_UI_STATE.BackpackStartDelay
+                )
+                - (
+                    os.clock()
+                    - readyAt
+                )
+
+            if remaining <= 0 then
+                break
+            end
+
+            local shown =
+                math.ceil(
+                    remaining
+                    * 10
+                )
+                / 10
+
+            if shown ~= lastShown then
+
+                lastShown =
+                    shown
+
+                HolyPerformanceSetStatus(
+                    "Loading complete · Backpack hibernation starts in "
+                    .. string.format(
+                        "%.1fs",
+                        shown
+                    )
+                )
+            end
+
+            task.wait(
+                0.05
+            )
+        end
+
+        local store =
+            HolyPerformanceGetBackpackHibernationStore()
+
+        local queue =
+            {}
+
+        local queueIndex =
+            1
+
+        local trackedBackpack =
+            nil
+
+        local handled =
+            0
+
+        local queuedTotal =
+            0
+
+        while HOLY_DEV_UI_STATE.HibernateBackpack == true
+        and HOLY_PERFORMANCE_STATE
+            .BackpackHibernationToken == token do
+
+            local backpack =
+                LocalPlayer:FindFirstChildOfClass(
+                    "Backpack"
+                )
+
+            if backpack ~= trackedBackpack
+            or queueIndex > #queue then
+
+                trackedBackpack =
+                    backpack
+
+                queue =
+                    {}
+
+                queueIndex =
+                    1
+
+                if typeof(backpack) == "Instance" then
+
+                    for _, child in ipairs(
+                        backpack:GetChildren()
+                    ) do
+
+                        if child:IsA("Tool") then
+
+                            table.insert(
+                                queue,
+                                child
+                            )
+                        end
+                    end
+                end
+
+                queuedTotal +=
+                    #queue
+            end
+
+            if queueIndex > #queue then
+
+                HolyPerformanceSetStatus(
+                    "Backpack hibernated · "
+                    .. tostring(
+                        HolyPerformanceCountHibernatedBackpackTools()
+                    )
+                    .. " stored · watching new items."
+                )
+
+                task.wait(
+                    0.20
+                )
+
+                continue
+            end
+
+            local mode =
+                HolyPerformanceNormalizeBackpackMode(
+                    HOLY_DEV_UI_STATE.BackpackCleanupMode
+                )
+
+            local maximum =
+                mode == "All At Once"
+                and (
+                    #queue
+                    - queueIndex
+                    + 1
+                )
+                or (
+                    mode == "Fixed Amount"
+                    and HolyPerformanceReadBackpackDeletePerCycle(
+                        HOLY_DEV_UI_STATE.BackpackDeletePerCycle
+                    )
+                    or math.clamp(
+                        math.floor(
+                            tonumber(
+                                HOLY_PERFORMANCE_STATE
+                                    .BackpackHibernationAdaptiveAmount
+                            )
+                            or 4
+                        ),
+                        1,
+                        10
+                    )
+                )
+
+            local cycleStartedAt =
+                os.clock()
+
+            local attempted =
+                0
+
+            while queueIndex <= #queue
+            and attempted < maximum
+            and HOLY_DEV_UI_STATE.HibernateBackpack == true
+            and HOLY_PERFORMANCE_STATE
+                .BackpackHibernationToken == token do
+
+                local tool =
+                    queue[
+                        queueIndex
+                    ]
+
+                queueIndex +=
+                    1
+
+                attempted +=
+                    1
+
+                handled +=
+                    1
+
+                if typeof(tool) == "Instance"
+                and tool:IsA("Tool")
+                and tool.Parent == trackedBackpack then
+
+                    store.Tools[tool] =
+                        true
+
+                    local moved =
+                        pcall(function()
+
+                            tool.Parent =
+                                nil
+                        end)
+
+                    if moved ~= true
+                    or tool.Parent ~= nil then
+
+                        store.Tools[tool] =
+                            nil
+                    end
+                end
+
+                if mode == "Adaptive"
+                and os.clock() - cycleStartedAt
+                    >= 0.0025 then
+
+                    break
+                end
+            end
+
+            local duration =
+                os.clock()
+                - cycleStartedAt
+
+            if mode == "Adaptive"
+            and attempted > 0 then
+
+                local adaptiveAmount =
+                    HOLY_PERFORMANCE_STATE
+                        .BackpackHibernationAdaptiveAmount
+
+                if duration >= 0.004 then
+
+                    adaptiveAmount =
+                        math.max(
+                            1,
+                            adaptiveAmount - 1
+                        )
+
+                elseif attempted >= maximum
+                and duration <= 0.0015 then
+
+                    adaptiveAmount =
+                        math.min(
+                            10,
+                            adaptiveAmount + 1
+                        )
+                end
+
+                HOLY_PERFORMANCE_STATE
+                    .BackpackHibernationAdaptiveAmount =
+                    adaptiveAmount
+            end
+
+            HolyPerformanceSetStatus(
+                "Hibernating Backpack · "
+                .. tostring(handled)
+                .. " / "
+                .. tostring(queuedTotal)
+                .. " · "
+                .. HolyPerformanceBackpackFormatMode()
+                .. " · "
+                .. string.format(
+                    "%.2fs delay",
+                    HolyPerformanceReadBackpackCleanupDelay(
+                        HOLY_DEV_UI_STATE.BackpackCleanupDelay
+                    )
+                )
+            )
+
+            HolyPerformanceBackpackHibernationWaitCycle(
+                token
+            )
+        end
+    end)
+
+    return true
+end
+
+function HolyPerformanceRestoreHibernatedBackpack(
+    reason
+)
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    runtime.BackpackWakeToken =
+        (
+            tonumber(
+                runtime.BackpackWakeToken
+            )
+            or 0
+        )
+        + 1
+
+    local token =
+        runtime.BackpackWakeToken
+
+    local store =
+        HolyPerformanceGetBackpackHibernationStore()
+
+    local queue =
+        {}
+
+    for tool in pairs(
+        store.Tools
+    ) do
+
+        if typeof(tool) == "Instance"
+        and tool:IsA("Tool")
+        and tool.Parent == nil then
+
+            table.insert(
+                queue,
+                tool
+            )
+
+        else
+
+            store.Tools[tool] =
+                nil
+        end
+    end
+
+    if #queue <= 0 then
+
+        runtime.BackpackWaking =
+            false
+
+        HolyPerformanceSetStatus(
+            "Backpack hibernation off · nothing stored."
+        )
+
+        return true
+    end
+
+    runtime.BackpackWaking =
+        true
+
+    HolyPerformanceSetStatus(
+        "Preparing to restore "
+        .. tostring(#queue)
+        .. " hibernated Backpack tools..."
+    )
+
+    task.spawn(function()
+
+        local backpack =
+            LocalPlayer:FindFirstChildOfClass(
+                "Backpack"
+            )
+
+        if typeof(backpack) ~= "Instance" then
+
+            backpack =
+                LocalPlayer:WaitForChild(
+                    "Backpack",
+                    10
+                )
+        end
+
+        if typeof(backpack) ~= "Instance"
+        or runtime.BackpackWakeToken ~= token
+        or HOLY_DEV_UI_STATE.HibernateBackpack == true then
+
+            runtime.BackpackWaking =
+                false
+
+            return
+        end
+
+        local index =
+            1
+
+        local restored =
+            0
+
+        local adaptiveAmount =
+            4
+
+        while index <= #queue
+        and runtime.BackpackWakeToken == token
+        and HOLY_DEV_UI_STATE.HibernateBackpack ~= true do
+
+            local mode =
+                HolyPerformanceNormalizeBackpackMode(
+                    HOLY_DEV_UI_STATE.BackpackCleanupMode
+                )
+
+            local maximum =
+                mode == "All At Once"
+                and (
+                    #queue
+                    - index
+                    + 1
+                )
+                or (
+                    mode == "Fixed Amount"
+                    and HolyPerformanceReadBackpackDeletePerCycle(
+                        HOLY_DEV_UI_STATE.BackpackDeletePerCycle
+                    )
+                    or adaptiveAmount
+                )
+
+            local cycleStartedAt =
+                os.clock()
+
+            local attempted =
+                0
+
+            while index <= #queue
+            and attempted < maximum
+            and runtime.BackpackWakeToken == token
+            and HOLY_DEV_UI_STATE.HibernateBackpack ~= true do
+
+                local tool =
+                    queue[index]
+
+                index +=
+                    1
+
+                attempted +=
+                    1
+
+                if typeof(tool) == "Instance"
+                and tool:IsA("Tool")
+                and tool.Parent == nil
+                and store.Tools[tool] == true then
+
+                    local moved =
+                        pcall(function()
+
+                            tool.Parent =
+                                backpack
+                        end)
+
+                    if moved == true
+                    and tool.Parent == backpack then
+
+                        store.Tools[tool] =
+                            nil
+
+                        restored +=
+                            1
+                    end
+                end
+
+                if mode == "Adaptive"
+                and os.clock() - cycleStartedAt
+                    >= 0.0025 then
+
+                    break
+                end
+            end
+
+            local duration =
+                os.clock()
+                - cycleStartedAt
+
+            if mode == "Adaptive"
+            and attempted > 0 then
+
+                if duration >= 0.004 then
+
+                    adaptiveAmount =
+                        math.max(
+                            1,
+                            adaptiveAmount - 1
+                        )
+
+                elseif attempted >= maximum
+                and duration <= 0.0015 then
+
+                    adaptiveAmount =
+                        math.min(
+                            10,
+                            adaptiveAmount + 1
+                        )
+                end
+            end
+
+            HolyPerformanceSetStatus(
+                "Restoring Backpack · "
+                .. tostring(
+                    math.min(
+                        index - 1,
+                        #queue
+                    )
+                )
+                .. " / "
+                .. tostring(#queue)
+                .. " · "
+                .. tostring(restored)
+                .. " restored."
+            )
+
+            if index <= #queue then
+
+                local delay =
+                    HolyPerformanceReadBackpackCleanupDelay(
+                        HOLY_DEV_UI_STATE.BackpackCleanupDelay
+                    )
+
+                if delay > 0 then
+
+                    task.wait(
+                        delay
+                    )
+
+                else
+
+                    RunService.Heartbeat:Wait()
+                end
+            end
+        end
+
+        if runtime.BackpackWakeToken == token then
+
+            runtime.BackpackWaking =
+                false
+
+            HolyPerformanceSetStatus(
+                "Backpack restored · "
+                .. tostring(restored)
+                .. " tools returned."
+            )
+        end
+    end)
+
+    return true
+end
+
+function HolyPerformanceStopBackpackHibernation(
+    reason
+)
+
+    HOLY_DEV_UI_STATE.HibernateBackpack =
+        false
+
+    HOLY_PERFORMANCE_STATE.BackpackHibernationToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackHibernationToken
+            )
+            or 0
+        )
+        + 1
+
+    HolySaveUISettings()
+
+    return HolyPerformanceRestoreHibernatedBackpack(
+        reason
+    )
 end
 
 function HolyPerformanceGetGardensRoot()
@@ -205805,19 +206661,22 @@ SettingsPerformanceBox:AddToggle(
     end
 end)
 
-SettingsPerformanceBox:AddToggle(
-    "HolyDeleteBackpack",
-    {
-        Text =
-            "Auto Delete Backpack",
+HOLY_PERFORMANCE_UI.DeleteBackpackToggle =
+    SettingsPerformanceBox:AddToggle(
+        "HolyDeleteBackpack",
+        {
+            Text =
+                "Auto Delete Backpack",
 
-        Default =
-            HOLY_DEV_UI_STATE.DeleteBackpack == true,
+            Default =
+                HOLY_DEV_UI_STATE.DeleteBackpack == true,
 
-        Tooltip =
-            "Waits until loading is complete, keeps the Backpack instance alive, and clears its Tool children using the selected cleanup settings. This disables seeds, tools, pets, sprinklers, Pet Inventory, and inventory-based automation.",
-    }
-):OnChanged(function(value)
+            Tooltip =
+                "Waits until loading is complete, keeps the Backpack instance alive, and clears its Tool children using the selected cleanup settings. This disables seeds, tools, pets, sprinklers, Pet Inventory, and inventory-based automation.",
+        }
+    )
+
+HOLY_PERFORMANCE_UI.DeleteBackpackToggle:OnChanged(function(value)
 
     if value == true then
 
@@ -205833,12 +206692,43 @@ SettingsPerformanceBox:AddToggle(
     end
 end)
 
+HOLY_PERFORMANCE_UI.HibernateBackpackToggle =
+    SettingsPerformanceBox:AddToggle(
+        "HolyHibernateBackpack",
+        {
+            Text =
+                "Backpack Hibernation",
+
+            Default =
+                HOLY_DEV_UI_STATE.HibernateBackpack == true,
+
+            Tooltip =
+                "Client-side reversible unload. After loading is complete, moves real Tool instances out of the Backpack without destroying them. Turning it off restores them using the Backpack action settings. It persists for later executions, but the server still replicates the inventory on each fresh join.",
+        }
+    )
+
+HOLY_PERFORMANCE_UI.HibernateBackpackToggle:OnChanged(function(value)
+
+    if value == true then
+
+        HolyPerformanceStartBackpackHibernation(
+            "toggle on"
+        )
+
+    else
+
+        HolyPerformanceStopBackpackHibernation(
+            "toggle off"
+        )
+    end
+end)
+
 HOLY_PERFORMANCE_UI.BackpackModeDropdown =
     SettingsPerformanceBox:AddDropdown(
         "HolyBackpackCleanupMode",
         {
             Text =
-                "Backpack Cleanup Mode",
+                "Backpack Action Mode",
 
             Values = {
                 "Adaptive",
@@ -205861,7 +206751,7 @@ HOLY_PERFORMANCE_UI.BackpackModeDropdown =
                 3,
 
             Tooltip =
-                "Adaptive limits each cycle to a small frame budget. Fixed Amount uses Delete Per Cycle. All At Once is fastest but can temporarily freeze large inventories.",
+                "Used by Auto Delete, Hibernation, and restoring. Adaptive limits each cycle to a small frame budget. Fixed Amount uses Items Per Cycle. All At Once is fastest but can temporarily freeze large inventories.",
         }
     )
 
@@ -205928,7 +206818,7 @@ HOLY_PERFORMANCE_UI.BackpackDeletePerCycleInput =
         "HolyBackpackDeletePerCycle",
         {
             Text =
-                "Delete Per Cycle",
+                "Items Per Cycle",
 
             Default =
                 tostring(
@@ -205950,7 +206840,7 @@ HOLY_PERFORMANCE_UI.BackpackDeletePerCycleInput =
                 false,
 
             Tooltip =
-                "Tools removed per cycle in Fixed Amount mode. Minimum is 1; larger values are faster but can cause more lag.",
+                "Tools deleted, hibernated, or restored per cycle in Fixed Amount mode. Minimum is 1; larger values are faster but can cause more lag.",
         }
     )
 
@@ -206058,6 +206948,26 @@ if HOLY_DEV_UI_STATE.DeleteBackpack == true then
 
         HolyPerformanceStartDeleteBackpack(
             "startup"
+        )
+    end)
+end
+
+if HOLY_DEV_UI_STATE.HibernateBackpack == true then
+
+    task.defer(function()
+
+        HolyPerformanceStartBackpackHibernation(
+            "startup"
+        )
+    end)
+
+elseif HolyPerformanceCountHibernatedBackpackTools()
+    > 0 then
+
+    task.defer(function()
+
+        HolyPerformanceRestoreHibernatedBackpack(
+            "startup restore"
         )
     end)
 end
