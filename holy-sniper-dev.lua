@@ -47295,15 +47295,31 @@ function HolyPetInventoryStart()
             local lowEnd =
                 HolyLowEndModeEnabled()
 
+            local pacedPetSelling =
+                type(HOLY_SHOP_STATE) == "table"
+                and HOLY_SHOP_STATE.AutoSellPets == true
+
             local dirtyInterval =
-                lowEnd == true
-                and 0.75
-                or 0.15
+                pacedPetSelling == true
+                and (
+                    lowEnd == true
+                    and 2.50
+                    or 1.50
+                )
+                or (
+                    lowEnd == true
+                    and 0.75
+                    or 0.15
+                )
 
             local safetyInterval =
-                lowEnd == true
+                pacedPetSelling == true
                 and 15
-                or 5
+                or (
+                    lowEnd == true
+                    and 15
+                    or 5
+                )
 
             local elapsed =
                 os.clock()
@@ -51191,7 +51207,7 @@ function HolyPetSellStop(
     if wasBusy == true then
 
         HolyPetSellSetStatus(
-            "Stopping after the current batch..."
+            "Stopping after the current pet..."
         )
     end
 
@@ -51203,7 +51219,7 @@ function HolyPetSellStop(
             "HOLY Pet Seller",
             tostring(
                 reason
-                or "Stopping after the current batch."
+                or "Stopping after the current pet."
             ),
             3
         )
@@ -52317,6 +52333,1746 @@ function HolyPetSellBuildPreviewUI(groupbox)
     return true
 end
 
+
+HOLY_PET_SELL_RATE_MIN_DELAY =
+    1.10
+
+HOLY_PET_SELL_RATE_MAX_DELAY =
+    4.00
+
+HOLY_PET_SELL_CONFIRM_TIMEOUT =
+    5.00
+
+function HolyPetSellEnsurePacedRuntime()
+
+    local runtime =
+        HOLY_PET_SELL_RUNTIME
+
+    if type(runtime) ~= "table" then
+        return nil
+    end
+
+    runtime.RateDelay =
+        math.clamp(
+            tonumber(
+                runtime.RateDelay
+            )
+                or HOLY_PET_SELL_RATE_MIN_DELAY,
+            HOLY_PET_SELL_RATE_MIN_DELAY,
+            HOLY_PET_SELL_RATE_MAX_DELAY
+        )
+
+    runtime.LastRequestAt =
+        tonumber(
+            runtime.LastRequestAt
+        )
+        or 0
+
+    runtime.QueueTotal =
+        tonumber(
+            runtime.QueueTotal
+        )
+        or 0
+
+    runtime.QueueRemaining =
+        tonumber(
+            runtime.QueueRemaining
+        )
+        or 0
+
+    runtime.RunSold =
+        tonumber(
+            runtime.RunSold
+        )
+        or 0
+
+    runtime.RunFailed =
+        tonumber(
+            runtime.RunFailed
+        )
+        or 0
+
+    runtime.RunRateLimited =
+        tonumber(
+            runtime.RunRateLimited
+        )
+        or 0
+
+    runtime.SuccessStreak =
+        tonumber(
+            runtime.SuccessStreak
+        )
+        or 0
+
+    runtime.InventoryDirty =
+        runtime.InventoryDirty == true
+
+    return runtime
+end
+
+function HolyPetSellResponseText(
+    value,
+    depth,
+    visited
+)
+    depth =
+        tonumber(depth)
+        or 0
+
+    if depth > 3 then
+        return ""
+    end
+
+    local valueType =
+        typeof(value)
+
+    if valueType == "string"
+    or valueType == "number"
+    or valueType == "boolean" then
+
+        return tostring(
+            value
+        ):lower()
+    end
+
+    if valueType ~= "table" then
+        return ""
+    end
+
+    visited =
+        type(visited) == "table"
+        and visited
+        or {}
+
+    if visited[value] == true then
+        return ""
+    end
+
+    visited[value] =
+        true
+
+    local parts =
+        {}
+
+    local preferredKeys = {
+        "Message",
+        "Reason",
+        "Error",
+        "Code",
+        "Result",
+        "Status",
+        "Details",
+    }
+
+    for _, key in ipairs(
+        preferredKeys
+    ) do
+
+        if value[key] ~= nil then
+
+            table.insert(
+                parts,
+                HolyPetSellResponseText(
+                    value[key],
+                    depth + 1,
+                    visited
+                )
+            )
+        end
+    end
+
+    if #parts <= 0 then
+
+        for key, child in pairs(
+            value
+        ) do
+
+            table.insert(
+                parts,
+                tostring(
+                    key
+                ):lower()
+            )
+
+            table.insert(
+                parts,
+                HolyPetSellResponseText(
+                    child,
+                    depth + 1,
+                    visited
+                )
+            )
+        end
+    end
+
+    return table.concat(
+        parts,
+        " "
+    )
+end
+
+function HolyPetSellResponseIsRateLimited(response)
+
+    local text =
+        HolyPetSellResponseText(
+            response,
+            0,
+            {}
+        )
+
+    return text:find(
+        "rate limit",
+        1,
+        true
+    ) ~= nil
+        or text:find(
+            "too fast",
+            1,
+            true
+        ) ~= nil
+        or text:find(
+            "too many request",
+            1,
+            true
+        ) ~= nil
+        or text:find(
+            "wait 1 second",
+            1,
+            true
+        ) ~= nil
+        or text:find(
+            "cooldown",
+            1,
+            true
+        ) ~= nil
+        or text:find(
+            "throttl",
+            1,
+            true
+        ) ~= nil
+        or text:find(
+            "429",
+            1,
+            true
+        ) ~= nil
+end
+
+function HolyPetSellReferenceIsOwned(reference)
+
+    if typeof(reference) ~= "Instance"
+    or reference.Parent == nil then
+
+        return false
+    end
+
+    local backpack =
+        LocalPlayer
+        and LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+        or nil
+
+    local character =
+        LocalPlayer
+        and LocalPlayer.Character
+        or nil
+
+    return reference.Parent == backpack
+        or reference.Parent == character
+end
+
+function HolyPetSellQueuedPetIsSafe(
+    pet,
+    filters
+)
+    if type(pet) ~= "table"
+    or type(filters) ~= "table"
+    or typeof(pet.Ref) ~= "Instance"
+    or pet.Ref:IsA("Tool") ~= true then
+
+        return false
+    end
+
+    local backpack =
+        LocalPlayer
+        and LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+        or nil
+
+    if pet.Ref.Parent ~= backpack then
+        return false
+    end
+
+    local attributes =
+        {}
+
+    local attributesOk =
+        pcall(function()
+
+            attributes =
+                pet.Ref:GetAttributes()
+        end)
+
+    if attributesOk ~= true then
+        return false
+    end
+
+    local rawPetId =
+        attributes.PetId
+
+    if rawPetId == nil then
+
+        rawPetId =
+            attributes.PetID
+    end
+
+    local petId =
+        HolyCleanText(
+            rawPetId
+        )
+
+    if petId == ""
+    or petId ~= tostring(
+        pet.PetId
+    ) then
+
+        return false
+    end
+
+    local rawPetName =
+        HolyCleanText(
+            attributes.Pet
+            or attributes.PetName
+            or ""
+        )
+
+    if rawPetName == "" then
+        return false
+    end
+
+    local petName =
+        HolyPetSellPrettyName(
+            rawPetName
+        )
+
+    local sizeName =
+        HolyPetSellReadSize(
+            pet.Ref
+        )
+
+    local variantName =
+        HolyPetSellReadVariant(
+            pet.Ref
+        )
+
+    local groupKey =
+        HolyPetSellGroupKey(
+            petName,
+            sizeName,
+            variantName
+        )
+
+    if groupKey ~= pet.GroupKey then
+        return false
+    end
+
+    local favorite,
+        locked =
+        HolyPetSellReadProtection(
+            pet.Ref,
+            attributes
+        )
+
+    if favorite == true
+    or locked == true then
+
+        return false
+    end
+
+    if type(
+        HolyLoadoutPetIsProtected
+    ) == "function"
+    and HolyLoadoutPetIsProtected(
+        petId
+    ) == true then
+
+        return false
+    end
+
+    local group = {
+        Key =
+            groupKey,
+
+        Name =
+            petName,
+
+        Size =
+            sizeName,
+
+        Variant =
+            variantName,
+    }
+
+    if HolyPetSellGroupMatches(
+        group,
+        filters
+    ) ~= true
+    or HolyPetSellGroupProtectedBySettings(
+        group,
+        filters
+    ) == true then
+
+        return false
+    end
+
+    pet.RawPetId =
+        rawPetId
+
+    return true
+end
+
+function HolyPetSellBuildPacedQueue(
+    snapshot,
+    filters
+)
+    local rows,
+        totals =
+        HolyPetSellBuildPreviewRows(
+            snapshot,
+            filters
+        )
+
+    local quotas =
+        {}
+
+    local groupStates =
+        {}
+
+    for _, row in ipairs(
+        rows
+    ) do
+
+        if (
+            tonumber(
+                row.WillSell
+            )
+            or 0
+        ) > 0 then
+
+            quotas[
+                row.Key
+            ] =
+                math.floor(
+                    tonumber(
+                        row.WillSell
+                    )
+                    or 0
+                )
+        end
+    end
+
+    for groupKey, group in pairs(
+        snapshot.Groups
+        or {}
+    ) do
+
+        groupStates[
+            groupKey
+        ] = {
+            Keep =
+                filters.Keep,
+
+            LiveCount =
+                tonumber(
+                    group.Count
+                )
+                or 0,
+
+            LastSweepAt =
+                os.clock(),
+
+            Records =
+                {},
+        }
+    end
+
+    for _, pet in ipairs(
+        snapshot.Pets
+        or {}
+    ) do
+
+        local groupState =
+            groupStates[
+                pet.GroupKey
+            ]
+
+        if type(groupState) == "table" then
+
+            table.insert(
+                groupState.Records,
+                pet
+            )
+        end
+    end
+
+    local queue =
+        {}
+
+    for _, pet in ipairs(
+        snapshot.Pets
+        or {}
+    ) do
+
+        local remaining =
+            tonumber(
+                quotas[
+                    pet.GroupKey
+                ]
+            )
+            or 0
+
+        if remaining > 0
+        and pet.Protected ~= true
+        and pet.Equipped ~= true
+        and pet.Source == "Backpack"
+        and typeof(pet.Ref) == "Instance"
+        and pet.Ref.Parent ~= nil then
+
+            table.insert(
+                queue,
+                pet
+            )
+
+            quotas[
+                pet.GroupKey
+            ] =
+                remaining
+                - 1
+        end
+    end
+
+    return queue,
+        rows,
+        totals,
+        groupStates
+end
+
+function HolyPetSellRefreshKnownGroupCount(
+    groupState
+)
+    if type(groupState) ~= "table" then
+        return 0
+    end
+
+    local count =
+        0
+
+    for _, pet in ipairs(
+        groupState.Records
+        or {}
+    ) do
+
+        if type(pet) == "table"
+        and HolyPetSellReferenceIsOwned(
+            pet.Ref
+        ) == true then
+
+            count =
+                count
+                + 1
+        end
+    end
+
+    groupState.LiveCount =
+        count
+
+    groupState.LastSweepAt =
+        os.clock()
+
+    return count
+end
+
+function HolyPetSellFormatQueueTime(seconds)
+
+    seconds =
+        math.max(
+            0,
+            math.floor(
+                tonumber(seconds)
+                or 0
+            )
+        )
+
+    if seconds >= 3600 then
+
+        local hours =
+            math.floor(
+                seconds
+                / 3600
+            )
+
+        local minutes =
+            math.floor(
+                (
+                    seconds
+                    % 3600
+                )
+                / 60
+            )
+
+        return tostring(hours)
+            .. "h "
+            .. tostring(minutes)
+            .. "m"
+    end
+
+    if seconds >= 60 then
+
+        return tostring(
+            math.floor(
+                seconds
+                / 60
+            )
+        )
+            .. "m "
+            .. tostring(
+                seconds
+                % 60
+            )
+            .. "s"
+    end
+
+    return tostring(seconds)
+        .. "s"
+end
+
+function HolyPetSellUpdatePacedStatus(
+    runtime,
+    prefix
+)
+    if type(runtime) ~= "table" then
+        return false
+    end
+
+    local elapsed =
+        math.max(
+            0.01,
+            os.clock()
+                - (
+                    tonumber(
+                        runtime.RunStartedAt
+                    )
+                    or os.clock()
+                )
+        )
+
+    local sold =
+        tonumber(
+            runtime.RunSold
+        )
+        or 0
+
+    local remaining =
+        math.max(
+            0,
+            math.floor(
+                tonumber(
+                    runtime.QueueRemaining
+                )
+                or 0
+            )
+        )
+
+    local rate =
+        60
+        / math.max(
+            HOLY_PET_SELL_RATE_MIN_DELAY,
+            tonumber(
+                runtime.RateDelay
+            )
+                or HOLY_PET_SELL_RATE_MIN_DELAY
+        )
+
+    if sold >= 3
+    and elapsed >= 5 then
+
+        rate =
+            sold
+            / elapsed
+            * 60
+    end
+
+    local eta =
+        remaining
+        / math.max(
+            1,
+            rate
+        )
+        * 60
+
+    local status =
+        tostring(
+            prefix
+            or "Selling"
+        )
+            .. " · "
+            .. tostring(
+                remaining
+            )
+            .. " queued · "
+            .. tostring(
+                math.max(
+                    1,
+                    math.floor(
+                        rate
+                        + 0.5
+                    )
+                )
+            )
+            .. "/min · "
+            .. tostring(
+                sold
+            )
+            .. " sold · ETA "
+            .. HolyPetSellFormatQueueTime(
+                eta
+            )
+
+    if (
+        tonumber(
+            runtime.RunRateLimited
+        )
+        or 0
+    ) > 0 then
+
+        status =
+            status
+            .. " · limited "
+            .. tostring(
+                runtime.RunRateLimited
+            )
+    end
+
+    HolyPetSellSetStatus(
+        status
+    )
+
+    if type(
+        HolySniperSetLabel
+    ) == "function" then
+
+        HolySniperSetLabel(
+            HOLY_SHOP_UI
+            and HOLY_SHOP_UI.PetSellRateLabel
+            or nil,
+            "Automatic rate control · "
+                .. string.format(
+                    "%.2fs",
+                    tonumber(
+                        runtime.RateDelay
+                    )
+                        or HOLY_PET_SELL_RATE_MIN_DELAY
+                )
+                .. " between requests"
+        )
+    end
+
+    return true
+end
+
+function HolyPetSellWaitForRequestSlot(
+    runtime,
+    token
+)
+    while runtime.Token
+        == token do
+
+        local remaining =
+            (
+                tonumber(
+                    runtime.RateDelay
+                )
+                or HOLY_PET_SELL_RATE_MIN_DELAY
+            )
+                - (
+                    os.clock()
+                    - (
+                        tonumber(
+                            runtime.LastRequestAt
+                        )
+                        or 0
+                    )
+                )
+
+        if remaining <= 0 then
+            return true
+        end
+
+        task.wait(
+            math.min(
+                0.10,
+                remaining
+            )
+        )
+    end
+
+    return false
+end
+
+function HolyPetSellCallOne(
+    sellPacket,
+    rawPetId
+)
+    local completed =
+        false
+
+    local callOk =
+        false
+
+    local response =
+        nil
+
+    task.spawn(function()
+
+        callOk,
+            response =
+            pcall(function()
+
+                return sellPacket:Fire(
+                    rawPetId
+                )
+            end)
+
+        completed =
+            true
+    end)
+
+    local deadline =
+        os.clock()
+        + 10
+
+    while completed ~= true
+    and os.clock() < deadline do
+
+        task.wait(
+            0.03
+        )
+    end
+
+    if completed ~= true then
+
+        return false,
+            nil,
+            true
+    end
+
+    return callOk,
+        response,
+        false
+end
+
+function HolyPetSellWaitForRemoval(
+    pet,
+    timeout
+)
+    local deadline =
+        os.clock()
+        + math.max(
+            0.10,
+            tonumber(timeout)
+                or HOLY_PET_SELL_CONFIRM_TIMEOUT
+        )
+
+    repeat
+
+        if type(pet) ~= "table"
+        or HolyPetSellReferenceIsOwned(
+            pet.Ref
+        ) ~= true then
+
+            return true
+        end
+
+        task.wait(
+            0.05
+        )
+
+    until os.clock() >= deadline
+
+    return type(pet) ~= "table"
+        or HolyPetSellReferenceIsOwned(
+            pet.Ref
+        ) ~= true
+end
+
+function HolyPetSellQueueAutoRun(
+    reason,
+    immediate
+)
+    local runtime =
+        HolyPetSellEnsurePacedRuntime()
+
+    if type(runtime) ~= "table"
+    or HOLY_SHOP_STATE.AutoSellPets ~= true then
+
+        return false
+    end
+
+    if runtime.Busy == true then
+
+        runtime.RerunAfterBusy =
+            true
+
+        return true
+    end
+
+    runtime.AutoGeneration =
+        (
+            tonumber(
+                runtime.AutoGeneration
+            )
+            or 0
+        )
+        + 1
+
+    local generation =
+        runtime.AutoGeneration
+
+    runtime.AutoQueued =
+        true
+
+    task.delay(
+        immediate == true
+            and 0.10
+            or 0.75,
+        function()
+
+            if HOLY_PET_SELL_RUNTIME
+                ~= runtime
+            or runtime.AutoGeneration
+                ~= generation
+            or HOLY_SHOP_STATE.AutoSellPets
+                ~= true then
+
+                return
+            end
+
+            runtime.AutoQueued =
+                false
+
+            if runtime.Busy == true then
+
+                runtime.RerunAfterBusy =
+                    true
+
+                return
+            end
+
+            HolyPetSellStart(
+                true
+            )
+        end
+    )
+
+    return true
+end
+
+function HolyPetSellStart(automatic)
+
+    local runtime =
+        HolyPetSellEnsurePacedRuntime()
+
+    automatic =
+        automatic == true
+
+    if type(runtime) ~= "table" then
+        return false
+    end
+
+    if runtime.Busy == true then
+
+        if automatic == true then
+
+            runtime.RerunAfterBusy =
+                true
+
+        else
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                "A pet-selling queue is already running.",
+                3
+            )
+        end
+
+        return false
+    end
+
+    local filters =
+        HolyPetSellCaptureFilters()
+
+    if #filters.Rules <= 0 then
+
+        if automatic ~= true then
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                "Add at least one sell filter first.",
+                4
+            )
+        end
+
+        HolyPetSellSetStatus(
+            "Status: Add at least one sell filter."
+        )
+
+        return false
+    end
+
+    if #filters.ActiveRules <= 0 then
+
+        if automatic ~= true then
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                "Enable at least one sell filter first.",
+                4
+            )
+        end
+
+        HolyPetSellSetStatus(
+            "Status: Enable at least one sell filter."
+        )
+
+        return false
+    end
+
+    HOLY_SHOP_STATE.PetSellRules =
+        filters.Rules
+
+    HOLY_SHOP_STATE.PetSellKeepAmount =
+        filters.Keep
+
+    HolySaveShopSettings()
+
+    local filterGeneration =
+        runtime.FilterGeneration
+
+    local token =
+        {}
+
+    runtime.Token =
+        token
+
+    runtime.Busy =
+        true
+
+    runtime.AutoQueued =
+        false
+
+    runtime.RerunAfterBusy =
+        false
+
+    runtime.InventoryDirty =
+        false
+
+    runtime.QueueTotal =
+        0
+
+    runtime.QueueRemaining =
+        0
+
+    runtime.RunSold =
+        0
+
+    runtime.RunFailed =
+        0
+
+    runtime.RunRateLimited =
+        0
+
+    runtime.RunStartedAt =
+        os.clock()
+
+    runtime.SuccessStreak =
+        0
+
+    HolyPetSellSetStatus(
+        "Building safe sell queue..."
+    )
+
+    task.spawn(function()
+
+        local finishedNormally =
+            false
+
+        local retryAfterFinish =
+            false
+
+        local failureReason =
+            nil
+
+        local sellValueTotal =
+            0
+
+        local finalTotals =
+            nil
+
+        local runOk,
+            runError =
+            pcall(function()
+
+                local sellPacket,
+                    packetReason =
+                    HolyPetSellGetPacket()
+
+                if type(sellPacket) ~= "table" then
+
+                    failureReason =
+                        packetReason
+
+                    return
+                end
+
+                local initial =
+                    HolyPetSellScan()
+
+                if #initial.Ambiguous > 0
+                or #initial.DuplicateIds > 0 then
+
+                    failureReason =
+                        "Ambiguous or duplicate PetIds were detected. Nothing was sold."
+
+                    return
+                end
+
+                local queue,
+                    initialRows,
+                    initialTotals,
+                    groupStates =
+                    HolyPetSellBuildPacedQueue(
+                        initial,
+                        filters
+                    )
+
+                finalTotals =
+                    initialTotals
+
+                runtime.QueueTotal =
+                    #queue
+
+                runtime.QueueRemaining =
+                    #queue
+
+                HolyPetSellRefreshPreview(
+                    false,
+                    initial
+                )
+
+                if #queue <= 0 then
+
+                    finishedNormally =
+                        true
+
+                    return
+                end
+
+                local index =
+                    1
+
+                local retryCounts =
+                    {}
+
+                local consecutiveFailures =
+                    0
+
+                HolyPetSellUpdatePacedStatus(
+                    runtime,
+                    "Selling"
+                )
+
+                while index <= #queue
+                and runtime.Token == token do
+
+                    if runtime.FilterGeneration
+                        ~= filterGeneration then
+
+                        retryAfterFinish =
+                            automatic == true
+
+                        if automatic ~= true then
+
+                            failureReason =
+                                "Sell filters changed. The queue stopped before the next pet."
+                        end
+
+                        return
+                    end
+
+                    local pet =
+                        queue[
+                            index
+                        ]
+
+                    local groupState =
+                        type(pet) == "table"
+                        and groupStates[
+                            pet.GroupKey
+                        ]
+                        or nil
+
+                    if type(groupState) ~= "table" then
+
+                        runtime.RunFailed +=
+                            1
+
+                        index +=
+                            1
+
+                        runtime.QueueRemaining =
+                            #queue
+                            - index
+                            + 1
+
+                        continue
+                    end
+
+                    if os.clock()
+                        - (
+                            tonumber(
+                                groupState.LastSweepAt
+                            )
+                            or 0
+                        )
+                        >= 5 then
+
+                        HolyPetSellRefreshKnownGroupCount(
+                            groupState
+                        )
+                    end
+
+                    if (
+                        tonumber(
+                            groupState.LiveCount
+                        )
+                        or 0
+                    ) <= (
+                        tonumber(
+                            groupState.Keep
+                        )
+                        or 0
+                    )
+                    or HolyPetSellQueuedPetIsSafe(
+                        pet,
+                        filters
+                    ) ~= true then
+
+                        HolyPetSellRefreshKnownGroupCount(
+                            groupState
+                        )
+
+                        runtime.RunFailed +=
+                            1
+
+                        index +=
+                            1
+
+                        runtime.QueueRemaining =
+                            #queue
+                            - index
+                            + 1
+
+                        HolyPetSellUpdatePacedStatus(
+                            runtime,
+                            "Selling"
+                        )
+
+                        continue
+                    end
+
+                    if HolyPetSellWaitForRequestSlot(
+                        runtime,
+                        token
+                    ) ~= true then
+
+                        return
+                    end
+
+                    runtime.LastRequestAt =
+                        os.clock()
+
+                    local callOk,
+                        response,
+                        timedOut =
+                        HolyPetSellCallOne(
+                            sellPacket,
+                            pet.RawPetId
+                        )
+
+                    if timedOut == true then
+
+                        failureReason =
+                            "A SellPet call timed out. The queue stopped to prevent duplicate sales."
+
+                        return
+                    end
+
+                    local rateLimited =
+                        HolyPetSellResponseIsRateLimited(
+                            response
+                        )
+
+                    local responseSucceeded =
+                        callOk == true
+                        and type(response) == "table"
+                        and response.Success == true
+
+                    local confirmationTimeout =
+                        rateLimited == true
+                        and 0.35
+                        or (
+                            callOk ~= true
+                            and 0.35
+                            or (
+                                type(response) == "table"
+                                and response.Success == false
+                                and 0.60
+                                or HOLY_PET_SELL_CONFIRM_TIMEOUT
+                            )
+                        )
+
+                    local removed =
+                        HolyPetSellWaitForRemoval(
+                            pet,
+                            confirmationTimeout
+                        )
+
+                    if removed == true then
+
+                        runtime.RunSold +=
+                            1
+
+                        runtime.QueueRemaining =
+                            #queue
+                            - index
+
+                        groupState.LiveCount =
+                            math.max(
+                                0,
+                                (
+                                    tonumber(
+                                        groupState.LiveCount
+                                    )
+                                    or 0
+                                )
+                                    - 1
+                            )
+
+                        runtime.SuccessStreak +=
+                            1
+
+                        consecutiveFailures =
+                            0
+
+                        retryCounts[
+                            pet.PetId
+                        ] =
+                            nil
+
+                        if responseSucceeded == true then
+
+                            sellValueTotal +=
+                                tonumber(
+                                    response.SellPrice
+                                )
+                                or 0
+                        end
+
+                        if runtime.SuccessStreak >= 12 then
+
+                            runtime.RateDelay =
+                                math.max(
+                                    HOLY_PET_SELL_RATE_MIN_DELAY,
+                                    (
+                                        tonumber(
+                                            runtime.RateDelay
+                                        )
+                                        or HOLY_PET_SELL_RATE_MIN_DELAY
+                                    )
+                                        - 0.05
+                                )
+
+                            runtime.SuccessStreak =
+                                0
+                        end
+
+                        index +=
+                            1
+
+                        HolyPetInventoryScheduleRefresh()
+
+                    else
+
+                        runtime.RunFailed +=
+                            1
+
+                        runtime.SuccessStreak =
+                            0
+
+                        consecutiveFailures +=
+                            1
+
+                        retryCounts[
+                            pet.PetId
+                        ] =
+                            (
+                                tonumber(
+                                    retryCounts[
+                                        pet.PetId
+                                    ]
+                                )
+                                or 0
+                            )
+                                + 1
+
+                        if rateLimited == true then
+
+                            runtime.RunRateLimited +=
+                                1
+
+                            runtime.RateDelay =
+                                math.min(
+                                    HOLY_PET_SELL_RATE_MAX_DELAY,
+                                    math.max(
+                                        (
+                                            tonumber(
+                                                runtime.RateDelay
+                                            )
+                                            or HOLY_PET_SELL_RATE_MIN_DELAY
+                                        )
+                                            * 1.25,
+                                        1.35
+                                    )
+                                )
+
+                        else
+
+                            runtime.RateDelay =
+                                math.min(
+                                    HOLY_PET_SELL_RATE_MAX_DELAY,
+                                    math.max(
+                                        (
+                                            tonumber(
+                                                runtime.RateDelay
+                                            )
+                                            or HOLY_PET_SELL_RATE_MIN_DELAY
+                                        )
+                                            + 0.10,
+                                        1.20
+                                    )
+                                )
+                        end
+
+                        if (
+                            tonumber(
+                                retryCounts[
+                                    pet.PetId
+                                ]
+                            )
+                            or 0
+                        ) >= 3 then
+
+                            index +=
+                                1
+
+                            runtime.QueueRemaining =
+                                #queue
+                                - index
+                                + 1
+
+                            retryAfterFinish =
+                                automatic == true
+                        end
+
+                        if consecutiveFailures >= 5 then
+
+                            failureReason =
+                                "Five consecutive sales were not confirmed. The queue paused safely."
+
+                            return
+                        end
+                    end
+
+                    HolyPetSellUpdatePacedStatus(
+                        runtime,
+                        rateLimited == true
+                        and "Rate limited · backing off"
+                        or "Selling"
+                    )
+                end
+
+                if index > #queue then
+
+                    finishedNormally =
+                        true
+                end
+            end)
+
+        if runOk ~= true then
+
+            failureReason =
+                "Unexpected error: "
+                .. tostring(
+                    runError
+                )
+        end
+
+        local cancelled =
+            runtime.Token
+            ~= token
+
+        if runtime.Token
+            == token then
+
+            runtime.Token =
+                nil
+        end
+
+        runtime.Busy =
+            false
+
+        if HOLY_PET_SELL_RUNTIME
+            ~= runtime then
+
+            return
+        end
+
+        HolyPetInventoryScheduleRefresh()
+
+        HolyPetSellRefreshPetNameDropdown(
+            false
+        )
+
+        HolyPetSellRenderRules()
+
+        local _changed,
+            _snapshot,
+            _rows,
+            refreshedTotals =
+            HolyPetSellRefreshPreview(
+                true
+            )
+
+        finalTotals =
+            refreshedTotals
+            or finalTotals
+
+        if failureReason ~= nil then
+
+            if HOLY_SHOP_STATE.AutoSellPets == true then
+
+                HolyPetSellSetStatus(
+                    "Paused: "
+                        .. tostring(
+                            failureReason
+                        )
+                        .. " · sold "
+                        .. tostring(
+                            runtime.RunSold
+                        )
+                )
+
+                local retryGeneration =
+                    runtime.AutoGeneration
+
+                task.delay(
+                    10,
+                    function()
+
+                        if HOLY_PET_SELL_RUNTIME
+                            ~= runtime
+                        or HOLY_SHOP_STATE.AutoSellPets
+                            ~= true
+                        or runtime.AutoGeneration
+                            ~= retryGeneration then
+
+                            return
+                        end
+
+                        HolyPetSellQueueAutoRun(
+                            "retry after safe pause",
+                            true
+                        )
+                    end
+                )
+
+            else
+
+                HolyPetSellSetStatus(
+                    "Stopped: "
+                        .. tostring(
+                            failureReason
+                        )
+                        .. " · sold "
+                        .. tostring(
+                            runtime.RunSold
+                        )
+                )
+            end
+
+            if automatic ~= true then
+
+                HolyNotify(
+                    "HOLY Pet Seller",
+                    tostring(
+                        failureReason
+                    )
+                        .. " Sold "
+                        .. tostring(
+                            runtime.RunSold
+                        )
+                        .. " pet(s).",
+                    6
+                )
+            end
+
+        elseif cancelled == true
+        and finishedNormally ~= true then
+
+            HolyPetSellSetStatus(
+                "Stopped: sold "
+                    .. tostring(
+                        runtime.RunSold
+                    )
+                    .. " pet(s)."
+            )
+
+        elseif automatic == true then
+
+            HolyPetSellSetStatus(
+                "Watching · last sold "
+                    .. tostring(
+                        runtime.RunSold
+                    )
+                    .. " pet(s) · "
+                    .. string.format(
+                        "%.2fs delay",
+                        tonumber(
+                            runtime.RateDelay
+                        )
+                            or HOLY_PET_SELL_RATE_MIN_DELAY
+                    )
+            )
+
+            if HOLY_SHOP_STATE.AutoSellPets == true
+            and (
+                retryAfterFinish == true
+                or runtime.RerunAfterBusy == true
+                or (
+                    type(finalTotals) == "table"
+                    and (
+                        tonumber(
+                            finalTotals.WillSell
+                        )
+                        or 0
+                    ) > 0
+                )
+            ) then
+
+                HolyPetSellQueueAutoRun(
+                    "continue paced auto sell",
+                    false
+                )
+            end
+
+        else
+
+            HolyPetSellSetStatus(
+                "Finished: sold "
+                    .. tostring(
+                        runtime.RunSold
+                    )
+                    .. " pet(s) · "
+                    .. HolySellFormatValue(
+                        sellValueTotal
+                    )
+            )
+
+            HolyNotify(
+                "HOLY Pet Seller",
+                "Finished selling "
+                    .. tostring(
+                        runtime.RunSold
+                    )
+                    .. " pet(s).",
+                5
+            )
+
+            if HOLY_SHOP_STATE.AutoSellPets == true then
+
+                HolyPetSellQueueAutoRun(
+                    "auto sell enabled during manual queue",
+                    false
+                )
+            end
+        end
+
+        runtime.RerunAfterBusy =
+            false
+
+        runtime.InventoryDirty =
+            false
+    end)
+
+    return true
+end
+
+function HolyPetSellHandleInventoryChanged()
+
+    local runtime =
+        HolyPetSellEnsurePacedRuntime()
+
+    if type(runtime) ~= "table" then
+        return false
+    end
+
+    runtime.InventoryDirty =
+        true
+
+    if runtime.Busy == true then
+
+        return false
+    end
+
+    if HOLY_SHOP_STATE.AutoSellPets == true then
+
+        local changed =
+            HolyPetSellRefreshPreview(
+                false
+            )
+
+        if changed == true then
+
+            HolyPetSellQueueAutoRun(
+                "pet inventory changed",
+                false
+            )
+        end
+
+        return changed
+    end
+
+    HolyPetSellRefreshPetNameDropdown(
+        false
+    )
+
+    HolyPetSellRenderRules()
+
+    return HolyPetSellRefreshPreview(
+        false
+    )
+end
 
 --==================================================
 -- FARM DETAILS
@@ -200248,48 +202004,11 @@ HOLY_SHOP_UI.PetSellKeepInput:OnChanged(function(value)
     )
 end)
 
-HOLY_SHOP_UI.PetSellBatchInput =
-    ShopPetSellerBox:AddInput(
-        "HolyShopPetSellBatchAmount",
-        {
-            Text =
-                "Batch Amount",
-
-            Default =
-                tostring(
-                    HolyPetSellReadBatchAmount(
-                        HOLY_SHOP_STATE.PetSellBatchAmount
-                    )
-                ),
-
-            Placeholder =
-                "5",
-
-            Numeric =
-                true,
-
-            Finished =
-                true,
-
-            ClearTextOnFocus =
-                false,
-
-            Tooltip =
-                "Maximum eligible pets sent together per batch. There is no configured maximum; fewer remaining pets means a smaller batch.",
-        }
+HOLY_SHOP_UI.PetSellRateLabel =
+    HolySniperAddLabel(
+        ShopPetSellerBox,
+        "Automatic rate control · one pet at a time"
     )
-
-HOLY_SHOP_UI.PetSellBatchInput:OnChanged(function(value)
-
-    HOLY_SHOP_STATE.PetSellBatchAmount =
-        HolyPetSellReadBatchAmount(
-            value
-        )
-
-    HolyPetSellFiltersChanged(
-        "batch amount changed"
-    )
-end)
 
 HOLY_SHOP_UI.PetSellStartButton =
     ShopPetSellerBox:AddButton({
@@ -200297,7 +202016,7 @@ HOLY_SHOP_UI.PetSellStartButton =
             "Sell Preview",
 
         Tooltip =
-            "Manually sells every currently previewed excess pet while respecting Keep Per Group and Batch Amount.",
+            "Starts a safe one-pet queue for every currently previewed excess pet while respecting Keep Per Group.",
 
         Func =
             function()
@@ -200313,7 +202032,7 @@ HOLY_SHOP_UI.PetSellStartButton:AddButton({
         "Stop",
 
     Tooltip =
-        "Turns Auto Sell off and stops before the next batch. A batch already sent still finishes confirmation.",
+        "Turns Auto Sell off and stops after the current pet finishes confirmation.",
 
     Func =
         function()
