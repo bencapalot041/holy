@@ -30045,58 +30045,6 @@ function HolyItemAutomationNormalizeCategory(value)
 end
 
 function HolyItemAutomationNormalizeCategories(value, fallback)
-    local raw = HolyShopSelectionArray(value)
-
-    local allSelected = false
-
-    for _, category in ipairs(raw) do
-        if tostring(category) == "All" then
-            allSelected = true
-
-            break
-        end
-    end
-
-    if allSelected == true then
-        return HolyShopSelectionArray(
-            HOLY_ITEM_AUTOMATION_CATEGORIES
-        )
-    end
-
-    local output = {}
-    local seen = {}
-
-    for _, category in ipairs(raw) do
-        category =
-            HolyItemAutomationNormalizeCategory(
-                category
-            )
-
-        if category
-        and seen[category] ~= true then
-            seen[category] = true
-
-            table.insert(
-                output,
-                category
-            )
-        end
-    end
-
-    if #output <= 0 then
-        output =
-            HolyShopSelectionArray(
-                fallback
-                or {
-                    "Fruits",
-                }
-            )
-    end
-
-    return output
-end
-
-function HolyItemAutomationNormalizeChoiceSelection(value)
     local raw =
         HolyShopSelectionArray(
             value
@@ -30104,6 +30052,99 @@ function HolyItemAutomationNormalizeChoiceSelection(value)
 
     local output = {}
     local seen = {}
+    local allSelected = false
+
+    for _, category in ipairs(raw) do
+        if HolyCleanText(category) == "All" then
+            allSelected = true
+        else
+            category =
+                HolyItemAutomationNormalizeCategory(
+                    category
+                )
+
+            if category
+            and seen[category] ~= true then
+                seen[category] =
+                    true
+
+                table.insert(
+                    output,
+                    category
+                )
+            end
+        end
+    end
+
+    local previous =
+        HolyShopSelectionArray(
+            fallback
+        )
+
+    local previousOnlyAll =
+        #previous == 1
+        and HolyCleanText(
+            previous[1]
+        ) == "All"
+
+    if allSelected == true then
+        if #output > 0
+        and previousOnlyAll == true then
+            return output
+        end
+
+        return {
+            "All",
+        }
+    end
+
+    if #output <= 0 then
+        local fallbackOutput = {}
+
+        for _, category in ipairs(previous) do
+            if HolyCleanText(category) == "All" then
+                return {
+                    "All",
+                }
+            end
+
+            category =
+                HolyItemAutomationNormalizeCategory(
+                    category
+                )
+
+            if category then
+                table.insert(
+                    fallbackOutput,
+                    category
+                )
+            end
+        end
+
+        if #fallbackOutput > 0 then
+            return fallbackOutput
+        end
+
+        return {
+            "Fruits",
+        }
+    end
+
+    return output
+end
+
+function HolyItemAutomationNormalizeChoiceSelection(
+    value,
+    previous
+)
+    local raw =
+        HolyShopSelectionArray(
+            value
+        )
+
+    local output = {}
+    local seen = {}
+    local allSelected = false
 
     for _, selected in ipairs(raw) do
         selected =
@@ -30112,18 +30153,44 @@ function HolyItemAutomationNormalizeChoiceSelection(value)
             )
 
         if selected == "All" then
-            return {}
-        end
-
-        if selected ~= ""
+            allSelected = true
+        elseif selected ~= ""
         and seen[selected] ~= true then
-            seen[selected] = true
+            seen[selected] =
+                true
 
             table.insert(
                 output,
                 selected
             )
         end
+    end
+
+    local previousValues =
+        HolyShopSelectionArray(
+            previous
+        )
+
+    local previousOnlyAll =
+        #previousValues == 1
+        and HolyCleanText(
+            previousValues[1]
+        ) == "All"
+
+    if allSelected == true then
+        if #output > 0
+        and previousOnlyAll == true then
+            table.sort(output, function(a, b)
+                return tostring(a):lower()
+                    < tostring(b):lower()
+            end)
+
+            return output
+        end
+
+        return {
+            "All",
+        }
     end
 
     table.sort(output, function(a, b)
@@ -30248,6 +30315,12 @@ function HolyFruitAutomationEnsureState()
     local state =
         HOLY_FRUIT_AUTOMATION_STATE
 
+    local migrateEmptyItemSelections =
+        tonumber(
+            state.ItemSelectionVersion
+        )
+        ~= 3
+
     if state.AutoDropItems == nil then
         state.AutoDropItems =
             state.AutoDropFruits == true
@@ -30345,8 +30418,28 @@ function HolyFruitAutomationEnsureState()
             state.SelectedPickupTraits
         )
 
+    if migrateEmptyItemSelections == true then
+        if #state.SelectedDropItems <= 0 then
+            state.SelectedDropItems = {
+                "All",
+            }
+        end
+
+        if #state.SelectedPickupItems <= 0 then
+            state.SelectedPickupItems = {
+                "All",
+            }
+        end
+    end
+
+    state.ItemSelectionVersion =
+        3
+
     state.ProtectFavorited =
         state.ProtectFavorited ~= false
+
+    state.ProtectBigHugeRainbowPets =
+        state.ProtectBigHugeRainbowPets ~= false
 
     state.IgnoreOwnDrops =
         state.IgnoreOwnDrops ~= false
@@ -30560,7 +30653,7 @@ function HolySaveFruitAutomationSettings()
         HOLY_FRUIT_AUTOMATION_STATE
 
     local payload = {
-        Version = 2,
+        Version = 3,
 
         AutoDropItems =
             state.AutoDropItems == true,
@@ -30603,6 +30696,9 @@ function HolySaveFruitAutomationSettings()
 
         ProtectFavorited =
             state.ProtectFavorited ~= false,
+
+        ProtectBigHugeRainbowPets =
+            state.ProtectBigHugeRainbowPets ~= false,
 
         IgnoreOwnDrops =
             state.IgnoreOwnDrops ~= false,
@@ -30729,6 +30825,12 @@ function HolyLoadFruitAutomationSettings()
         return false
     end
 
+    state.ItemSelectionVersion =
+        tonumber(
+            data.Version
+        )
+        or 1
+
     state.AutoDropItems =
         data.AutoDropItems == true
         or (
@@ -30780,6 +30882,9 @@ function HolyLoadFruitAutomationSettings()
 
     state.ProtectFavorited =
         data.ProtectFavorited
+
+    state.ProtectBigHugeRainbowPets =
+        data.ProtectBigHugeRainbowPets
 
     state.IgnoreOwnDrops =
         data.IgnoreOwnDrops
@@ -31470,6 +31575,55 @@ function HolyItemAutomationTraitGroupPasses(
         or hasMatch == true
 end
 
+function HolyItemAutomationProtectedPetTraitValue(value)
+    value =
+        HolyCleanText(
+            value
+        ):lower()
+
+    return value == "big"
+        or value == "huge"
+        or value == "mega"
+        or value == "rainbow"
+end
+
+function HolyItemAutomationIsProtectedPet(record)
+    if type(record) ~= "table"
+    or record.Group ~= "Pets" then
+        return false
+    end
+
+    if HolyItemAutomationProtectedPetTraitValue(
+        record.PetSize
+    ) == true
+    or HolyItemAutomationProtectedPetTraitValue(
+        record.PetVariant
+    ) == true then
+        return true
+    end
+
+    for trait in pairs(
+        type(record.TraitMap) == "table"
+        and record.TraitMap
+        or {}
+    ) do
+        local value =
+            tostring(
+                trait
+            ):match(
+                "^[^·]+·%s*(.+)$"
+            )
+
+        if HolyItemAutomationProtectedPetTraitValue(
+            value
+        ) == true then
+            return true
+        end
+    end
+
+    return false
+end
+
 function HolyItemAutomationRecordPasses(record, side)
     local state =
         HolyFruitAutomationEnsureState()
@@ -31489,6 +31643,14 @@ function HolyItemAutomationRecordPasses(record, side)
     local dropSide =
         side == "Drop"
 
+    if dropSide == true
+    and state.ProtectBigHugeRainbowPets == true
+    and HolyItemAutomationIsProtectedPet(
+        record
+    ) == true then
+        return false
+    end
+
     local categories =
         dropSide
         and state.DropCategories
@@ -31499,7 +31661,8 @@ function HolyItemAutomationRecordPasses(record, side)
             categories
         )
 
-    if categoryMap[record.Group] ~= true then
+    if categoryMap.All ~= true
+    and categoryMap[record.Group] ~= true then
         return false
     end
 
@@ -31508,12 +31671,16 @@ function HolyItemAutomationRecordPasses(record, side)
         and state.SelectedDropItems
         or state.SelectedPickupItems
 
-    if #selectedItems > 0 then
-        local itemMap =
-            HolyItemAutomationSelectionMap(
-                selectedItems
-            )
+    if #selectedItems <= 0 then
+        return false
+    end
 
+    local itemMap =
+        HolyItemAutomationSelectionMap(
+            selectedItems
+        )
+
+    if itemMap.All ~= true then
         if itemMap[
             HolyItemAutomationDisplayName(
                 record.Group,
@@ -31535,31 +31702,33 @@ function HolyItemAutomationRecordPasses(record, side)
                 selectedTraits
             )
 
-        if HolyItemAutomationTraitGroupPasses(
-            record,
-            traitMap,
-            "Fruit Mutation · ",
-            record.Group == "Fruits"
-        ) ~= true then
-            return false
-        end
+        if traitMap.All ~= true then
+            if HolyItemAutomationTraitGroupPasses(
+                record,
+                traitMap,
+                "Fruit Mutation · ",
+                record.Group == "Fruits"
+            ) ~= true then
+                return false
+            end
 
-        if HolyItemAutomationTraitGroupPasses(
-            record,
-            traitMap,
-            "Pet Size · ",
-            record.Group == "Pets"
-        ) ~= true then
-            return false
-        end
+            if HolyItemAutomationTraitGroupPasses(
+                record,
+                traitMap,
+                "Pet Size · ",
+                record.Group == "Pets"
+            ) ~= true then
+                return false
+            end
 
-        if HolyItemAutomationTraitGroupPasses(
-            record,
-            traitMap,
-            "Pet Variant · ",
-            record.Group == "Pets"
-        ) ~= true then
-            return false
+            if HolyItemAutomationTraitGroupPasses(
+                record,
+                traitMap,
+                "Pet Variant · ",
+                record.Group == "Pets"
+            ) ~= true then
+                return false
+            end
         end
     end
 
@@ -31764,23 +31933,638 @@ function HolyFruitAutomationGetFruitTools()
     )
 end
 
-function HolyItemAutomationBuildFilterValues()
-    local state =
-        HolyFruitAutomationEnsureState()
+function HolyItemAutomationCatalogFirstText(...)
+    for index = 1, select(
+        "#",
+        ...
+    ) do
+        local candidate =
+            select(
+                index,
+                ...
+            )
 
+        if type(candidate) == "string"
+        or type(candidate) == "number" then
+            local value =
+                HolyCleanText(
+                    candidate
+                )
+
+            if value ~= "" then
+                return value
+            end
+        end
+    end
+
+    return ""
+end
+
+function HolyItemAutomationSimpleKey(value)
+    if type(HolyAccountInventoryKey)
+        == "function" then
+        return HolyAccountInventoryKey(
+            value
+        )
+    end
+
+    return HolyCleanText(
+        value
+    ):lower():gsub(
+        "[^%w]+",
+        ""
+    )
+end
+
+function HolyItemAutomationCatalogAddItem(
+    index,
+    group,
+    name
+)
+    if type(index) ~= "table"
+    or type(index.Items) ~= "table" then
+        return false
+    end
+
+    group =
+        HolyItemAutomationNormalizeCategory(
+            group
+        )
+
+    name =
+        HolyCleanText(
+            name
+        )
+
+    if group == "Fruits" then
+        name =
+            HolyFruitAutomationNormalizeFruitName(
+                name
+            )
+    end
+
+    if group == nil
+    or name == ""
+    or name == "All" then
+        return false
+    end
+
+    index.Items[group] =
+        type(index.Items[group]) == "table"
+        and index.Items[group]
+        or {}
+
+    local display =
+        HolyItemAutomationDisplayName(
+            group,
+            name
+        )
+
+    if display == "" then
+        return false
+    end
+
+    index.Items[group][display] =
+        true
+
+    return true
+end
+
+function HolyItemAutomationCatalogAddTrait(
+    index,
+    group,
+    traitType,
+    value
+)
+    if type(index) ~= "table"
+    or type(index.Traits) ~= "table" then
+        return false
+    end
+
+    group =
+        HolyItemAutomationNormalizeCategory(
+            group
+        )
+
+    value =
+        HolyCleanText(
+            value
+        )
+
+    if group == nil
+    or value == ""
+    or value == "All" then
+        return false
+    end
+
+    local trait =
+        HolyItemAutomationTraitName(
+            traitType,
+            value
+        )
+
+    if trait == "" then
+        return false
+    end
+
+    index.Traits[group] =
+        type(index.Traits[group]) == "table"
+        and index.Traits[group]
+        or {}
+
+    index.Traits[group][trait] =
+        true
+
+    return true
+end
+
+function HolyItemAutomationCatalogAddRecord(
+    index,
+    record
+)
+    if type(record) ~= "table" then
+        return false
+    end
+
+    HolyItemAutomationCatalogAddItem(
+        index,
+        record.Group,
+        record.Name
+    )
+
+    for _, trait in ipairs(
+        record.Traits
+        or {}
+    ) do
+        local group =
+            tostring(
+                trait
+            ):find(
+                "Fruit Mutation · ",
+                1,
+                true
+            ) == 1
+            and "Fruits"
+            or "Pets"
+
+        index.Traits[group] =
+            type(index.Traits[group]) == "table"
+            and index.Traits[group]
+            or {}
+
+        index.Traits[group][trait] =
+            true
+    end
+
+    return true
+end
+
+function HolyItemAutomationBuildCatalogIndex(forceRefresh)
     local runtime =
         HolyFruitAutomationEnsureRuntime()
 
-    if type(runtime.ItemFilterValues) == "table"
-    and type(runtime.TraitFilterValues) == "table"
-    and os.clock() - runtime.ItemFilterValuesAt <= 0.75 then
-        return HolyShopSelectionArray(
-            runtime.ItemFilterValues
-        ),
-            HolyShopSelectionArray(
-                runtime.TraitFilterValues
-            )
+    if forceRefresh ~= true
+    and type(runtime.ItemCatalogIndex) == "table"
+    and os.clock() - (
+        tonumber(
+            runtime.ItemCatalogIndexAt
+        )
+        or 0
+    ) <= 0.75 then
+        return runtime.ItemCatalogIndex
     end
+
+    local index = {
+        Items = {},
+        Traits = {},
+    }
+
+    for _, category in ipairs(
+        HOLY_ITEM_AUTOMATION_CATEGORIES
+    ) do
+        index.Items[category] = {}
+        index.Traits[category] = {}
+    end
+
+    if type(HolyFarmGetPlantDropdownValues)
+        == "function" then
+        local ok,
+            values =
+            pcall(
+                HolyFarmGetPlantDropdownValues
+            )
+
+        if ok == true
+        and type(values) == "table" then
+            for _, fruitName in ipairs(values) do
+                HolyItemAutomationCatalogAddItem(
+                    index,
+                    "Fruits",
+                    fruitName
+                )
+            end
+        end
+    end
+
+    if type(HolyFarmGetMutationDropdownValues)
+        == "function" then
+        local ok,
+            values =
+            pcall(
+                HolyFarmGetMutationDropdownValues
+            )
+
+        if ok == true
+        and type(values) == "table" then
+            for _, mutation in ipairs(values) do
+                HolyItemAutomationCatalogAddTrait(
+                    index,
+                    "Fruits",
+                    "Fruit Mutation",
+                    mutation
+                )
+            end
+        end
+    end
+
+    HolyItemAutomationCatalogAddTrait(
+        index,
+        "Pets",
+        "Pet Size",
+        "Normal"
+    )
+
+    HolyItemAutomationCatalogAddTrait(
+        index,
+        "Pets",
+        "Pet Size",
+        "Big"
+    )
+
+    HolyItemAutomationCatalogAddTrait(
+        index,
+        "Pets",
+        "Pet Size",
+        "Huge"
+    )
+
+    HolyItemAutomationCatalogAddTrait(
+        index,
+        "Pets",
+        "Pet Size",
+        "Mega"
+    )
+
+    HolyItemAutomationCatalogAddTrait(
+        index,
+        "Pets",
+        "Pet Variant",
+        "Normal"
+    )
+
+    HolyItemAutomationCatalogAddTrait(
+        index,
+        "Pets",
+        "Pet Variant",
+        "Rainbow"
+    )
+
+    local catalogs =
+        HolyItemAutomationGetCatalogs()
+
+    for key, row in pairs(
+        catalogs.Seeds
+        or {}
+    ) do
+        if type(row) == "table"
+        and row.MutationSeed ~= true then
+            HolyItemAutomationCatalogAddItem(
+                index,
+                "Fruits",
+                HolyItemAutomationCatalogFirstText(
+                    row.FruitName,
+                    row.CropName,
+                    row.PlantName
+                )
+            )
+
+            HolyItemAutomationCatalogAddItem(
+                index,
+                "Seeds",
+                HolyItemAutomationCatalogFirstText(
+                    row.SeedName,
+                    row.ItemName,
+                    row.DisplayName,
+                    row.Name,
+                    row.FruitName,
+                    row.CropName,
+                    key
+                )
+            )
+        end
+    end
+
+    for key, row in pairs(
+        catalogs.Pets
+        or {}
+    ) do
+        if type(row) == "table" then
+            HolyItemAutomationCatalogAddItem(
+                index,
+                "Pets",
+                HolyItemAutomationCatalogFirstText(
+                    row.DisplayName,
+                    row.PetName,
+                    row.ItemName,
+                    row.Name,
+                    key
+                )
+            )
+        end
+    end
+
+    for key, row in pairs(
+        catalogs.Eggs
+        or {}
+    ) do
+        if type(row) == "table" then
+            HolyItemAutomationCatalogAddItem(
+                index,
+                "Eggs",
+                HolyItemAutomationCatalogFirstText(
+                    row.EggName,
+                    row.ItemName,
+                    row.DisplayName,
+                    row.Name,
+                    key
+                )
+            )
+        end
+    end
+
+    for key, row in pairs(
+        catalogs.SeedPacks
+        or {}
+    ) do
+        if type(row) == "table" then
+            HolyItemAutomationCatalogAddItem(
+                index,
+                "Gear",
+                HolyItemAutomationCatalogFirstText(
+                    row.SeedPackName,
+                    row.PackName,
+                    row.ItemName,
+                    row.DisplayName,
+                    row.Name,
+                    key
+                )
+            )
+        end
+    end
+
+    for key, row in pairs(
+        catalogs.Gear
+        or {}
+    ) do
+        if type(row) == "table" then
+            local name =
+                HolyItemAutomationCatalogFirstText(
+                    row.ItemName,
+                    row.DisplayName,
+                    row.Name,
+                    key
+                )
+
+            local gearKey =
+                HolyItemAutomationSimpleKey(
+                    HolyItemAutomationCatalogFirstText(
+                        row.ItemType,
+                        row.Type,
+                        row.Category,
+                        name
+                    )
+                )
+
+            if gearKey:find(
+                "wateringcan",
+                1,
+                true
+            )
+            or gearKey:find(
+                "trowel",
+                1,
+                true
+            )
+            or gearKey:find(
+                "sprinkler",
+                1,
+                true
+            ) then
+                HolyItemAutomationCatalogAddItem(
+                    index,
+                    "Gear",
+                    name
+                )
+            end
+        end
+    end
+
+    for key, row in pairs(
+        catalogs.Props
+        or {}
+    ) do
+        if type(row) == "table" then
+            HolyItemAutomationCatalogAddItem(
+                index,
+                "Props",
+                HolyItemAutomationCatalogFirstText(
+                    row.PropName,
+                    row.ItemName,
+                    row.DisplayName,
+                    row.Name,
+                    key
+                )
+            )
+        end
+    end
+
+    for _, record in ipairs(
+        HolyItemAutomationGetInventoryRecords(
+            false
+        )
+    ) do
+        HolyItemAutomationCatalogAddRecord(
+            index,
+            record
+        )
+    end
+
+    local droppedFolder =
+        HolyFruitAutomationGetDroppedFolder()
+
+    if typeof(droppedFolder) == "Instance" then
+        for _, item in ipairs(
+            droppedFolder:GetChildren()
+        ) do
+            HolyItemAutomationCatalogAddRecord(
+                index,
+                HolyItemAutomationReadGroundInfo(
+                    item,
+                    false
+                )
+            )
+        end
+    end
+
+    runtime.ItemCatalogIndex =
+        index
+
+    runtime.ItemCatalogIndexAt =
+        os.clock()
+
+    return index
+end
+
+function HolyItemAutomationCategoryMapForSide(side)
+    local state =
+        HolyFruitAutomationEnsureState()
+
+    local categories =
+        side == "Drop"
+        and state.DropCategories
+        or state.PickupCategories
+
+    local map =
+        HolyItemAutomationSelectionMap(
+            categories
+        )
+
+    if map.All == true then
+        for _, category in ipairs(
+            HOLY_ITEM_AUTOMATION_CATEGORIES
+        ) do
+            map[category] =
+                true
+        end
+    end
+
+    return map
+end
+
+function HolyItemAutomationItemValueGroup(value)
+    local group =
+        tostring(
+            value
+            or ""
+        ):match(
+            "^([^·]+)%s*·"
+        )
+
+    return HolyItemAutomationNormalizeCategory(
+        group
+    )
+end
+
+function HolyItemAutomationTraitValueAllowed(
+    value,
+    categoryMap
+)
+    value =
+        tostring(
+            value
+            or ""
+        )
+
+    if value == "All" then
+        return categoryMap.Fruits == true
+            or categoryMap.Pets == true
+    end
+
+    if value:find(
+        "Fruit Mutation · ",
+        1,
+        true
+    ) == 1 then
+        return categoryMap.Fruits == true
+    end
+
+    if value:find(
+        "Pet Size · ",
+        1,
+        true
+    ) == 1
+    or value:find(
+        "Pet Variant · ",
+        1,
+        true
+    ) == 1 then
+        return categoryMap.Pets == true
+    end
+
+    return false
+end
+
+function HolyItemAutomationAddDropdownValue(
+    values,
+    seen,
+    value
+)
+    value =
+        HolyCleanText(
+            value
+        )
+
+    if value == ""
+    or seen[value] == true then
+        return false
+    end
+
+    seen[value] =
+        true
+
+    table.insert(
+        values,
+        value
+    )
+
+    return true
+end
+
+function HolyItemAutomationSortDropdownValues(values)
+    table.sort(values, function(a, b)
+        if a == "All" then
+            return b ~= "All"
+        end
+
+        if b == "All" then
+            return false
+        end
+
+        return tostring(a):lower()
+            < tostring(b):lower()
+    end)
+
+    return values
+end
+
+function HolyItemAutomationBuildSideFilterValues(side)
+    local state =
+        HolyFruitAutomationEnsureState()
+
+    side =
+        side == "Drop"
+        and "Drop"
+        or "Pickup"
+
+    local categoryMap =
+        HolyItemAutomationCategoryMapForSide(
+            side
+        )
+
+    local index =
+        HolyItemAutomationBuildCatalogIndex(
+            false
+        )
 
     local itemValues = {
         "All",
@@ -31798,174 +32582,262 @@ function HolyItemAutomationBuildFilterValues()
         All = true,
     }
 
-    local function addRecord(record)
-        if type(record) ~= "table" then
-            return
-        end
+    for _, category in ipairs(
+        HOLY_ITEM_AUTOMATION_CATEGORIES
+    ) do
+        if categoryMap[category] == true then
+            for display in pairs(
+                index.Items[category]
+                or {}
+            ) do
+                HolyItemAutomationAddDropdownValue(
+                    itemValues,
+                    itemSeen,
+                    display
+                )
+            end
 
-        local display =
-            HolyItemAutomationDisplayName(
-                record.Group,
-                record.Name
+            if category == "Fruits"
+            or category == "Pets" then
+                for trait in pairs(
+                    index.Traits[category]
+                    or {}
+                ) do
+                    HolyItemAutomationAddDropdownValue(
+                        traitValues,
+                        traitSeen,
+                        trait
+                    )
+                end
+            end
+        end
+    end
+
+    local selectedItems =
+        side == "Drop"
+        and state.SelectedDropItems
+        or state.SelectedPickupItems
+
+    for _, display in ipairs(
+        selectedItems
+    ) do
+        local group =
+            HolyItemAutomationItemValueGroup(
+                display
             )
 
-        if display ~= ""
-        and itemSeen[display] ~= true then
-            itemSeen[display] = true
-
-            table.insert(
+        if display == "All"
+        or (
+            group
+            and categoryMap[group] == true
+        ) then
+            HolyItemAutomationAddDropdownValue(
                 itemValues,
+                itemSeen,
                 display
             )
         end
+    end
 
-        for _, trait in ipairs(
-            record.Traits
-            or {}
+    local selectedTraits =
+        side == "Drop"
+        and state.SelectedDropTraits
+        or state.SelectedPickupTraits
+
+    for _, trait in ipairs(
+        selectedTraits
+    ) do
+        if HolyItemAutomationTraitValueAllowed(
+            trait,
+            categoryMap
+        ) == true then
+            HolyItemAutomationAddDropdownValue(
+                traitValues,
+                traitSeen,
+                trait
+            )
+        end
+    end
+
+    HolyItemAutomationSortDropdownValues(
+        itemValues
+    )
+
+    HolyItemAutomationSortDropdownValues(
+        traitValues
+    )
+
+    return itemValues,
+        traitValues,
+        categoryMap.Fruits == true
+            or categoryMap.Pets == true
+end
+
+function HolyItemAutomationArraysEqual(a, b)
+    a =
+        HolyShopSelectionArray(
+            a
+        )
+
+    b =
+        HolyShopSelectionArray(
+            b
+        )
+
+    if #a ~= #b then
+        return false
+    end
+
+    for index, value in ipairs(a) do
+        if tostring(value)
+            ~= tostring(b[index]) then
+            return false
+        end
+    end
+
+    return true
+end
+
+function HolyItemAutomationReconcileSideSelections(
+    side,
+    itemValues,
+    traitValues,
+    traitsEnabled
+)
+    local state =
+        HolyFruitAutomationEnsureState()
+
+    local itemField =
+        side == "Drop"
+        and "SelectedDropItems"
+        or "SelectedPickupItems"
+
+    local traitField =
+        side == "Drop"
+        and "SelectedDropTraits"
+        or "SelectedPickupTraits"
+
+    local validItems =
+        HolyItemAutomationSelectionMap(
+            itemValues
+        )
+
+    local validTraits =
+        HolyItemAutomationSelectionMap(
+            traitValues
+        )
+
+    local selectedItemMap =
+        HolyItemAutomationSelectionMap(
+            state[itemField]
+        )
+
+    local selectedTraitMap =
+        HolyItemAutomationSelectionMap(
+            state[traitField]
+        )
+
+    local nextItems = {}
+    local nextTraits = {}
+
+    if selectedItemMap.All == true then
+        nextItems = {
+            "All",
+        }
+    else
+        for _, display in ipairs(
+            state[itemField]
         ) do
-            if traitSeen[trait] ~= true then
-                traitSeen[trait] = true
-
+            if validItems[display] == true
+            and display ~= "All" then
                 table.insert(
-                    traitValues,
-                    trait
+                    nextItems,
+                    display
                 )
             end
         end
     end
 
-    for _, record in ipairs(
-        HolyItemAutomationGetInventoryRecords(
-            false
-        )
-    ) do
-        addRecord(
-            record
-        )
-    end
-
-    local droppedFolder =
-        HolyFruitAutomationGetDroppedFolder()
-
-    if typeof(droppedFolder) == "Instance" then
-        for _, item in ipairs(
-            droppedFolder:GetChildren()
-        ) do
-            addRecord(
-                HolyItemAutomationReadGroundInfo(
-                    item,
-                    false
-                )
-            )
+    if traitsEnabled == true then
+        if selectedTraitMap.All == true then
+            nextTraits = {
+                "All",
+            }
+        else
+            for _, trait in ipairs(
+                state[traitField]
+            ) do
+                if validTraits[trait] == true
+                and trait ~= "All" then
+                    table.insert(
+                        nextTraits,
+                        trait
+                    )
+                end
+            end
         end
     end
 
-    for _, display in ipairs(
-        state.SelectedDropItems
-    ) do
-        if itemSeen[display] ~= true then
-            itemSeen[display] = true
-
-            table.insert(
-                itemValues,
-                display
-            )
-        end
-    end
-
-    for _, display in ipairs(
-        state.SelectedPickupItems
-    ) do
-        if itemSeen[display] ~= true then
-            itemSeen[display] = true
-
-            table.insert(
-                itemValues,
-                display
-            )
-        end
-    end
-
-    for _, trait in ipairs(
-        state.SelectedDropTraits
-    ) do
-        if traitSeen[trait] ~= true then
-            traitSeen[trait] = true
-
-            table.insert(
-                traitValues,
-                trait
-            )
-        end
-    end
-
-    for _, trait in ipairs(
-        state.SelectedPickupTraits
-    ) do
-        if traitSeen[trait] ~= true then
-            traitSeen[trait] = true
-
-            table.insert(
-                traitValues,
-                trait
-            )
-        end
-    end
-
-    table.sort(itemValues, function(a, b)
-        if a == "All" then
-            return b ~= "All"
-        end
-
-        if b == "All" then
-            return false
-        end
-
-        return tostring(a):lower()
-            < tostring(b):lower()
-    end)
-
-    table.sort(traitValues, function(a, b)
-        if a == "All" then
-            return b ~= "All"
-        end
-
-        if b == "All" then
-            return false
-        end
-
-        return tostring(a):lower()
-            < tostring(b):lower()
-    end)
-
-    runtime.ItemFilterValues =
-        HolyShopSelectionArray(
-            itemValues
+    nextItems =
+        HolyItemAutomationNormalizeChoiceSelection(
+            nextItems
         )
 
-    runtime.TraitFilterValues =
-        HolyShopSelectionArray(
-            traitValues
+    nextTraits =
+        HolyItemAutomationNormalizeChoiceSelection(
+            nextTraits
         )
 
-    runtime.ItemFilterValuesAt =
-        os.clock()
+    local changed =
+        HolyItemAutomationArraysEqual(
+            state[itemField],
+            nextItems
+        ) ~= true
+        or HolyItemAutomationArraysEqual(
+            state[traitField],
+            nextTraits
+        ) ~= true
 
-    return itemValues,
-        traitValues
+    state[itemField] =
+        nextItems
+
+    state[traitField] =
+        nextTraits
+
+    return changed
 end
 
-function HolyItemAutomationGetItemDropdownValues()
+function HolyItemAutomationBuildFilterValues(side)
+    side =
+        side == "Drop"
+        and "Drop"
+        or side == "Pickup"
+        and "Pickup"
+        or HolyFruitAutomationEnsureState()
+            .ActivePage == "DROP"
+        and "Drop"
+        or "Pickup"
+
+    return HolyItemAutomationBuildSideFilterValues(
+        side
+    )
+end
+
+function HolyItemAutomationGetItemDropdownValues(side)
     local itemValues =
-        HolyItemAutomationBuildFilterValues()
+        HolyItemAutomationBuildFilterValues(
+            side
+        )
 
     return itemValues
 end
 
-function HolyItemAutomationGetTraitDropdownValues()
+function HolyItemAutomationGetTraitDropdownValues(side)
     local _,
         traitValues =
-        HolyItemAutomationBuildFilterValues()
+        HolyItemAutomationBuildFilterValues(
+            side
+        )
 
     return traitValues
 end
@@ -33155,6 +34027,11 @@ function HolyItemAutomationSetCategories(side, value)
     local state =
         HolyFruitAutomationEnsureState()
 
+    side =
+        side == "Drop"
+        and "Drop"
+        or "Pickup"
+
     local field =
         side == "Drop"
         and "DropCategories"
@@ -33166,6 +34043,10 @@ function HolyItemAutomationSetCategories(side, value)
             state[field]
         )
 
+    HolyFruitAutomationRefreshDropdowns(
+        false
+    )
+
     HolySaveFruitAutomationSettings()
 
     return state[field]
@@ -33175,6 +34056,11 @@ function HolyItemAutomationSetItems(side, value)
     local state =
         HolyFruitAutomationEnsureState()
 
+    side =
+        side == "Drop"
+        and "Drop"
+        or "Pickup"
+
     local field =
         side == "Drop"
         and "SelectedDropItems"
@@ -33182,10 +34068,15 @@ function HolyItemAutomationSetItems(side, value)
 
     state[field] =
         HolyItemAutomationNormalizeChoiceSelection(
-            value
+            value,
+            state[field]
         )
 
     HolySaveFruitAutomationSettings()
+
+    HolyFruitAutomationRefreshDropdowns(
+        false
+    )
 
     return state[field]
 end
@@ -33194,6 +34085,11 @@ function HolyItemAutomationSetTraits(side, value)
     local state =
         HolyFruitAutomationEnsureState()
 
+    side =
+        side == "Drop"
+        and "Drop"
+        or "Pickup"
+
     local field =
         side == "Drop"
         and "SelectedDropTraits"
@@ -33201,10 +34097,15 @@ function HolyItemAutomationSetTraits(side, value)
 
     state[field] =
         HolyItemAutomationNormalizeChoiceSelection(
-            value
+            value,
+            state[field]
         )
 
     HolySaveFruitAutomationSettings()
+
+    HolyFruitAutomationRefreshDropdowns(
+        false
+    )
 
     return state[field]
 end
@@ -33289,6 +34190,20 @@ function HolyItemAutomationSetProtectFavorited(value)
     HolySaveFruitAutomationSettings()
 
     return state.ProtectFavorited
+end
+
+function HolyItemAutomationSetProtectBigHugeRainbowPets(
+    value
+)
+    local state =
+        HolyFruitAutomationEnsureState()
+
+    state.ProtectBigHugeRainbowPets =
+        value == true
+
+    HolySaveFruitAutomationSettings()
+
+    return state.ProtectBigHugeRainbowPets
 end
 
 function HolyItemAutomationSetIgnoreOwnDrops(value)
@@ -33382,6 +34297,34 @@ function HolyItemAutomationApplyPage()
         )
     end
 
+    local dropCategoryMap =
+        HolyItemAutomationCategoryMapForSide(
+            "Drop"
+        )
+
+    local pickupCategoryMap =
+        HolyItemAutomationCategoryMapForSide(
+            "Pickup"
+        )
+
+    HolyItemAutomationSetControlVisible(
+        ui.DropTraitsDropdown,
+        showDrop == true
+        and (
+            dropCategoryMap.Fruits == true
+            or dropCategoryMap.Pets == true
+        )
+    )
+
+    HolyItemAutomationSetControlVisible(
+        ui.PickupTraitsDropdown,
+        showDrop ~= true
+        and (
+            pickupCategoryMap.Fruits == true
+            or pickupCategoryMap.Pets == true
+        )
+    )
+
     return true
 end
 
@@ -33403,13 +34346,47 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
         runtime.ItemFilterValues = nil
         runtime.TraitFilterValues = nil
         runtime.ItemFilterValuesAt = 0
+        runtime.ItemCatalogIndex = nil
+        runtime.ItemCatalogIndexAt = 0
         runtime.InventoryRecordCache = nil
         runtime.InventoryRecordCacheAt = 0
     end
 
-    local itemValues,
-        traitValues =
-        HolyItemAutomationBuildFilterValues()
+    local dropItemValues,
+        dropTraitValues,
+        dropTraitsEnabled =
+        HolyItemAutomationBuildSideFilterValues(
+            "Drop"
+        )
+
+    local pickupItemValues,
+        pickupTraitValues,
+        pickupTraitsEnabled =
+        HolyItemAutomationBuildSideFilterValues(
+            "Pickup"
+        )
+
+    local selectionsChanged =
+        HolyItemAutomationReconcileSideSelections(
+            "Drop",
+            dropItemValues,
+            dropTraitValues,
+            dropTraitsEnabled
+        )
+
+    if HolyItemAutomationReconcileSideSelections(
+        "Pickup",
+        pickupItemValues,
+        pickupTraitValues,
+        pickupTraitsEnabled
+    ) == true then
+        selectionsChanged =
+            true
+    end
+
+    if selectionsChanged == true then
+        HolySaveFruitAutomationSettings()
+    end
 
     runtime.UpdatingItemUI =
         true
@@ -33417,10 +34394,46 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
     local controls = {
         {
             Control =
+                ui.DropCategoriesDropdown,
+
+            Values = {
+                "All",
+                "Fruits",
+                "Pets",
+                "Eggs",
+                "Seeds",
+                "Gear",
+                "Props",
+            },
+
+            Selected =
+                state.DropCategories,
+        },
+
+        {
+            Control =
+                ui.PickupCategoriesDropdown,
+
+            Values = {
+                "All",
+                "Fruits",
+                "Pets",
+                "Eggs",
+                "Seeds",
+                "Gear",
+                "Props",
+            },
+
+            Selected =
+                state.PickupCategories,
+        },
+
+        {
+            Control =
                 ui.DropItemsDropdown,
 
             Values =
-                itemValues,
+                dropItemValues,
 
             Selected =
                 state.SelectedDropItems,
@@ -33431,7 +34444,7 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
                 ui.PickupItemsDropdown,
 
             Values =
-                itemValues,
+                pickupItemValues,
 
             Selected =
                 state.SelectedPickupItems,
@@ -33442,7 +34455,7 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
                 ui.DropTraitsDropdown,
 
             Values =
-                traitValues,
+                dropTraitValues,
 
             Selected =
                 state.SelectedDropTraits,
@@ -33453,7 +34466,7 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
                 ui.PickupTraitsDropdown,
 
             Values =
-                traitValues,
+                pickupTraitValues,
 
             Selected =
                 state.SelectedPickupTraits,
@@ -202682,7 +203695,9 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                     "Items",
 
                 Values =
-                    HolyItemAutomationGetItemDropdownValues(),
+                    HolyItemAutomationGetItemDropdownValues(
+                        "Drop"
+                    ),
 
                 Default =
                     HOLY_FRUIT_AUTOMATION_STATE.SelectedDropItems,
@@ -202726,7 +203741,9 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                     "Mutations / Variants",
 
                 Values =
-                    HolyItemAutomationGetTraitDropdownValues(),
+                    HolyItemAutomationGetTraitDropdownValues(
+                        "Drop"
+                    ),
 
                 Default =
                     HOLY_FRUIT_AUTOMATION_STATE.SelectedDropTraits,
@@ -202792,6 +203809,40 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
             value == true
         )
     end)
+
+    HOLY_FRUIT_AUTOMATION_UI.ProtectBigHugeRainbowPetsToggle =
+        FarmFruitAutomationBox:AddToggle(
+            "HolyItemAutomationProtectBigHugeRainbowPets",
+            {
+                Text =
+                    "Protect Big/Huge/Rainbow Pets",
+
+                Default =
+                    HOLY_FRUIT_AUTOMATION_STATE
+                        .ProtectBigHugeRainbowPets ~= false,
+
+                Tooltip =
+                    "Enabled by default. Farm Auto Drop will never drop Big, Huge/Mega, or Rainbow pets, even when All or matching pet filters are selected.",
+            }
+        )
+
+    table.insert(
+        HOLY_FRUIT_AUTOMATION_UI.DropControls,
+        HOLY_FRUIT_AUTOMATION_UI
+            .ProtectBigHugeRainbowPetsToggle
+    )
+
+    HOLY_FRUIT_AUTOMATION_UI
+        .ProtectBigHugeRainbowPetsToggle:OnChanged(function(value)
+            if HolyFruitAutomationEnsureRuntime()
+                .UpdatingItemUI == true then
+                return
+            end
+
+            HolyItemAutomationSetProtectBigHugeRainbowPets(
+                value == true
+            )
+        end)
 
     HOLY_FRUIT_AUTOMATION_UI.AutoHopToggle =
         FarmFruitAutomationBox:AddToggle(
@@ -203086,7 +204137,9 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                     "Items",
 
                 Values =
-                    HolyItemAutomationGetItemDropdownValues(),
+                    HolyItemAutomationGetItemDropdownValues(
+                        "Pickup"
+                    ),
 
                 Default =
                     HOLY_FRUIT_AUTOMATION_STATE.SelectedPickupItems,
@@ -203130,7 +204183,9 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                     "Mutations / Variants",
 
                 Values =
-                    HolyItemAutomationGetTraitDropdownValues(),
+                    HolyItemAutomationGetTraitDropdownValues(
+                        "Pickup"
+                    ),
 
                 Default =
                     HOLY_FRUIT_AUTOMATION_STATE.SelectedPickupTraits,
