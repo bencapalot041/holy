@@ -153657,12 +153657,23 @@ function HolyGuildPanelText(
         or Library.Scheme.FontColor
 
     label.TextSize =
-        tonumber(options.TextSize)
-        or 11
+        math.max(
+            10,
+            tonumber(
+                options.TextSize
+            )
+            or 11
+        )
 
     label.TextTransparency =
-        tonumber(options.Transparency)
-        or 0
+        math.clamp(
+            tonumber(
+                options.Transparency
+            )
+            or 0,
+            0,
+            0.25
+        )
 
     label.TextWrapped =
         options.Wrapped == true
@@ -156967,6 +156978,11 @@ function HolyGuildRefreshContestProgressPanel()
         end
     )
 
+    local sessionMetrics =
+        HolyGuildSessionMetrics(
+            view
+        )
+
     local signatureParts = {
         tostring(
             view
@@ -156987,6 +157003,21 @@ function HolyGuildRefreshContestProgressPanel()
             view
             and view.Bracket
             or ""
+        ),
+        tostring(
+            sessionMetrics.PointsGained
+        ),
+        tostring(
+            math.floor(
+                sessionMetrics.Elapsed
+                / 5
+            )
+        ),
+        tostring(
+            sessionMetrics.PointsPerHour
+        ),
+        tostring(
+            sessionMetrics.ProjectedScore
         ),
     }
 
@@ -157130,7 +157161,7 @@ function HolyGuildRefreshContestProgressPanel()
         )
 
     local totalHeight =
-        164
+        248
         + listHeight
 
     local card =
@@ -157177,6 +157208,43 @@ function HolyGuildRefreshContestProgressPanel()
             view.Bracket ~= nil
                 and tostring(view.Bracket)
                 or "—",
+        },
+        {
+            "SESSION GAIN",
+            HolyGuildFormatContestScore(
+                sessionMetrics.PointsGained,
+                view.RawScoreFormat
+            ),
+        },
+        {
+            "POINTS / HOUR",
+            sessionMetrics.RateReady == true
+            and HolyGuildFormatContestScore(
+                sessionMetrics.PointsPerHour,
+                view.RawScoreFormat
+            )
+            or "Calculating...",
+        },
+        {
+            "YOUR SHARE",
+            string.format(
+                "%.1f%%",
+                share * 100
+            ),
+        },
+        {
+            "PROJECTED SCORE",
+            view.State == "Completed"
+            and "Complete"
+            or (
+                sessionMetrics.Stable == true
+                and sessionMetrics.ProjectedScore ~= nil
+                and HolyGuildFormatContestScore(
+                    sessionMetrics.ProjectedScore,
+                    view.RawScoreFormat
+                )
+                or "Calculating..."
+            ),
         },
     }
 
@@ -157275,7 +157343,7 @@ function HolyGuildRefreshContestProgressPanel()
                 "%.1f%%",
                 share * 100
             ),
-        UDim2.fromOffset(10, 98),
+        UDim2.fromOffset(10, 182),
         UDim2.new(1, -20, 0, 18),
         {
             TextSize = 9,
@@ -157296,7 +157364,7 @@ function HolyGuildRefreshContestProgressPanel()
         0
 
     progressTrack.Position =
-        UDim2.fromOffset(10, 120)
+        UDim2.fromOffset(10, 204)
 
     progressTrack.Size =
         UDim2.new(1, -20, 0, 7)
@@ -157366,7 +157434,7 @@ function HolyGuildRefreshContestProgressPanel()
         view.State == "Completed"
             and "FINAL CONTRIBUTORS"
             or "TOP CONTRIBUTORS",
-        UDim2.fromOffset(10, 140),
+        UDim2.fromOffset(10, 224),
         UDim2.new(1, -20, 0, 16),
         {
             TextSize = 8,
@@ -157384,7 +157452,7 @@ function HolyGuildRefreshContestProgressPanel()
         0
 
     scroll.Position =
-        UDim2.fromOffset(6, 160)
+        UDim2.fromOffset(6, 244)
 
     scroll.Size =
         UDim2.new(
@@ -164107,6 +164175,2538 @@ function HolyGuildRefreshSelectedGuildPanel()
     )
 end
 
+HOLY_GUILD_STATE.LeaderboardPage =
+    math.max(
+        1,
+        math.floor(
+            tonumber(
+                HOLY_GUILD_STATE.LeaderboardPage
+            )
+            or 1
+        )
+    )
+
+HOLY_GUILD_STATE.LeaderboardPageSize =
+    10
+
+HOLY_GUILD_RUNTIME.LastLeaderboardAt =
+    tonumber(
+        HOLY_GUILD_RUNTIME.LastLeaderboardAt
+    )
+    or 0
+
+HOLY_GUILD_SESSION_FILE =
+    "HolyGAG2/HolyGuildSession_"
+    .. tostring(
+        LocalPlayer.UserId
+    )
+    .. ".json"
+
+HOLY_GUILD_SESSION_IDLE_TIMEOUT =
+    6 * 60 * 60
+
+function HolyGuildSessionDefault(reason)
+
+    local now =
+        os.time()
+
+    return {
+        Version = 1,
+
+        StartedAt =
+            now,
+
+        LastSeenAt =
+            now,
+
+        GuildId =
+            "",
+
+        CompetitionKey =
+            "",
+
+        CompetitionState =
+            "",
+
+        BaselinePoints =
+            nil,
+
+        CurrentPoints =
+            0,
+
+        PointsGained =
+            0,
+
+        ConfirmedPets =
+            0,
+
+        TameRequests =
+            0,
+
+        FailedAttempts =
+            0,
+
+        DeferredAttempts =
+            0,
+
+        ServerHops =
+            0,
+
+        ShecklesSpent =
+            0,
+
+        Activity =
+            HolyCleanText(
+                reason
+            ) ~= ""
+            and HolyCleanText(
+                reason
+            )
+            or "Waiting for Guild data",
+
+        LastActivityAt =
+            now,
+    }
+end
+
+function HolyGuildSessionNormalize(source)
+
+    source =
+        type(source) == "table"
+        and source
+        or {}
+
+    local now =
+        os.time()
+
+    local baseline =
+        tonumber(
+            source.BaselinePoints
+        )
+
+    return {
+        Version = 1,
+
+        StartedAt =
+            math.max(
+                1,
+                math.floor(
+                    tonumber(
+                        source.StartedAt
+                    )
+                    or now
+                )
+            ),
+
+        LastSeenAt =
+            math.max(
+                1,
+                math.floor(
+                    tonumber(
+                        source.LastSeenAt
+                    )
+                    or now
+                )
+            ),
+
+        GuildId =
+            HolyCleanText(
+                source.GuildId
+            ),
+
+        CompetitionKey =
+            HolyCleanText(
+                source.CompetitionKey
+            ),
+
+        CompetitionState =
+            HolyCleanText(
+                source.CompetitionState
+            ),
+
+        BaselinePoints =
+            baseline,
+
+        CurrentPoints =
+            math.max(
+                0,
+                tonumber(
+                    source.CurrentPoints
+                )
+                or baseline
+                or 0
+            ),
+
+        PointsGained =
+            math.max(
+                0,
+                tonumber(
+                    source.PointsGained
+                )
+                or 0
+            ),
+
+        ConfirmedPets =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(
+                        source.ConfirmedPets
+                    )
+                    or 0
+                )
+            ),
+
+        TameRequests =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(
+                        source.TameRequests
+                    )
+                    or 0
+                )
+            ),
+
+        FailedAttempts =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(
+                        source.FailedAttempts
+                    )
+                    or 0
+                )
+            ),
+
+        DeferredAttempts =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(
+                        source.DeferredAttempts
+                    )
+                    or 0
+                )
+            ),
+
+        ServerHops =
+            math.max(
+                0,
+                math.floor(
+                    tonumber(
+                        source.ServerHops
+                    )
+                    or 0
+                )
+            ),
+
+        ShecklesSpent =
+            math.max(
+                0,
+                tonumber(
+                    source.ShecklesSpent
+                )
+                or 0
+            ),
+
+        Activity =
+            HolyCleanText(
+                source.Activity
+            ) ~= ""
+            and HolyCleanText(
+                source.Activity
+            )
+            or "Waiting for Guild data",
+
+        LastActivityAt =
+            math.max(
+                1,
+                math.floor(
+                    tonumber(
+                        source.LastActivityAt
+                    )
+                    or now
+                )
+            ),
+    }
+end
+
+function HolyGuildSessionInvalidate()
+
+    for _, panel in ipairs({
+        HOLY_GUILD_UI.SessionPanel,
+        HOLY_GUILD_UI.ContestProgressPanel,
+        HOLY_GUILD_UI.SelectedGuildPanel,
+    }) do
+
+        if type(panel) == "table" then
+
+            panel.Signature =
+                ""
+        end
+    end
+end
+
+function HolyGuildSessionSave()
+
+    if type(writefile) ~= "function" then
+        return false
+    end
+
+    local session =
+        HOLY_GUILD_STATE.Session
+
+    if type(session) ~= "table" then
+        return false
+    end
+
+    session.LastSeenAt =
+        os.time()
+
+    local encodedOk,
+        encoded =
+        pcall(
+            HttpService.JSONEncode,
+            HttpService,
+            {
+                Version = 1,
+
+                UserId =
+                    LocalPlayer.UserId,
+
+                Session =
+                    session,
+            }
+        )
+
+    if encodedOk ~= true then
+        return false
+    end
+
+    pcall(function()
+
+        if type(isfolder) == "function"
+        and type(makefolder) == "function"
+        and isfolder(
+            "HolyGAG2"
+        ) ~= true then
+
+            makefolder(
+                "HolyGAG2"
+            )
+        end
+    end)
+
+    local writeOk =
+        pcall(
+            writefile,
+            HOLY_GUILD_SESSION_FILE,
+            encoded
+        )
+
+    if writeOk == true then
+
+        HOLY_GUILD_RUNTIME.LastSessionSaveAt =
+            os.clock()
+    end
+
+    return writeOk == true
+end
+
+function HolyGuildSessionLoad()
+
+    local loaded =
+        nil
+
+    pcall(function()
+
+        if type(readfile) ~= "function"
+        or type(isfile) ~= "function"
+        or isfile(
+            HOLY_GUILD_SESSION_FILE
+        ) ~= true then
+
+            return
+        end
+
+        local decoded =
+            HttpService:JSONDecode(
+                readfile(
+                    HOLY_GUILD_SESSION_FILE
+                )
+            )
+
+        if type(decoded) == "table"
+        and tonumber(decoded.UserId)
+            == tonumber(
+                LocalPlayer.UserId
+            )
+        and type(decoded.Session) == "table" then
+
+            loaded =
+                HolyGuildSessionNormalize(
+                    decoded.Session
+                )
+        end
+    end)
+
+    if type(loaded) == "table" then
+
+        local inactiveFor =
+            math.max(
+                0,
+                os.time()
+                - (
+                    tonumber(
+                        loaded.LastSeenAt
+                    )
+                    or 0
+                )
+            )
+
+        if inactiveFor
+            <= HOLY_GUILD_SESSION_IDLE_TIMEOUT then
+
+            HOLY_GUILD_STATE.Session =
+                loaded
+
+            return true
+        end
+    end
+
+    HOLY_GUILD_STATE.Session =
+        HolyGuildSessionDefault(
+            "New Guild session"
+        )
+
+    return false
+end
+
+function HolyGuildSessionGetContribution(view)
+
+    if type(view) ~= "table" then
+        return nil
+    end
+
+    local members =
+        HolyGuildBuildContestMembers(
+            view
+        )
+
+    for _, member in ipairs(
+        members
+    ) do
+
+        if tonumber(member.UserId)
+            == tonumber(
+                LocalPlayer.UserId
+            ) then
+
+            return math.max(
+                0,
+                tonumber(
+                    member.Weekly
+                )
+                or 0
+            )
+        end
+    end
+
+    return nil
+end
+
+function HolyGuildSessionReset(reason)
+
+    local view =
+        HolyGuildGetContestView()
+
+    local session =
+        HolyGuildSessionDefault(
+            reason
+            or "Session reset"
+        )
+
+    session.GuildId =
+        HolyGuildGetGuildId()
+
+    if type(view) == "table" then
+
+        session.CompetitionKey =
+            HolyCleanText(
+                view.CompetitionKey
+            )
+
+        session.CompetitionState =
+            HolyCleanText(
+                view.State
+            )
+
+        if view.State == "Active"
+        or view.State == "Completed" then
+
+            local contribution =
+                HolyGuildSessionGetContribution(
+                    view
+                )
+
+            if contribution ~= nil then
+
+                session.BaselinePoints =
+                    contribution
+
+                session.CurrentPoints =
+                    contribution
+            end
+        end
+    end
+
+    HOLY_GUILD_STATE.Session =
+        session
+
+    HolyGuildSessionSave()
+    HolyGuildSessionInvalidate()
+
+    return session
+end
+
+function HolyGuildSessionObserve(view)
+
+    view =
+        type(view) == "table"
+        and view
+        or HolyGuildGetContestView()
+
+    local session =
+        HOLY_GUILD_STATE.Session
+
+    if type(session) ~= "table" then
+
+        session =
+            HolyGuildSessionDefault(
+                "New Guild session"
+            )
+
+        HOLY_GUILD_STATE.Session =
+            session
+    end
+
+    if type(view) ~= "table" then
+        return session
+    end
+
+    local guildId =
+        HolyGuildGetGuildId()
+
+    local competitionKey =
+        HolyCleanText(
+            view.CompetitionKey
+        )
+
+    local competitionState =
+        HolyCleanText(
+            view.State
+        )
+
+    local resetReason =
+        nil
+
+    if session.GuildId ~= ""
+    and guildId ~= ""
+    and session.GuildId ~= guildId then
+
+        resetReason =
+            "Guild changed"
+
+    elseif session.CompetitionKey ~= ""
+    and competitionKey ~= ""
+    and session.CompetitionKey
+        ~= competitionKey then
+
+        resetReason =
+            "Competition changed"
+
+    elseif competitionState == "Active"
+    and session.CompetitionState ~= ""
+    and session.CompetitionState
+        ~= "Active" then
+
+        resetReason =
+            "Competition started"
+    end
+
+    if resetReason ~= nil then
+
+        return HolyGuildSessionReset(
+            resetReason
+        )
+    end
+
+    local changed =
+        false
+
+    if session.GuildId == ""
+    and guildId ~= "" then
+
+        session.GuildId =
+            guildId
+
+        changed =
+            true
+    end
+
+    if session.CompetitionKey == ""
+    and competitionKey ~= "" then
+
+        session.CompetitionKey =
+            competitionKey
+
+        changed =
+            true
+    end
+
+    if competitionState ~= ""
+    and session.CompetitionState
+        ~= competitionState then
+
+        session.CompetitionState =
+            competitionState
+
+        changed =
+            true
+    end
+
+    if competitionState == "Active"
+    or competitionState == "Completed" then
+
+        local contribution =
+            HolyGuildSessionGetContribution(
+                view
+            )
+
+        if contribution ~= nil then
+
+            if session.BaselinePoints == nil then
+
+                session.BaselinePoints =
+                    contribution
+
+                session.CurrentPoints =
+                    contribution
+
+                changed =
+                    true
+
+            elseif contribution
+                > (
+                    tonumber(
+                        session.CurrentPoints
+                    )
+                    or 0
+                ) then
+
+                session.CurrentPoints =
+                    contribution
+
+                changed =
+                    true
+            end
+
+            local gained =
+                math.max(
+                    0,
+                    (
+                        tonumber(
+                            session.CurrentPoints
+                        )
+                        or contribution
+                    )
+                    - (
+                        tonumber(
+                            session.BaselinePoints
+                        )
+                        or contribution
+                    )
+                )
+
+            if gained
+                > (
+                    tonumber(
+                        session.PointsGained
+                    )
+                    or 0
+                ) then
+
+                session.PointsGained =
+                    gained
+
+                changed =
+                    true
+            end
+        end
+    end
+
+    if changed == true then
+
+        HolyGuildSessionSave()
+        HolyGuildSessionInvalidate()
+    end
+
+    return session
+end
+
+function HolyGuildSessionMetrics(view)
+
+    local session =
+        HolyGuildSessionObserve(
+            view
+        )
+
+    local now =
+        os.time()
+
+    local elapsed =
+        math.max(
+            1,
+            now
+            - (
+                tonumber(
+                    session.StartedAt
+                )
+                or now
+            )
+        )
+
+    local gained =
+        math.max(
+            0,
+            tonumber(
+                session.PointsGained
+            )
+            or 0
+        )
+
+    local pointsPerMinute =
+        gained
+        / elapsed
+        * 60
+
+    local pointsPerHour =
+        gained
+        / elapsed
+        * 3600
+
+    local stable =
+        elapsed >= 180
+
+    local projection =
+        nil
+
+    if stable == true
+    and type(view) == "table"
+    and view.State == "Active"
+    and tonumber(view.EndsAt)
+    and tonumber(view.EndsAt) > now then
+
+        projection =
+            (
+                tonumber(
+                    session.CurrentPoints
+                )
+                or 0
+            )
+            + pointsPerHour
+            * (
+                (
+                    tonumber(view.EndsAt)
+                    - now
+                )
+                / 3600
+            )
+    end
+
+    return {
+        Session =
+            session,
+
+        Elapsed =
+            elapsed,
+
+        PointsGained =
+            gained,
+
+        PointsPerMinute =
+            pointsPerMinute,
+
+        PointsPerHour =
+            pointsPerHour,
+
+        RateReady =
+            elapsed >= 15,
+
+        Stable =
+            stable,
+
+        ProjectedScore =
+            projection,
+
+        CurrentSheckles =
+            type(HolySniperReadSheckles)
+                == "function"
+            and HolySniperReadSheckles()
+            or nil,
+    }
+end
+
+function HolyGuildSessionSetActivity(value)
+
+    local session =
+        HOLY_GUILD_STATE.Session
+
+    local activity =
+        HolyCleanText(
+            value
+        )
+
+    if type(session) ~= "table"
+    or activity == ""
+    or session.Activity == activity then
+
+        return false
+    end
+
+    session.Activity =
+        activity
+
+    session.LastActivityAt =
+        os.time()
+
+    if type(
+        HOLY_GUILD_UI.SessionPanel
+    ) == "table" then
+
+        HOLY_GUILD_UI.SessionPanel.Signature =
+            ""
+    end
+
+    return true
+end
+
+function HolyGuildSessionRecordConfirmedBuy(
+    match,
+    entry
+)
+    local session =
+        HOLY_GUILD_STATE.Session
+
+    if type(session) ~= "table" then
+        return false
+    end
+
+    session.ConfirmedPets =
+        (
+            tonumber(
+                session.ConfirmedPets
+            )
+            or 0
+        )
+        + 1
+
+    local price =
+        tonumber(
+            type(entry) == "table"
+            and entry.Price
+            or nil
+        )
+        or tonumber(
+            type(match) == "table"
+            and match.Price
+            or nil
+        )
+        or 0
+
+    session.ShecklesSpent =
+        (
+            tonumber(
+                session.ShecklesSpent
+            )
+            or 0
+        )
+        + math.max(
+            0,
+            price
+        )
+
+    local description =
+        "Confirmed pet purchase"
+
+    pcall(function()
+
+        description =
+            "Bought "
+            .. HolySniperDescribeEntry(
+                entry
+            )
+    end)
+
+    session.Activity =
+        description
+
+    session.LastActivityAt =
+        os.time()
+
+    HolyGuildSessionSave()
+    HolyGuildSessionInvalidate()
+
+    return true
+end
+
+function HolyGuildSessionRecordTameRequest()
+
+    local session =
+        HOLY_GUILD_STATE.Session
+
+    if type(session) ~= "table" then
+        return false
+    end
+
+    session.TameRequests =
+        (
+            tonumber(
+                session.TameRequests
+            )
+            or 0
+        )
+        + 1
+
+    session.Activity =
+        "Tame request sent"
+
+    session.LastActivityAt =
+        os.time()
+
+    HolyGuildSessionSave()
+    HolyGuildSessionInvalidate()
+
+    return true
+end
+
+function HolyGuildSessionRecordTameResult(
+    success,
+    resultCode
+)
+    if success == true then
+        return false
+    end
+
+    local session =
+        HOLY_GUILD_STATE.Session
+
+    if type(session) ~= "table" then
+        return false
+    end
+
+    local code =
+        HolyGuildKey(
+            resultCode
+        )
+
+    if code == "cancelled"
+    or code == "invalid"
+    or code == "deferred" then
+
+        session.DeferredAttempts =
+            (
+                tonumber(
+                    session.DeferredAttempts
+                )
+                or 0
+            )
+            + 1
+
+    else
+
+        session.FailedAttempts =
+            (
+                tonumber(
+                    session.FailedAttempts
+                )
+                or 0
+            )
+            + 1
+    end
+
+    session.Activity =
+        code ~= ""
+        and (
+            "Tame result: "
+            .. tostring(
+                resultCode
+            )
+        )
+        or "Tame attempt failed"
+
+    session.LastActivityAt =
+        os.time()
+
+    HolyGuildSessionSave()
+    HolyGuildSessionInvalidate()
+
+    return true
+end
+
+function HolyGuildSessionRecordServerHop()
+
+    local session =
+        HOLY_GUILD_STATE.Session
+
+    if type(session) ~= "table" then
+        return false
+    end
+
+    session.ServerHops =
+        (
+            tonumber(
+                session.ServerHops
+            )
+            or 0
+        )
+        + 1
+
+    session.Activity =
+        "Server hop queued"
+
+    session.LastActivityAt =
+        os.time()
+
+    HolyGuildSessionSave()
+    HolyGuildSessionInvalidate()
+
+    return true
+end
+
+function HolyGuildRefreshSessionPanel()
+
+    local panel =
+        HOLY_GUILD_UI.SessionPanel
+
+    if type(panel) ~= "table" then
+        return
+    end
+
+    local view =
+        HolyGuildGetContestView()
+
+    local metrics =
+        HolyGuildSessionMetrics(
+            view
+        )
+
+    local session =
+        metrics.Session
+
+    local signature =
+        table.concat(
+            {
+                tostring(
+                    math.floor(
+                        metrics.Elapsed
+                    )
+                ),
+                tostring(
+                    metrics.PointsGained
+                ),
+                tostring(
+                    metrics.PointsPerMinute
+                ),
+                tostring(
+                    metrics.PointsPerHour
+                ),
+                tostring(
+                    session.ConfirmedPets
+                ),
+                tostring(
+                    session.TameRequests
+                ),
+                tostring(
+                    session.FailedAttempts
+                ),
+                tostring(
+                    session.DeferredAttempts
+                ),
+                tostring(
+                    session.ServerHops
+                ),
+                tostring(
+                    session.ShecklesSpent
+                ),
+                tostring(
+                    metrics.CurrentSheckles
+                ),
+                tostring(
+                    session.Activity
+                ),
+            },
+            "\31"
+        )
+
+    local changed,
+        width =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local activity =
+        HolyCleanText(
+            session.Activity
+        )
+
+    if activity == "" then
+
+        activity =
+            "Waiting for sniper activity"
+    end
+
+    local activityHeight =
+        math.max(
+            22,
+            HolyGuildMeasurePanelText(
+                activity,
+                11,
+                width - 24
+            )
+        )
+
+    local totalHeight =
+        296
+        + activityHeight
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(
+                1,
+                0,
+                0,
+                totalHeight
+            ),
+            type(view) == "table"
+            and view.State == "Active"
+        )
+
+    local rawScoreFormat =
+        type(view) == "table"
+        and view.RawScoreFormat
+        or "Number"
+
+    local rateText =
+        metrics.RateReady == true
+        and HolyGuildFormatContestScore(
+            metrics.PointsPerHour,
+            rawScoreFormat
+        )
+        or "Calculating..."
+
+    local minuteText =
+        metrics.RateReady == true
+        and HolyGuildFormatContestScore(
+            metrics.PointsPerMinute,
+            rawScoreFormat
+        )
+        or "Calculating..."
+
+    local stats = {
+        {
+            "SESSION TIME",
+            HolyGuildFormatDuration(
+                metrics.Elapsed
+            ),
+        },
+        {
+            "SESSION GAIN",
+            HolyGuildFormatContestScore(
+                metrics.PointsGained,
+                rawScoreFormat
+            ),
+        },
+        {
+            "POINTS / MIN",
+            minuteText,
+        },
+        {
+            "POINTS / HOUR",
+            rateText,
+        },
+    }
+
+    for index, stat in ipairs(
+        stats
+    ) do
+
+        local column =
+            (index - 1) % 2
+
+        local row =
+            math.floor(
+                (index - 1) / 2
+            )
+
+        local tile =
+            Instance.new("Frame")
+
+        tile.BackgroundColor3 =
+            Library.Scheme.MainColor
+
+        tile.BackgroundTransparency =
+            0.38
+
+        tile.BorderSizePixel =
+            0
+
+        tile.Position =
+            UDim2.new(
+                column * 0.5,
+                column == 0
+                and 10
+                or 3,
+                0,
+                10 + row * 42
+            )
+
+        tile.Size =
+            UDim2.new(
+                0.5,
+                -13,
+                0,
+                36
+            )
+
+        tile.Parent =
+            card
+
+        local corner =
+            Instance.new("UICorner")
+
+        corner.CornerRadius =
+            UDim.new(0, 4)
+
+        corner.Parent =
+            tile
+
+        HolyGuildTrackPanelObject(
+            panel,
+            tile,
+            {
+                BackgroundColor3 =
+                    "MainColor",
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            tile,
+            stat[1],
+            UDim2.fromOffset(7, 3),
+            UDim2.new(1, -14, 0, 12),
+            {
+                TextSize = 10,
+                Transparency = 0.20,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            tile,
+            stat[2],
+            UDim2.fromOffset(7, 15),
+            UDim2.new(1, -14, 0, 17),
+            {
+                TextSize = 12,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        98
+    )
+
+    local details = {
+        {
+            "Confirmed pets",
+            HolyGuildFormatNumber(
+                session.ConfirmedPets
+            ),
+        },
+        {
+            "Tame requests",
+            HolyGuildFormatNumber(
+                session.TameRequests
+            ),
+        },
+        {
+            "Failed / deferred",
+            tostring(
+                session.FailedAttempts
+            )
+            .. " failed  •  "
+            .. tostring(
+                session.DeferredAttempts
+            )
+            .. " deferred",
+        },
+        {
+            "Server hops",
+            HolyGuildFormatNumber(
+                session.ServerHops
+            ),
+        },
+        {
+            "Current Sheckles",
+            metrics.CurrentSheckles ~= nil
+            and HolyGuildFormatNumber(
+                metrics.CurrentSheckles
+            )
+            or "Unavailable",
+        },
+        {
+            "Sheckles spent",
+            HolyGuildFormatNumber(
+                session.ShecklesSpent
+            ),
+        },
+    }
+
+    for index, detail in ipairs(
+        details
+    ) do
+
+        local y =
+            106
+            + (index - 1) * 25
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[1],
+            UDim2.fromOffset(12, y),
+            UDim2.new(0.48, -12, 0, 22),
+            {
+                TextSize = 10,
+                Transparency = 0.20,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[2],
+            UDim2.new(0.48, 0, 0, y),
+            UDim2.new(0.52, -12, 0, 22),
+            {
+                TextSize = 11,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "CURRENT ACTIVITY",
+        UDim2.fromOffset(12, 264),
+        UDim2.new(1, -24, 0, 13),
+        {
+            TextSize = 10,
+            Transparency = 0.20,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        activity,
+        UDim2.fromOffset(12, 280),
+        UDim2.new(
+            1,
+            -24,
+            0,
+            activityHeight
+        ),
+        {
+            TextSize = 11,
+            Wrapped = true,
+            YAlignment =
+                Enum.TextYAlignment.Top,
+        }
+    )
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildLeaderboardPageInfo(rows)
+
+    rows =
+        type(rows) == "table"
+        and rows
+        or {}
+
+    local pageSize =
+        math.max(
+            1,
+            math.floor(
+                tonumber(
+                    HOLY_GUILD_STATE.LeaderboardPageSize
+                )
+                or 10
+            )
+        )
+
+    local pageCount =
+        math.max(
+            1,
+            math.ceil(
+                #rows
+                / pageSize
+            )
+        )
+
+    local page =
+        math.clamp(
+            math.floor(
+                tonumber(
+                    HOLY_GUILD_STATE.LeaderboardPage
+                )
+                or 1
+            ),
+            1,
+            pageCount
+        )
+
+    HOLY_GUILD_STATE.LeaderboardPage =
+        page
+
+    local firstIndex =
+        (page - 1)
+        * pageSize
+        + 1
+
+    local lastIndex =
+        math.min(
+            #rows,
+            firstIndex
+            + pageSize
+            - 1
+        )
+
+    return page,
+        pageCount,
+        firstIndex,
+        lastIndex,
+        pageSize
+end
+
+function HolyGuildSetLeaderboardPage(value)
+
+    local rows =
+        HolyGuildLeaderboardArray()
+
+    local _,
+        pageCount =
+        HolyGuildLeaderboardPageInfo(
+            rows
+        )
+
+    HOLY_GUILD_STATE.LeaderboardPage =
+        math.clamp(
+            math.floor(
+                tonumber(value)
+                or 1
+            ),
+            1,
+            pageCount
+        )
+
+    if type(
+        HOLY_GUILD_UI.LeaderboardPanel
+    ) == "table" then
+
+        HOLY_GUILD_UI.LeaderboardPanel.Signature =
+            ""
+    end
+
+    HolyGuildRefreshLeaderboardPanel()
+end
+
+function HolyGuildCreatePagerButton(
+    panel,
+    parent,
+    text,
+    position,
+    disabled,
+    callback
+)
+    local button =
+        Instance.new("TextButton")
+
+    button.AutoButtonColor =
+        disabled ~= true
+
+    button.BackgroundColor3 =
+        Library.Scheme.MainColor
+
+    button.BackgroundTransparency =
+        disabled == true
+        and 0.72
+        or 0.30
+
+    button.BorderSizePixel =
+        0
+
+    button.FontFace =
+        Library.Scheme.Font
+
+    button.Position =
+        position
+
+    button.Size =
+        UDim2.fromOffset(
+            78,
+            28
+        )
+
+    button.Text =
+        tostring(text)
+
+    button.TextColor3 =
+        Library.Scheme.FontColor
+
+    button.TextSize =
+        10
+
+    button.TextTransparency =
+        disabled == true
+        and 0.48
+        or 0
+
+    button.Parent =
+        parent
+
+    local corner =
+        Instance.new("UICorner")
+
+    corner.CornerRadius =
+        UDim.new(0, 4)
+
+    corner.Parent =
+        button
+
+    local stroke =
+        Instance.new("UIStroke")
+
+    stroke.Color =
+        Library.Scheme.OutlineColor
+
+    stroke.Transparency =
+        disabled == true
+        and 0.72
+        or 0.42
+
+    stroke.Thickness =
+        1
+
+    stroke.Parent =
+        button
+
+    HolyGuildTrackPanelObject(
+        panel,
+        button,
+        {
+            BackgroundColor3 =
+                "MainColor",
+
+            FontFace =
+                "Font",
+
+            TextColor3 =
+                "FontColor",
+        }
+    )
+
+    HolyGuildTrackPanelObject(
+        panel,
+        stroke,
+        {
+            Color =
+                "OutlineColor",
+        }
+    )
+
+    if disabled ~= true
+    and type(callback) == "function" then
+
+        button.MouseButton1Click:Connect(
+            callback
+        )
+    end
+
+    return button
+end
+
+function HolyGuildRefreshLeaderboardPanel()
+
+    local panel =
+        HOLY_GUILD_UI.LeaderboardPanel
+
+    local rows =
+        HolyGuildLeaderboardArray()
+
+    if HOLY_GUILD_STATE.SelectedGuildId == nil then
+
+        HolyGuildGetSelectedLeaderboardGuild()
+    end
+
+    local page,
+        pageCount,
+        firstIndex,
+        lastIndex =
+        HolyGuildLeaderboardPageInfo(
+            rows
+        )
+
+    local shownRows = {}
+
+    for index = firstIndex, lastIndex do
+
+        if type(rows[index]) == "table" then
+
+            shownRows[
+                #shownRows
+                + 1
+            ] =
+                rows[index]
+        end
+    end
+
+    local ownRow =
+        HolyGuildGetOwnLeaderboardRow()
+
+    local ownId =
+        HolyGuildLeaderboardRowId(
+            ownRow
+        )
+
+    local ownVisible =
+        false
+
+    local signatureParts = {
+        tostring(
+            HOLY_GUILD_STATE.SelectedGuildId
+        ),
+        tostring(ownId),
+        tostring(page),
+        tostring(pageCount),
+        tostring(
+            HOLY_GUILD_RUNTIME.LastLeaderboardAt
+        ),
+    }
+
+    for _, row in ipairs(
+        shownRows
+    ) do
+
+        local rowId =
+            HolyGuildLeaderboardRowId(
+                row
+            )
+
+        if rowId == ownId then
+
+            ownVisible =
+                true
+        end
+
+        signatureParts[
+            #signatureParts
+            + 1
+        ] =
+            table.concat(
+                {
+                    rowId,
+                    tostring(row.Rank),
+                    tostring(row.Name),
+                    tostring(row.Tag),
+                    tostring(row.Score),
+                    tostring(row.IconId),
+                },
+                "\31"
+            )
+    end
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            table.concat(
+                signatureParts,
+                "\30"
+            )
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    local addPinned =
+        type(ownRow) == "table"
+        and ownVisible ~= true
+
+    local visibleRows =
+        math.max(
+            1,
+            math.min(
+                #shownRows,
+                7
+            )
+        )
+
+    local listHeight =
+        visibleRows * 46
+
+    local pagerY =
+        38
+        + listHeight
+
+    local totalHeight =
+        pagerY
+        + (
+            addPinned
+            and 100
+            or 32
+        )
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(
+                1,
+                0,
+                0,
+                totalHeight
+            ),
+            falseHeight
+           
+        )
+
+    local rankRange =
+        #shownRows > 0
+        and (
+            "RANKS "
+            .. tostring(
+                shownRows[1].Rank
+            )
+            .. "–"
+            .. tostring(
+                shownRows[
+                    #shownRows
+                ].Rank
+            )
+        )
+        or "NO RANKS"
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "PAGE "
+            .. tostring(page)
+            .. "/"
+            .. tostring(pageCount)
+            .. "  •  "
+            .. rankRange,
+        UDim2.fromOffset(10, 5),
+        UDim2.new(1, -20, 0, 23),
+        {
+            TextSize = 10,
+            Transparency = 0.18,
+        }
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        32
+    )
+
+    local scroll =
+        Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency =
+        1
+
+    scroll.BorderSizePixel =
+        0
+
+    scroll.Position =
+        UDim2.fromOffset(4, 34)
+
+    scroll.Size =
+        UDim2.new(
+            1,
+            -8,
+            0,
+            listHeight
+        )
+
+    scroll.CanvasSize =
+        UDim2.fromOffset(
+            0,
+            math.max(
+                listHeight,
+                #shownRows * 46
+            )
+        )
+
+    scroll.ScrollBarThickness =
+        #shownRows > visibleRows
+        and 3
+        or 0
+
+    scroll.ScrollBarImageColor3 =
+        Library.Scheme.AccentColor
+
+    scroll.Parent =
+        card
+
+    HolyGuildTrackPanelObject(
+        panel,
+        scroll,
+        {
+            ScrollBarImageColor3 =
+                "AccentColor",
+        }
+    )
+
+    if #shownRows <= 0 then
+
+        HolyGuildPanelText(
+            panel,
+            scroll,
+            "No leaderboard data.",
+            UDim2.fromOffset(8, 7),
+            UDim2.new(1, -16, 0, 28),
+            {
+                TextSize = 11,
+                Transparency = 0.22,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+    end
+
+    for index, rowData in ipairs(
+        shownRows
+    ) do
+
+        HolyGuildCreateLeaderboardButton(
+            panel,
+            scroll,
+            rowData,
+            (index - 1) * 46,
+            false
+        )
+    end
+
+    HolyGuildCreatePagerButton(
+        panel,
+        card,
+        "Previous",
+        UDim2.fromOffset(
+            10,
+            pagerY
+        ),
+        page <= 1,
+        function()
+
+            HolyGuildSetLeaderboardPage(
+                page - 1
+            )
+        end
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "Page "
+            .. tostring(page)
+            .. " of "
+            .. tostring(pageCount),
+        UDim2.fromOffset(
+            92,
+            pagerY
+        ),
+        UDim2.new(
+            1,
+            -184,
+            0,
+            28
+        ),
+        {
+            TextSize = 10,
+            Transparency = 0.18,
+            XAlignment =
+                Enum.TextXAlignment.Center,
+        }
+    )
+
+    HolyGuildCreatePagerButton(
+        panel,
+        card,
+        "Next",
+        UDim2.new(
+            1,
+            -88,
+            0,
+            pagerY
+        ),
+        page >= pageCount,
+        function()
+
+            HolyGuildSetLeaderboardPage(
+                page + 1
+            )
+        end
+    )
+
+    if addPinned then
+
+        HolyGuildPanelDivider(
+            panel,
+            card,
+            pagerY + 35
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            "YOUR GUILD",
+            UDim2.fromOffset(
+                10,
+                pagerY + 40
+            ),
+            UDim2.new(1, -20, 0, 12),
+            {
+                TextSize = 10,
+                Transparency = 0.20,
+            }
+        )
+
+        HolyGuildCreateLeaderboardButton(
+            panel,
+            card,
+            ownRow,
+            pagerY + 54,
+            true
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        totalHeight
+    )
+end
+
+function HolyGuildRefreshSelectedGuildPanel()
+
+    local panel =
+        HOLY_GUILD_UI.SelectedGuildPanel
+
+    local row =
+        HolyGuildGetSelectedLeaderboardGuild()
+
+    local info =
+        HolyGuildBuildGuildSummary(
+            row
+        )
+
+    if type(info) == "table"
+    and info.IsOwn ~= true
+    and info.Id ~= ""
+    and info.Loaded ~= true
+    and HOLY_GUILD_RUNTIME.GuildDetailsLoading[
+        info.Id
+    ] ~= true then
+
+        task.spawn(function()
+
+            HolyGuildRefreshGuildDetails(
+                info.Id,
+                true
+            )
+        end)
+    end
+
+    local signature =
+        type(info) == "table"
+        and table.concat(
+            {
+                tostring(info.Id),
+                tostring(info.Rank),
+                tostring(info.Name),
+                tostring(info.Tag),
+                tostring(info.Score),
+                tostring(info.Members),
+                tostring(info.MaxMembers),
+                tostring(info.IconId),
+                tostring(info.IsOwn),
+                tostring(info.Loaded),
+                tostring(
+                    HOLY_GUILD_RUNTIME.LastLeaderboardAt
+                ),
+            },
+            "\31"
+        )
+        or "none"
+
+    local changed =
+        HolyGuildBeginInfoPanel(
+            panel,
+            signature
+        )
+
+    if changed ~= true then
+        return
+    end
+
+    if type(info) ~= "table" then
+
+        local emptyCard =
+            HolyGuildPanelCard(
+                panel,
+                panel.Surface,
+                UDim2.fromOffset(0, 0),
+                UDim2.new(1, 0, 0, 184),
+                false
+            )
+
+        HolyGuildPanelText(
+            panel,
+            emptyCard,
+            "Select a guild from the leaderboard.",
+            UDim2.fromOffset(12, 12),
+            UDim2.new(1, -24, 0, 60),
+            {
+                TextSize = 11,
+                Transparency = 0.22,
+                Wrapped = true,
+                XAlignment =
+                    Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(
+            panel,
+            184
+        )
+
+        return
+    end
+
+    local ownRow =
+        HolyGuildGetOwnLeaderboardRow()
+
+    local ownScore =
+        type(ownRow) == "table"
+        and (
+            tonumber(
+                ownRow.Score
+            )
+            or 0
+        )
+        or nil
+
+    local selectedScore =
+        tonumber(
+            info.Score
+        )
+        or 0
+
+    local scoreDifference =
+        ownScore ~= nil
+        and selectedScore
+            - ownScore
+        or nil
+
+    local memberCount =
+        tonumber(
+            info.Members
+        )
+        or 0
+
+    local scorePerMember =
+        memberCount > 0
+        and selectedScore
+            / memberCount
+        or nil
+
+    local contestView =
+        HolyGuildGetContestView()
+
+    local catchupText =
+        "Event timing unavailable"
+
+    if info.IsOwn == true then
+
+        catchupText info.IsOwn == true then
+
+        =
+            "This is your guild"
+
+    elseif scoreDifference ~= nil
+    and scoreDifference <= 0 then
+
+        catchupText =
+            "No catch-up needed"
+
+    elseif scoreDifference ~= nil
+    and type(contestView) == "table"
+    and contestView.State == "Active"
+    and tonumber(contestView.EndsAt)
+    and tonumber(contestView.EndsAt)
+        > HolyGuildNow() then
+
+        local hoursLeft =
+            math.max(
+                1 / 60,
+                (
+                    tonumber(
+                        contestView.EndsAt
+                    )
+                    - HolyGuildNow()
+                )
+                / 3600
+            )
+
+        catchupText =
+            HolyGuildFormatNumber(
+                scoreDifference
+                / hoursLeft
+            )
+            .. "/hr to catch"
+    end
+
+    local lastRefreshed =
+        tonumber(
+            HOLY_GUILD_RUNTIME.LastLeaderboardAt
+        )
+        or 0
+
+    local card =
+        HolyGuildPanelCard(
+            panel,
+            panel.Surface,
+            UDim2.fromOffset(0, 0),
+            UDim2.new(1, 0, 0, 276),
+            true
+        )
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        info.IconId,
+        UDim2.fromOffset(12, 12),
+        UDim2.fromOffset(54, 54)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        info.Name,
+        UDim2.fromOffset(76, 10),
+        UDim2.new(1, -88, 0, 22),
+        {
+            TextSize = 14,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        info.Tag ~= ""
+        and (
+            "["
+            .. info.Tag
+            .. "]"
+        )
+        or "No guild tag",
+        UDim2.fromOffset(76, 31),
+        UDim2.new(1, -88, 0, 17),
+        {
+            TextSize = 10,
+            Transparency = 0.20,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        info.IsOwn
+        and "YOUR GUILD"
+        or (
+            info.Loaded
+            and "GLOBAL"
+            or "LOADING"
+        ),
+        UDim2.fromOffset(76, 49),
+        info.IsOwn
+        and 76
+        or 62,
+        "Accent"
+    )
+
+    HolyGuildPanelDivider(
+        panel,
+        card,
+        78
+    )
+
+    local differenceText =
+        info.IsOwn
+        and "This is your guild"
+        or (
+            scoreDifference == nil
+            and "Unavailable"
+            or (
+                scoreDifference > 0
+                and (
+                    HolyGuildFormatNumber(
+                        scoreDifference
+                    )
+                    .. " ahead"
+                )
+                or (
+                    scoreDifference < 0
+                    and (
+                        HolyGuildFormatNumber(
+                            math.abs(
+                                scoreDifference
+                            )
+                        )
+                        .. " behind"
+                    )
+                    or "Tied"
+                )
+            )
+        )
+
+    local details = {
+        {
+            "Global rank",
+            tonumber(info.Rank)
+            and (
+                "#"
+                .. tostring(info.Rank)
+            )
+            or "Not ranked",
+        },
+        {
+            "Weekly score",
+            HolyGuildFormatNumber(
+                selectedScore
+            ),
+        },
+        {
+            "Members",
+            info.Members ~= nil
+            and (
+                tostring(info.Members)
+                .. (
+                    info.MaxMembers ~= nil
+                    and (
+                        " / "
+                        .. tostring(
+                            info.MaxMembers
+                        )
+                    )
+                    or ""
+                )
+            )
+            or (
+                info.Loaded
+                and "Unavailable"
+                or "Loading..."
+            ),
+        },
+        {
+            "Score per member",
+            scorePerMember ~= nil
+            and HolyGuildFormatNumber(
+                scorePerMember
+            )
+            or "Unavailable",
+        },
+        {
+            "Compared with you",
+            differenceText,
+        },
+        {
+            "Catch-up pace",
+            catchupText,
+        },
+        {
+            "Last refreshed",
+            lastRefreshed > 0
+            and HolyGuildFormatLocalDateTime(
+                lastRefreshed
+            )
+            or "Not refreshed yet",
+        },
+    }
+
+    for index, detail in ipairs(
+        details
+    ) do
+
+        local y =
+            83
+            + (index - 1) * 27
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[1],
+            UDim2.fromOffset(12, y),
+            UDim2.new(0.48, -12, 0, 23),
+            {
+                TextSize = 10,
+                Transparency = 0.20,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            detail[2],
+            UDim2.new(0.48, 0, 0, y),
+            UDim2.new(0.52, -12, 0, 23),
+            {
+                TextSize = 10,
+                XAlignment =
+                    Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(
+        panel,
+        276
+    )
+end
+
+HOLY_GUILD_BASE_REFRESH_LEADERBOARD =
+    HolyGuildRefreshLeaderboard
+
+function HolyGuildRefreshLeaderboard(quiet)
+
+    local refreshed =
+        HOLY_GUILD_BASE_REFRESH_LEADERBOARD(
+            quiet
+        )
+
+    if refreshed == true then
+
+        HOLY_GUILD_RUNTIME.LastLeaderboardAt =
+            os.time()
+
+        if type(
+            HOLY_GUILD_UI.LeaderboardPanel
+        ) == "table" then
+
+            HOLY_GUILD_UI.LeaderboardPanel.Signature =
+                ""
+        end
+
+        if type(
+            HOLY_GUILD_UI.SelectedGuildPanel
+        ) == "table" then
+
+            HOLY_GUILD_UI.SelectedGuildPanel.Signature =
+                ""
+        end
+
+        HolyGuildRefreshLeaderboardPanel()
+        HolyGuildRefreshSelectedGuildPanel()
+    end
+
+    return refreshed
+end
+
+HOLY_GUILD_BASE_SNIPER_SET_STATUS =
+    HolySniperSetStatus
+
+function HolySniperSetStatus(status)
+
+    local result =
+        HOLY_GUILD_BASE_SNIPER_SET_STATUS(
+            status
+        )
+
+    HolyGuildSessionSetActivity(
+        status
+    )
+
+    return result
+end
+
+HOLY_GUILD_BASE_SNIPER_REGISTER_BUY =
+    HolySniperRegisterConfirmedBuy
+
+function HolySniperRegisterConfirmedBuy(
+    match,
+    entry
+)
+    local result =
+        HOLY_GUILD_BASE_SNIPER_REGISTER_BUY(
+            match,
+            entry
+        )
+
+    HolyGuildSessionRecordConfirmedBuy(
+        match,
+        entry
+    )
+
+    return result
+end
+
+HOLY_GUILD_BASE_SNIPER_FIRE_TAME =
+    HolySniperFireTame
+
+function HolySniperFireTame(entry)
+
+    local fired,
+        reason =
+        HOLY_GUILD_BASE_SNIPER_FIRE_TAME(
+            entry
+        )
+
+    if fired == true then
+
+        HolyGuildSessionRecordTameRequest()
+    end
+
+    return fired,
+        reason
+end
+
+HOLY_GUILD_BASE_SNIPER_REQUEST_TAME =
+    HolySniperRequestTame
+
+function HolySniperRequestTame(
+    entry,
+    filter,
+    token
+)
+    local success,
+        reason,
+        resultCode,
+        ownerUserId,
+        currentEntry =
+        HOLY_GUILD_BASE_SNIPER_REQUEST_TAME(
+            entry,
+            filter,
+            token
+        )
+
+    HolyGuildSessionRecordTameResult(
+        success,
+        resultCode
+    )
+
+    return success,
+        reason,
+        resultCode,
+        ownerUserId,
+        currentEntry
+end
+
+HOLY_GUILD_BASE_QUEUE_SERVER_HOP =
+    HolyQueueSmartServerHop
+
+function HolyQueueSmartServerHop(
+    reason,
+    failCallback
+)
+    local queued,
+        queueReason =
+        HOLY_GUILD_BASE_QUEUE_SERVER_HOP(
+            reason,
+            failCallback
+        )
+
+    if queued == true then
+
+        HolyGuildSessionRecordServerHop()
+    end
+
+    return queued,
+        queueReason
+end
+
+HolyGuildSessionLoad()
+
+HOLY_GUILD_SESSION_WORKER_TOKEN =
+    (
+        tonumber(
+            HOLY_GUILD_SESSION_WORKER_TOKEN
+        )
+        or 0
+    )
+    + 1
+
+task.spawn(function()
+
+    local token =
+        HOLY_GUILD_SESSION_WORKER_TOKEN
+
+    while HOLY_GUILD_SESSION_WORKER_TOKEN
+        == token do
+
+        task.wait(
+            60
+        )
+
+        if HOLY_GUILD_SESSION_WORKER_TOKEN
+            ~= token then
+
+            return
+        end
+
+        HolyGuildSessionObserve()
+        HolyGuildSessionSave()
+    end
+end)
+
 function HolyGuildRefreshInfoPanels()
 
     HolyGuildRefreshOverviewPanel()
@@ -164118,6 +166718,7 @@ function HolyGuildRefreshInfoPanels()
     HolyGuildRefreshSelectedInvitePanel()
     HolyGuildRefreshTrustedSendersPanel()
     HolyGuildRefreshContestPanel()
+    HolyGuildRefreshSessionPanel()
     HolyGuildRefreshContestProgressPanel()
     HolyGuildRefreshLeaderboardPanel()
     HolyGuildRefreshSelectedGuildPanel()
@@ -164479,6 +167080,8 @@ function HolyGuildStart()
             if currentPage == "Contest" then
 
                 HolyGuildRefreshContestPanel()
+
+                HolyGuildRefreshSessionPanel()
 
                 HolyGuildRefreshContestProgressPanel()
 
@@ -188020,6 +190623,63 @@ HOLY_GUILD_UI.ContestActions =
 
                                 HolyGuildCaptureContestData()
                             end)
+                        end,
+                },
+            },
+        }
+    )
+
+GuildContestBox:AddDivider({
+    Text =
+        "Your Session",
+
+    MarginTop =
+        10,
+
+    MarginBottom =
+        6,
+})
+
+HOLY_GUILD_UI.SessionPanel =
+    HolyGuildAddInfoPanel(
+        GuildContestBox,
+        "HolyGuildSessionPanel",
+        318
+    )
+
+HOLY_GUILD_UI.SessionActions =
+    GuildContestBox:AddActionRow(
+        "HolyGuildSessionActions",
+        {
+            Height =
+                21,
+
+            Buttons = {
+                {
+                    Id =
+                        "Reset",
+
+                    Text =
+                        "Reset Session",
+
+                    Tooltip =
+                        "Resets session time, points gained, purchase counters, tame attempts, hops and Sheckles spent.",
+
+                    Callback =
+                        function()
+
+                            HolyGuildSessionReset(
+                                "Session reset manually"
+                            )
+
+                            HolyGuildRefreshSessionPanel()
+                            HolyGuildRefreshContestProgressPanel()
+
+                            HolyNotify(
+                                "HOLY Guild",
+                                "Guild session statistics were reset.",
+                                4
+                            )
                         end,
                 },
             },
