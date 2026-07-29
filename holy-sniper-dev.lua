@@ -33844,8 +33844,33 @@ function HolyFruitAutomationDropTool(record)
                 os.clock()
                 + 2.75
 
+            local nextLimitNoticeScanAt =
+                os.clock()
+                + 0.10
+
             while os.clock() < deadline
             and HOLY_FRUIT_AUTOMATION_STATE.AutoDropItems == true do
+                local now =
+                    os.clock()
+
+                if now >= nextLimitNoticeScanAt then
+                    nextLimitNoticeScanAt =
+                        now
+                        + 0.10
+
+                    if type(
+                        HolyItemAutomationGameDropLimitVisible
+                    ) == "function"
+                    and HolyItemAutomationGameDropLimitVisible()
+                        == true then
+                        HolyItemAutomationMarkServerDropLimit(
+                            "Farm drop rejection"
+                        )
+
+                        return false
+                    end
+                end
+
                 for _, item in ipairs(
                     addedItems
                 ) do
@@ -33983,6 +34008,172 @@ function HolyItemAutomationRefreshStatus()
     )
 end
 
+function HolyItemAutomationIsDropLimitMessage(value)
+    local text =
+        tostring(
+            value
+            or ""
+        ):lower()
+
+    if text:find(
+        "limit",
+        1,
+        true
+    ) == nil then
+        return false
+    end
+
+    text =
+        text:gsub(
+            "<.->",
+            " "
+        )
+
+    text =
+        text:gsub(
+            "%s+",
+            " "
+        )
+
+    return text:find(
+        "dropped item limit",
+        1,
+        true
+    ) ~= nil
+end
+
+function HolyItemAutomationGameDropLimitVisible()
+    local playerGui =
+        LocalPlayer:FindFirstChildOfClass(
+            "PlayerGui"
+        )
+
+    if typeof(playerGui) ~= "Instance" then
+        return false
+    end
+
+    for _, object in ipairs(
+        playerGui:GetDescendants()
+    ) do
+        if object:IsA("TextLabel")
+        or object:IsA("TextButton")
+        or object:IsA("TextBox") then
+            local visible =
+                object.Visible == true
+
+            if visible == true
+            and type(HolyDevRecorderVisible)
+                == "function" then
+                local visibleOk,
+                    actuallyVisible =
+                    pcall(
+                        HolyDevRecorderVisible,
+                        object
+                    )
+
+                visible =
+                    visibleOk == true
+                    and actuallyVisible == true
+            end
+
+            if visible == true
+            and HolyItemAutomationIsDropLimitMessage(
+                object.Text
+            ) == true then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function HolyItemAutomationMarkServerDropLimit(reason)
+    local state =
+        HolyFruitAutomationEnsureState()
+
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    local changed =
+        state.ServerDropJobId
+            ~= tostring(game.JobId)
+        or state.ServerDropCount
+            < HOLY_ITEM_AUTOMATION_DROP_LIMIT
+
+    state.ServerDropJobId =
+        tostring(game.JobId)
+
+    state.ServerDropCount =
+        HOLY_ITEM_AUTOMATION_DROP_LIMIT
+
+    runtime.DroppedThisRun =
+        state.ServerDropCount
+
+    runtime.DropLastAttempt =
+        {}
+
+    runtime.DropLimitDetectedAt =
+        os.clock()
+
+    runtime.DropLimitDetectedReason =
+        tostring(
+            reason
+            or "game limit notification"
+        )
+
+    if changed == true then
+        HolySaveFruitAutomationSettings()
+    end
+
+    HolyItemAutomationRefreshStatus()
+
+    return true
+end
+
+function HolyItemAutomationRecordConfirmedServerDrop(
+    source
+)
+    local state =
+        HolyFruitAutomationEnsureState()
+
+    local runtime =
+        HolyFruitAutomationEnsureRuntime()
+
+    if state.ServerDropJobId
+        ~= tostring(game.JobId) then
+        state.ServerDropJobId =
+            tostring(game.JobId)
+
+        state.ServerDropCount =
+            0
+    end
+
+    state.ServerDropCount =
+        math.clamp(
+            state.ServerDropCount + 1,
+            0,
+            HOLY_ITEM_AUTOMATION_DROP_LIMIT
+        )
+
+    state.ServerDropJobId =
+        tostring(game.JobId)
+
+    runtime.DroppedThisRun =
+        state.ServerDropCount
+
+    runtime.LastConfirmedDropSource =
+        tostring(
+            source
+            or "item drop"
+        )
+
+    HolySaveFruitAutomationSettings()
+    HolyItemAutomationRefreshStatus()
+
+    return state.ServerDropCount
+end
+
 function HolyFruitAutomationTryDropInfo(info)
     local runtime =
         HolyFruitAutomationEnsureRuntime()
@@ -34021,32 +34212,24 @@ function HolyFruitAutomationTryDropInfo(info)
     if HolyFruitAutomationDropTool(
         info
     ) ~= true then
+        if HolyItemAutomationGameDropLimitVisible()
+            == true then
+            HolyItemAutomationMarkServerDropLimit(
+                "Farm drop rejection"
+            )
+        end
+
         return false
     end
 
-    local state =
-        HolyFruitAutomationEnsureState()
-
-    state.ServerDropCount =
-        math.clamp(
-            state.ServerDropCount + 1,
-            0,
-            HOLY_ITEM_AUTOMATION_DROP_LIMIT
-        )
-
-    state.ServerDropJobId =
-        tostring(game.JobId)
-
-    runtime.DroppedThisRun =
-        state.ServerDropCount
+    HolyItemAutomationRecordConfirmedServerDrop(
+        "Farm Item Drop"
+    )
 
     runtime.DropLastAttempt[
         info.Tool
     ] =
         nil
-
-    HolySaveFruitAutomationSettings()
-    HolyItemAutomationRefreshStatus()
 
     return true
 end
@@ -34103,7 +34286,8 @@ function HolyItemAutomationRequestLimitHop()
     end
 
     if runtime.DropHopRequested == true then
-        return true
+        runtime.DropHopRequested =
+            false
     end
 
     if type(HolyQueueSmartServerHop)
@@ -75178,6 +75362,15 @@ HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID =
 
 function HolyBoughtPetCleanupDropOne(record, token)
 
+    if type(HolyFruitAutomationDropLimitReached)
+        == "function"
+    and HolyFruitAutomationDropLimitReached()
+        == true then
+        return false,
+            "Server drop limit reached",
+            "paused"
+    end
+
     local tool,
         resolveReason =
         HolyBoughtPetCleanupResolveExactTool(
@@ -75221,6 +75414,14 @@ function HolyBoughtPetCleanupDropOne(record, token)
 
     if success == true then
 
+        if type(
+            HolyItemAutomationRecordConfirmedServerDrop
+        ) == "function" then
+            HolyItemAutomationRecordConfirmedServerDrop(
+                "Auto Drop Bought Pets"
+            )
+        end
+
         record.Attempts =
             0
 
@@ -75232,6 +75433,24 @@ function HolyBoughtPetCleanupDropOne(record, token)
         )
 
         HolyBoughtPetCleanupRequestPersist()
+
+    elseif type(
+        HolyItemAutomationGameDropLimitVisible
+    ) == "function"
+    and HolyItemAutomationGameDropLimitVisible()
+        == true then
+
+        if type(
+            HolyItemAutomationMarkServerDropLimit
+        ) == "function" then
+            HolyItemAutomationMarkServerDropLimit(
+                "Auto Drop Bought Pets rejection"
+            )
+        end
+
+        return false,
+            "Server drop limit reached",
+            "paused"
     end
 
     return success,
