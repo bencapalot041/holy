@@ -84,6 +84,16 @@ do
     local earlySettingsFile =
         "HolyGAG2/HolyDevUISettings.json"
 
+    earlyEnv.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE =
+        type(
+            earlyEnv.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE
+        ) == "table"
+        and earlyEnv.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE
+        or {}
+
+    earlyEnv.HOLY_EARLY_PERFORMANCE_FORCE_PROFILE.DeleteBackpack =
+        false
+
     local earlyBootstrapSource = [==[
 local Players =
     game:GetService("Players")
@@ -102,7 +112,7 @@ local env =
     or _G
 
 local VERSION =
-    "HOLY_EARLY_PERFORMANCE_V1"
+    "HOLY_EARLY_PERFORMANCE_V2"
 
 local SETTINGS_FILE =
     "HolyGAG2/HolyDevUISettings.json"
@@ -214,6 +224,9 @@ end
 
 local profile =
     readProfile()
+
+profile.DeleteBackpack =
+    false
 
 local anyEnabled =
     profile.PerformanceMode == true
@@ -3442,6 +3455,10 @@ HOLY_DEV_UI_STATE = {
     UnloadOwnGarden = false,
     HideMiddle = false,
     DeleteBackpack = false,
+    BackpackCleanupMode = "Adaptive",
+    BackpackStartDelay = 2,
+    BackpackDeletePerCycle = 10,
+    BackpackCleanupDelay = 0.03,
 }
 
 do
@@ -3656,6 +3673,15 @@ if type(HOLY_PERFORMANCE_STATE) == "table" then
         )
         + 1
 
+    HOLY_PERFORMANCE_STATE.BackpackToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackToken
+            )
+            or 0
+        )
+        + 1
+
     local function DisconnectConnectionMap(connections)
 
         if type(connections) ~= "table" then
@@ -3706,6 +3732,10 @@ if type(HOLY_PERFORMANCE_STATE) == "table" then
     )
 
     DisconnectSingleConnection(
+        HOLY_PERFORMANCE_STATE.BackpackToolConnection
+    )
+
+    DisconnectSingleConnection(
         HOLY_PERFORMANCE_STATE.PerformanceModePlotConnection
     )
 
@@ -3729,6 +3759,28 @@ HOLY_PERFORMANCE_STATE = {
     MapConnections = {},
 
     BackpackConnection = nil,
+    BackpackToolConnection = nil,
+    BackpackTracked = nil,
+    BackpackToken = 0,
+    BackpackReady = false,
+    BackpackQueue = {},
+    BackpackQueueHead = 1,
+    BackpackQueueTail = 0,
+
+    BackpackQueued = setmetatable(
+        {},
+        {
+            __mode = "k",
+        }
+    ),
+
+    BackpackTotal = 0,
+    BackpackHandled = 0,
+    BackpackDeleted = 0,
+    BackpackAdaptiveAmount = 4,
+    BackpackSawLoadingGui = false,
+    BackpackReadySignal = nil,
+    BackpackReadyStableAt = nil,
 
     PerformanceModeConnections = {},
     PerformanceModePlotConnection = nil,
@@ -10753,8 +10805,28 @@ function HolySaveUISettings()
         HideMiddle =
             HOLY_DEV_UI_STATE.HideMiddle == true,
 
-        DeleteBackpack =
+        SafeDeleteBackpack =
             HOLY_DEV_UI_STATE.DeleteBackpack == true,
+
+        BackpackCleanupMode =
+            HolyPerformanceNormalizeBackpackMode(
+                HOLY_DEV_UI_STATE.BackpackCleanupMode
+            ),
+
+        BackpackStartDelay =
+            HolyPerformanceReadBackpackStartDelay(
+                HOLY_DEV_UI_STATE.BackpackStartDelay
+            ),
+
+        BackpackDeletePerCycle =
+            HolyPerformanceReadBackpackDeletePerCycle(
+                HOLY_DEV_UI_STATE.BackpackDeletePerCycle
+            ),
+
+        BackpackCleanupDelay =
+            HolyPerformanceReadBackpackCleanupDelay(
+                HOLY_DEV_UI_STATE.BackpackCleanupDelay
+            ),
     }
 
     local encodeOk,
@@ -11113,11 +11185,36 @@ function HolyLoadUISettings()
             data.UnloadMiddle
     end
 
-    if type(data.DeleteBackpack) == "boolean" then
+    if type(data.SafeDeleteBackpack) == "boolean" then
+
+        HOLY_DEV_UI_STATE.DeleteBackpack =
+            data.SafeDeleteBackpack
+
+    elseif type(data.DeleteBackpack) == "boolean" then
 
         HOLY_DEV_UI_STATE.DeleteBackpack =
             data.DeleteBackpack
     end
+
+    HOLY_DEV_UI_STATE.BackpackCleanupMode =
+        HolyPerformanceNormalizeBackpackMode(
+            data.BackpackCleanupMode
+        )
+
+    HOLY_DEV_UI_STATE.BackpackStartDelay =
+        HolyPerformanceReadBackpackStartDelay(
+            data.BackpackStartDelay
+        )
+
+    HOLY_DEV_UI_STATE.BackpackDeletePerCycle =
+        HolyPerformanceReadBackpackDeletePerCycle(
+            data.BackpackDeletePerCycle
+        )
+
+    HOLY_DEV_UI_STATE.BackpackCleanupDelay =
+        HolyPerformanceReadBackpackCleanupDelay(
+            data.BackpackCleanupDelay
+        )
 
     return true
 end
@@ -104002,6 +104099,18 @@ end
 
 function HolyPerformanceRefreshUI()
 
+    if type(HolySniperSetLabel) == "function" then
+
+        HolySniperSetLabel(
+            HOLY_PERFORMANCE_UI
+            and HOLY_PERFORMANCE_UI.BackpackStatusLabel
+            or nil,
+            HolyPerformanceBuildStatusText()
+        )
+
+        return true
+    end
+
     return false
 end
 
@@ -104012,84 +104121,331 @@ function HolyPerformanceSetStatus(status)
         and HOLY_PERFORMANCE_STATE
         or {}
 
-    HOLY_PERFORMANCE_STATE.LastStatus =
+    status =
         tostring(status or "Ready.")
+
+    if HOLY_PERFORMANCE_STATE.LastStatus == status then
+        return true
+    end
+
+    HOLY_PERFORMANCE_STATE.LastStatus =
+        status
+
+    HolyPerformanceRefreshUI()
 
     return true
 end
 
+function HolyPerformanceNormalizeBackpackMode(value)
+
+    value =
+        tostring(
+            value
+            or "Adaptive"
+        )
+
+    if value == "Fixed Amount"
+    or value == "All At Once" then
+
+        return value
+    end
+
+    return "Adaptive"
+end
+
+function HolyPerformanceReadBackpackStartDelay(value)
+
+    return math.clamp(
+        tonumber(value)
+            or 2,
+        0,
+        30
+    )
+end
+
+function HolyPerformanceReadBackpackDeletePerCycle(value)
+
+    return math.max(
+        1,
+        math.floor(
+            tonumber(value)
+                or 10
+        )
+    )
+end
+
+function HolyPerformanceReadBackpackCleanupDelay(value)
+
+    return math.clamp(
+        tonumber(value)
+            or 0.03,
+        0,
+        1
+    )
+end
+
 function HolyPerformanceDisconnectBackpackWatcher()
 
-    local connection =
-        HOLY_PERFORMANCE_STATE.BackpackConnection
+    for _, connection in pairs({
+        HOLY_PERFORMANCE_STATE.BackpackConnection,
+        HOLY_PERFORMANCE_STATE.BackpackToolConnection,
+    }) do
 
-    if connection then
+        if connection then
 
-        pcall(function()
+            pcall(function()
 
-            connection:Disconnect()
-        end)
+                connection:Disconnect()
+            end)
+        end
     end
 
     HOLY_PERFORMANCE_STATE.BackpackConnection =
         nil
+
+    HOLY_PERFORMANCE_STATE.BackpackToolConnection =
+        nil
+
+    HOLY_PERFORMANCE_STATE.BackpackTracked =
+        nil
 end
 
-function HolyPerformanceDeleteBackpackOnce(reason)
+function HolyPerformanceResetBackpackQueue()
 
-    if HOLY_DEV_UI_STATE.DeleteBackpack ~= true
-    or not LocalPlayer then
+    local runtime =
+        HOLY_PERFORMANCE_STATE
 
-        return false
-    end
+    runtime.BackpackQueue =
+        {}
 
-    local backpack =
-        LocalPlayer:FindFirstChildOfClass(
-            "Backpack"
+    runtime.BackpackQueueHead =
+        1
+
+    runtime.BackpackQueueTail =
+        0
+
+    runtime.BackpackQueued =
+        setmetatable(
+            {},
+            {
+                __mode = "k",
+            }
         )
 
-    if typeof(backpack) ~= "Instance" then
+    runtime.BackpackTotal =
+        0
+
+    runtime.BackpackHandled =
+        0
+
+    runtime.BackpackDeleted =
+        0
+
+    runtime.BackpackAdaptiveAmount =
+        4
+
+    return true
+end
+
+function HolyPerformanceBackpackQueueTool(tool)
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    if HOLY_DEV_UI_STATE.DeleteBackpack ~= true
+    or runtime.BackpackReady ~= true
+    or typeof(tool) ~= "Instance"
+    or tool:IsA("Tool") ~= true
+    or tool.Parent ~= runtime.BackpackTracked
+    or runtime.BackpackQueued[tool] == true then
+
         return false
     end
 
-    local toolCount =
+    runtime.BackpackQueueTail =
+        (
+            tonumber(
+                runtime.BackpackQueueTail
+            )
+            or 0
+        )
+        + 1
+
+    runtime.BackpackQueue[
+        runtime.BackpackQueueTail
+    ] =
+        tool
+
+    runtime.BackpackQueued[tool] =
+        true
+
+    runtime.BackpackTotal =
+        (
+            tonumber(
+                runtime.BackpackTotal
+            )
+            or 0
+        )
+        + 1
+
+    return true
+end
+
+function HolyPerformanceBackpackQueueExisting()
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    local backpack =
+        runtime.BackpackTracked
+
+    if typeof(backpack) ~= "Instance"
+    or backpack.Parent ~= LocalPlayer then
+
+        return 0
+    end
+
+    local added =
         0
 
     for _, child in ipairs(
         backpack:GetChildren()
     ) do
 
-        if child:IsA("Tool") then
+        if HolyPerformanceBackpackQueueTool(
+            child
+        ) == true then
 
-            toolCount +=
+            added +=
                 1
         end
     end
 
-    local ok =
-        pcall(function()
+    return added
+end
 
-            backpack:Destroy()
-        end)
+function HolyPerformanceBackpackPopQueue()
 
-    if ok == true then
+    local runtime =
+        HOLY_PERFORMANCE_STATE
 
-        HOLY_PERFORMANCE_STATE.DeletedCount =
-            (
-                tonumber(
-                    HOLY_PERFORMANCE_STATE.DeletedCount
-                )
-                or 0
-            )
-            + toolCount
-            + 1
-
-        HolyPerformanceSetStatus(
-            "Backpack deleted."
+    local head =
+        tonumber(
+            runtime.BackpackQueueHead
         )
+        or 1
+
+    local tail =
+        tonumber(
+            runtime.BackpackQueueTail
+        )
+        or 0
+
+    if head > tail then
+
+        runtime.BackpackQueue =
+            {}
+
+        runtime.BackpackQueueHead =
+            1
+
+        runtime.BackpackQueueTail =
+            0
+
+        return nil
     end
 
-    return ok == true
+    local tool =
+        runtime.BackpackQueue[
+            head
+        ]
+
+    runtime.BackpackQueue[
+        head
+    ] =
+        nil
+
+    runtime.BackpackQueueHead =
+        head + 1
+
+    if typeof(tool) == "Instance" then
+
+        runtime.BackpackQueued[tool] =
+            nil
+    end
+
+    return tool
+end
+
+function HolyPerformanceBackpackQueueRemaining()
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    return math.max(
+        0,
+        (
+            tonumber(
+                runtime.BackpackQueueTail
+            )
+            or 0
+        )
+            - (
+                tonumber(
+                    runtime.BackpackQueueHead
+                )
+                or 1
+            )
+            + 1
+    )
+end
+
+function HolyPerformanceBindBackpack(backpack)
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    if runtime.BackpackToolConnection then
+
+        pcall(function()
+
+            runtime.BackpackToolConnection:Disconnect()
+        end)
+    end
+
+    runtime.BackpackToolConnection =
+        nil
+
+    runtime.BackpackTracked =
+        typeof(backpack) == "Instance"
+        and backpack
+        or nil
+
+    if typeof(backpack) ~= "Instance"
+    or backpack.Parent ~= LocalPlayer then
+
+        return false
+    end
+
+    runtime.BackpackToolConnection =
+        backpack.ChildAdded:Connect(function(child)
+
+            if HOLY_DEV_UI_STATE.DeleteBackpack == true
+            and runtime.BackpackReady == true
+            and runtime.BackpackTracked == backpack then
+
+                HolyPerformanceBackpackQueueTool(
+                    child
+                )
+            end
+        end)
+
+    if runtime.BackpackReady == true then
+
+        HolyPerformanceBackpackQueueExisting()
+    end
+
+    return true
 end
 
 function HolyPerformanceConnectBackpackWatcher()
@@ -104112,16 +104468,616 @@ function HolyPerformanceConnectBackpackWatcher()
                     if HOLY_DEV_UI_STATE.DeleteBackpack == true
                     and child.Parent == LocalPlayer then
 
-                        pcall(function()
-
-                            child:Destroy()
-                        end)
+                        HolyPerformanceBindBackpack(
+                            child
+                        )
                     end
                 end)
             end
         end)
 
+    HolyPerformanceBindBackpack(
+        LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+    )
+
     return true
+end
+
+function HolyPerformanceBackpackLoadingReady()
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    if game:IsLoaded() ~= true then
+
+        runtime.BackpackReadySignal =
+            nil
+
+        runtime.BackpackReadyStableAt =
+            nil
+
+        return false,
+            "Roblox"
+    end
+
+    local character =
+        LocalPlayer
+        and LocalPlayer.Character
+        or nil
+
+    local root =
+        character
+        and character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+        or nil
+
+    if typeof(root) ~= "Instance" then
+
+        runtime.BackpackReadySignal =
+            nil
+
+        runtime.BackpackReadyStableAt =
+            nil
+
+        return false,
+            "character"
+    end
+
+    local loadingGui =
+        nil
+
+    if type(
+        HolyLoadingGetWorkspaceLoadingGui
+    ) == "function" then
+
+        local ok,
+            result =
+            pcall(
+                HolyLoadingGetWorkspaceLoadingGui
+            )
+
+        if ok == true then
+
+            loadingGui =
+                result
+        end
+    end
+
+    local pressedFinal =
+        type(HOLY_LOADING_SKIP_STATE) == "table"
+        and HOLY_LOADING_SKIP_STATE.PressedFinal == true
+
+    if typeof(loadingGui) == "Instance"
+    and loadingGui.Parent ~= nil then
+
+        runtime.BackpackSawLoadingGui =
+            true
+
+        if pressedFinal ~= true then
+
+            runtime.BackpackReadyStableAt =
+                nil
+
+            return false,
+                "loading screen"
+        end
+    end
+
+    local controllersStarted =
+        false
+
+    pcall(function()
+
+        controllersStarted =
+            game:GetService(
+                "CollectionService"
+            ):HasTag(
+                LocalPlayer,
+                "ControllersStarted"
+            )
+    end)
+
+    local readySignal =
+        "fallback"
+
+    local requiredStable =
+        8
+
+    if pressedFinal == true then
+
+        readySignal =
+            "final input"
+
+        requiredStable =
+            1
+
+    elseif typeof(loadingGui) ~= "Instance"
+    and runtime.BackpackSawLoadingGui == true then
+
+        readySignal =
+            "loading closed"
+
+        requiredStable =
+            0.75
+
+    elseif controllersStarted == true then
+
+        readySignal =
+            "controllers"
+
+        requiredStable =
+            1
+    end
+
+    if runtime.BackpackReadySignal
+        ~= readySignal then
+
+        runtime.BackpackReadySignal =
+            readySignal
+
+        runtime.BackpackReadyStableAt =
+            os.clock()
+    end
+
+    if runtime.BackpackReadyStableAt == nil then
+
+        runtime.BackpackReadyStableAt =
+            os.clock()
+    end
+
+    local stableFor =
+        os.clock()
+        - runtime.BackpackReadyStableAt
+
+    if stableFor < requiredStable then
+
+        return false,
+            readySignal == "fallback"
+            and "game readiness"
+            or "settling"
+    end
+
+    return true,
+        "ready"
+end
+
+function HolyPerformanceBackpackWaitForLoading(token)
+
+    local lastStatusAt =
+        0
+
+    while HOLY_DEV_UI_STATE.DeleteBackpack == true
+    and HOLY_PERFORMANCE_STATE.BackpackToken == token do
+
+        local ready,
+            reason =
+            HolyPerformanceBackpackLoadingReady()
+
+        if ready == true then
+            return true
+        end
+
+        if os.clock() - lastStatusAt >= 0.5 then
+
+            lastStatusAt =
+                os.clock()
+
+            HolyPerformanceSetStatus(
+                "Waiting for "
+                .. tostring(reason)
+                .. " before clearing Backpack..."
+            )
+        end
+
+        task.wait(
+            0.10
+        )
+    end
+
+    return false
+end
+
+function HolyPerformanceBackpackWaitStartDelay(token)
+
+    local readyAt =
+        os.clock()
+
+    local lastShown =
+        nil
+
+    while HOLY_DEV_UI_STATE.DeleteBackpack == true
+    and HOLY_PERFORMANCE_STATE.BackpackToken == token do
+
+        local delay =
+            HolyPerformanceReadBackpackStartDelay(
+                HOLY_DEV_UI_STATE.BackpackStartDelay
+            )
+
+        local remaining =
+            delay
+            - (
+                os.clock()
+                - readyAt
+            )
+
+        if remaining <= 0 then
+            return true
+        end
+
+        local shown =
+            math.ceil(
+                remaining
+                * 10
+            )
+            / 10
+
+        if shown ~= lastShown then
+
+            lastShown =
+                shown
+
+            HolyPerformanceSetStatus(
+                "Loading complete · Backpack cleanup starts in "
+                .. string.format(
+                    "%.1fs",
+                    shown
+                )
+            )
+        end
+
+        task.wait(
+            0.05
+        )
+    end
+
+    return false
+end
+
+function HolyPerformanceBackpackFormatMode()
+
+    local mode =
+        HolyPerformanceNormalizeBackpackMode(
+            HOLY_DEV_UI_STATE.BackpackCleanupMode
+        )
+
+    if mode == "Fixed Amount" then
+
+        return tostring(
+            HolyPerformanceReadBackpackDeletePerCycle(
+                HOLY_DEV_UI_STATE.BackpackDeletePerCycle
+            )
+        )
+            .. " per cycle"
+    end
+
+    if mode == "All At Once" then
+        return "all at once"
+    end
+
+    return "adaptive "
+        .. tostring(
+            math.max(
+                1,
+                math.floor(
+                    tonumber(
+                        HOLY_PERFORMANCE_STATE.BackpackAdaptiveAmount
+                    )
+                    or 1
+                )
+            )
+        )
+        .. " per cycle"
+end
+
+function HolyPerformanceBackpackUpdateProgress()
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    HolyPerformanceSetStatus(
+        "Clearing Backpack · "
+        .. tostring(
+            tonumber(
+                runtime.BackpackHandled
+            )
+            or 0
+        )
+        .. " / "
+        .. tostring(
+            tonumber(
+                runtime.BackpackTotal
+            )
+            or 0
+        )
+        .. " · "
+        .. HolyPerformanceBackpackFormatMode()
+        .. " · "
+        .. string.format(
+            "%.2fs delay",
+            HolyPerformanceReadBackpackCleanupDelay(
+                HOLY_DEV_UI_STATE.BackpackCleanupDelay
+            )
+        )
+    )
+
+    return true
+end
+
+function HolyPerformanceBackpackProcessCycle(token)
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    local mode =
+        HolyPerformanceNormalizeBackpackMode(
+            HOLY_DEV_UI_STATE.BackpackCleanupMode
+        )
+
+    local maximum =
+        0
+
+    if mode == "All At Once" then
+
+        maximum =
+            HolyPerformanceBackpackQueueRemaining()
+
+    elseif mode == "Fixed Amount" then
+
+        maximum =
+            HolyPerformanceReadBackpackDeletePerCycle(
+                HOLY_DEV_UI_STATE.BackpackDeletePerCycle
+            )
+
+    else
+
+        maximum =
+            math.clamp(
+                math.floor(
+                    tonumber(
+                        runtime.BackpackAdaptiveAmount
+                    )
+                    or 4
+                ),
+                1,
+                10
+            )
+    end
+
+    local cycleStartedAt =
+        os.clock()
+
+    local attempted =
+        0
+
+    while attempted < maximum
+    and HOLY_DEV_UI_STATE.DeleteBackpack == true
+    and runtime.BackpackToken == token do
+
+        local tool =
+            HolyPerformanceBackpackPopQueue()
+
+        if typeof(tool) ~= "Instance" then
+            break
+        end
+
+        attempted +=
+            1
+
+        runtime.BackpackHandled =
+            (
+                tonumber(
+                    runtime.BackpackHandled
+                )
+                or 0
+            )
+            + 1
+
+        if tool:IsA("Tool")
+        and tool.Parent == runtime.BackpackTracked then
+
+            local destroyed =
+                pcall(function()
+
+                    tool:Destroy()
+                end)
+
+            if destroyed == true then
+
+                runtime.BackpackDeleted =
+                    (
+                        tonumber(
+                            runtime.BackpackDeleted
+                        )
+                        or 0
+                    )
+                    + 1
+
+                runtime.DeletedCount =
+                    (
+                        tonumber(
+                            runtime.DeletedCount
+                        )
+                        or 0
+                    )
+                    + 1
+            end
+        end
+
+        if mode == "Adaptive"
+        and os.clock() - cycleStartedAt >= 0.0025 then
+
+            break
+        end
+    end
+
+    local duration =
+        os.clock()
+        - cycleStartedAt
+
+    if mode == "Adaptive"
+    and attempted > 0 then
+
+        local current =
+            math.clamp(
+                math.floor(
+                    tonumber(
+                        runtime.BackpackAdaptiveAmount
+                    )
+                    or 4
+                ),
+                1,
+                10
+            )
+
+        if duration >= 0.004 then
+
+            current =
+                math.max(
+                    1,
+                    current - 1
+                )
+
+        elseif attempted >= maximum
+        and duration <= 0.0015 then
+
+            current =
+                math.min(
+                    10,
+                    current + 1
+                )
+        end
+
+        runtime.BackpackAdaptiveAmount =
+            current
+    end
+
+    HolyPerformanceBackpackUpdateProgress()
+
+    return attempted
+end
+
+function HolyPerformanceBackpackWaitCycle(token)
+
+    if HOLY_DEV_UI_STATE.DeleteBackpack ~= true
+    or HOLY_PERFORMANCE_STATE.BackpackToken ~= token then
+
+        return false
+    end
+
+    local delay =
+        HolyPerformanceReadBackpackCleanupDelay(
+            HOLY_DEV_UI_STATE.BackpackCleanupDelay
+        )
+
+    if delay > 0 then
+
+        task.wait(
+            delay
+        )
+
+    else
+
+        RunService.Heartbeat:Wait()
+    end
+
+    return HOLY_DEV_UI_STATE.DeleteBackpack == true
+        and HOLY_PERFORMANCE_STATE.BackpackToken == token
+end
+
+function HolyPerformanceRunBackpackCleanup(token)
+
+    local runtime =
+        HOLY_PERFORMANCE_STATE
+
+    if HolyPerformanceBackpackWaitForLoading(
+        token
+    ) ~= true then
+
+        return false
+    end
+
+    if HolyPerformanceBackpackWaitStartDelay(
+        token
+    ) ~= true then
+
+        return false
+    end
+
+    if HOLY_DEV_UI_STATE.DeleteBackpack ~= true
+    or runtime.BackpackToken ~= token then
+
+        return false
+    end
+
+    runtime.BackpackReady =
+        true
+
+    HolyPerformanceBindBackpack(
+        LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
+    )
+
+    HolyPerformanceBackpackQueueExisting()
+
+    if HolyPerformanceBackpackQueueRemaining() <= 0 then
+
+        HolyPerformanceSetStatus(
+            "Backpack cleared · watching new items."
+        )
+
+    else
+
+        HolyPerformanceBackpackUpdateProgress()
+    end
+
+    while HOLY_DEV_UI_STATE.DeleteBackpack == true
+    and runtime.BackpackToken == token do
+
+        local backpack =
+            LocalPlayer:FindFirstChildOfClass(
+                "Backpack"
+            )
+
+        if backpack ~= runtime.BackpackTracked then
+
+            HolyPerformanceBindBackpack(
+                backpack
+            )
+        end
+
+        if HolyPerformanceBackpackQueueRemaining() > 0 then
+
+            HolyPerformanceBackpackProcessCycle(
+                token
+            )
+
+            HolyPerformanceBackpackWaitCycle(
+                token
+            )
+
+        else
+
+            HolyPerformanceSetStatus(
+                "Backpack cleared · watching new items."
+            )
+
+            task.wait(
+                0.20
+            )
+        end
+    end
+
+    return true
+end
+
+function HolyPerformanceDeleteBackpackOnce(reason)
+
+    return HolyPerformanceBackpackQueueExisting()
+        > 0
 end
 
 function HolyPerformanceStartDeleteBackpack(reason)
@@ -104129,28 +105085,70 @@ function HolyPerformanceStartDeleteBackpack(reason)
     HOLY_DEV_UI_STATE.DeleteBackpack =
         true
 
-    HolySaveUISettings()
-
-    if HolyPerformanceSetEarlyFeature(
-        "DeleteBackpack",
-        true
-    ) == true then
-
-        HolyPerformanceDisconnectBackpackWatcher()
-
-        HolyPerformanceSetStatus(
-            "Backpack deletion is active from the early bootstrap."
+    HOLY_DEV_UI_STATE.BackpackCleanupMode =
+        HolyPerformanceNormalizeBackpackMode(
+            HOLY_DEV_UI_STATE.BackpackCleanupMode
         )
 
-        return true
-    end
+    HOLY_DEV_UI_STATE.BackpackStartDelay =
+        HolyPerformanceReadBackpackStartDelay(
+            HOLY_DEV_UI_STATE.BackpackStartDelay
+        )
 
+    HOLY_DEV_UI_STATE.BackpackDeletePerCycle =
+        HolyPerformanceReadBackpackDeletePerCycle(
+            HOLY_DEV_UI_STATE.BackpackDeletePerCycle
+        )
+
+    HOLY_DEV_UI_STATE.BackpackCleanupDelay =
+        HolyPerformanceReadBackpackCleanupDelay(
+            HOLY_DEV_UI_STATE.BackpackCleanupDelay
+        )
+
+    HolySaveUISettings()
+
+    HolyPerformanceSetEarlyFeature(
+        "DeleteBackpack",
+        false
+    )
+
+    HOLY_PERFORMANCE_STATE.BackpackToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackToken
+            )
+            or 0
+        )
+        + 1
+
+    local token =
+        HOLY_PERFORMANCE_STATE.BackpackToken
+
+    HOLY_PERFORMANCE_STATE.BackpackReady =
+        false
+
+    HOLY_PERFORMANCE_STATE.BackpackSawLoadingGui =
+        false
+
+    HOLY_PERFORMANCE_STATE.BackpackReadySignal =
+        nil
+
+    HOLY_PERFORMANCE_STATE.BackpackReadyStableAt =
+        nil
+
+    HolyPerformanceResetBackpackQueue()
     HolyPerformanceConnectBackpackWatcher()
 
-    HolyPerformanceDeleteBackpackOnce(
-        reason
-        or "performance"
+    HolyPerformanceSetStatus(
+        "Waiting for loading before clearing Backpack..."
     )
+
+    task.spawn(function()
+
+        HolyPerformanceRunBackpackCleanup(
+            token
+        )
+    end)
 
     return true
 end
@@ -104160,7 +105158,17 @@ function HolyPerformanceStopDeleteBackpack(reason)
     HOLY_DEV_UI_STATE.DeleteBackpack =
         false
 
-    HolySaveUISettings()
+    HOLY_PERFORMANCE_STATE.BackpackToken =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.BackpackToken
+            )
+            or 0
+        )
+        + 1
+
+    HOLY_PERFORMANCE_STATE.BackpackReady =
+        false
 
     HolyPerformanceSetEarlyFeature(
         "DeleteBackpack",
@@ -104168,14 +105176,15 @@ function HolyPerformanceStopDeleteBackpack(reason)
     )
 
     HolyPerformanceDisconnectBackpackWatcher()
+    HolyPerformanceResetBackpackQueue()
+    HolySaveUISettings()
 
     HolyPerformanceSetStatus(
-        "Backpack deletion stopped. Rejoin to restore."
+        "Backpack cleanup stopped. Removed tools cannot be restored."
     )
 
     return true
 end
-
 
 function HolyPerformanceGetGardensRoot()
 
@@ -204105,7 +205114,7 @@ SettingsPerformanceBox:AddToggle(
             HOLY_DEV_UI_STATE.DeleteBackpack == true,
 
         Tooltip =
-            "Destroys the local Backpack and automatically removes it again if recreated. Reduces memory, but disables seeds, tools, pets, sprinklers, Pet Inventory, and inventory-based automation. Turning this off does not restore the Backpack; disable it, then rejoin.",
+            "Waits until loading is complete, keeps the Backpack instance alive, and clears its Tool children using the selected cleanup settings. This disables seeds, tools, pets, sprinklers, Pet Inventory, and inventory-based automation.",
     }
 ):OnChanged(function(value)
 
@@ -204122,6 +205131,185 @@ SettingsPerformanceBox:AddToggle(
         )
     end
 end)
+
+HOLY_PERFORMANCE_UI.BackpackModeDropdown =
+    SettingsPerformanceBox:AddDropdown(
+        "HolyBackpackCleanupMode",
+        {
+            Text =
+                "Backpack Cleanup Mode",
+
+            Values = {
+                "Adaptive",
+                "Fixed Amount",
+                "All At Once",
+            },
+
+            Default =
+                HolyPerformanceNormalizeBackpackMode(
+                    HOLY_DEV_UI_STATE.BackpackCleanupMode
+                ),
+
+            Multi =
+                false,
+
+            Searchable =
+                false,
+
+            MaxVisibleDropdownItems =
+                3,
+
+            Tooltip =
+                "Adaptive limits each cycle to a small frame budget. Fixed Amount uses Delete Per Cycle. All At Once is fastest but can temporarily freeze large inventories.",
+        }
+    )
+
+HOLY_PERFORMANCE_UI.BackpackModeDropdown:OnChanged(function(value)
+
+    HOLY_DEV_UI_STATE.BackpackCleanupMode =
+        HolyPerformanceNormalizeBackpackMode(
+            value
+        )
+
+    HolySaveUISettings()
+
+    HolyPerformanceSetStatus(
+        "Backpack cleanup mode set to "
+        .. HOLY_DEV_UI_STATE.BackpackCleanupMode
+        .. "."
+    )
+end)
+
+HOLY_PERFORMANCE_UI.BackpackStartDelaySlider =
+    SettingsPerformanceBox:AddSlider(
+        "HolyBackpackStartDelay",
+        {
+            Text =
+                "Backpack Start Delay",
+
+            Default =
+                HolyPerformanceReadBackpackStartDelay(
+                    HOLY_DEV_UI_STATE.BackpackStartDelay
+                ),
+
+            Min =
+                0,
+
+            Max =
+                30,
+
+            Rounding =
+                1,
+
+            Suffix =
+                "s",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Extra wait after gameplay is confirmed ready. Even 0 seconds never starts cleanup during the loading screen.",
+        }
+    )
+
+HOLY_PERFORMANCE_UI.BackpackStartDelaySlider:OnChanged(function(value)
+
+    HOLY_DEV_UI_STATE.BackpackStartDelay =
+        HolyPerformanceReadBackpackStartDelay(
+            value
+        )
+
+    HolySaveUISettings()
+end)
+
+HOLY_PERFORMANCE_UI.BackpackDeletePerCycleInput =
+    SettingsPerformanceBox:AddInput(
+        "HolyBackpackDeletePerCycle",
+        {
+            Text =
+                "Delete Per Cycle",
+
+            Default =
+                tostring(
+                    HolyPerformanceReadBackpackDeletePerCycle(
+                        HOLY_DEV_UI_STATE.BackpackDeletePerCycle
+                    )
+                ),
+
+            Placeholder =
+                "10",
+
+            Numeric =
+                true,
+
+            Finished =
+                true,
+
+            ClearTextOnFocus =
+                false,
+
+            Tooltip =
+                "Tools removed per cycle in Fixed Amount mode. Minimum is 1; larger values are faster but can cause more lag.",
+        }
+    )
+
+HOLY_PERFORMANCE_UI.BackpackDeletePerCycleInput:OnChanged(function(value)
+
+    HOLY_DEV_UI_STATE.BackpackDeletePerCycle =
+        HolyPerformanceReadBackpackDeletePerCycle(
+            value
+        )
+
+    HolySaveUISettings()
+end)
+
+HOLY_PERFORMANCE_UI.BackpackCleanupDelaySlider =
+    SettingsPerformanceBox:AddSlider(
+        "HolyBackpackCleanupDelay",
+        {
+            Text =
+                "Backpack Cleanup Delay",
+
+            Default =
+                HolyPerformanceReadBackpackCleanupDelay(
+                    HOLY_DEV_UI_STATE.BackpackCleanupDelay
+                ),
+
+            Min =
+                0,
+
+            Max =
+                1,
+
+            Rounding =
+                2,
+
+            Suffix =
+                "s",
+
+            HideMax =
+                true,
+
+            Tooltip =
+                "Pause between cleanup cycles. Lower is faster; higher is smoother. 0 still yields for one frame between cycles.",
+        }
+    )
+
+HOLY_PERFORMANCE_UI.BackpackCleanupDelaySlider:OnChanged(function(value)
+
+    HOLY_DEV_UI_STATE.BackpackCleanupDelay =
+        HolyPerformanceReadBackpackCleanupDelay(
+            value
+        )
+
+    HolySaveUISettings()
+end)
+
+HOLY_PERFORMANCE_UI.BackpackStatusLabel =
+    HolySniperAddLabel(
+        SettingsPerformanceBox,
+        HolyPerformanceBuildStatusText()
+    )
 
 if HOLY_DEV_UI_STATE.PerformanceMode == true then
 
