@@ -166671,7 +166671,981 @@ function HolyQueueSmartServerHop(
         queueReason
 end
 
+HOLY_GUILD_PERSONAL_CONTRIBUTION_MODE =
+    "LocalUserV2"
+
+function HolyGuildGetConfirmedGlobalPlacement()
+
+    local ownGuildId =
+        tostring(
+            HolyGuildGetGuildId()
+            or ""
+        )
+
+    local snapshotRoot =
+        HolyGuildSnapshotRoot(
+            HOLY_GUILD_STATE.Snapshot
+        )
+
+    local ownName =
+        type(snapshotRoot) == "table"
+        and HolyCleanText(
+            HolyGuildField(
+                snapshotRoot,
+                {
+                    "Name",
+                    "GuildName",
+                },
+                ""
+            )
+        ):lower()
+        or ""
+
+    local ownTag =
+        type(snapshotRoot) == "table"
+        and HolyCleanText(
+            HolyGuildField(
+                snapshotRoot,
+                {
+                    "Tag",
+                    "GuildTag",
+                },
+                ""
+            )
+        ):lower()
+        or ""
+
+    local rows =
+        type(HolyGuildLeaderboardArray)
+            == "function"
+        and HolyGuildLeaderboardArray()
+        or {}
+
+    for _, row in ipairs(
+        rows
+    ) do
+
+        if type(row) == "table" then
+
+            local rowId =
+                tostring(
+                    row.Id
+                    or ""
+                )
+
+            local rowName =
+                HolyCleanText(
+                    row.Name
+                ):lower()
+
+            local rowTag =
+                HolyCleanText(
+                    row.Tag
+                ):lower()
+
+            local idMatches =
+                ownGuildId ~= ""
+                and rowId ~= ""
+                and rowId == ownGuildId
+
+            local nameMatches =
+                ownName ~= ""
+                and rowName == ownName
+                and (
+                    ownTag == ""
+                    or rowTag == ownTag
+                )
+
+            if idMatches
+            or nameMatches then
+
+                local rank =
+                    tonumber(
+                        row.Rank
+                    )
+
+                if rank ~= nil
+                and rank > 0 then
+
+                    return math.floor(
+                        rank
+                    )
+                end
+            end
+        end
+    end
+
+    local sources = {}
+
+    if type(snapshotRoot) == "table" then
+
+        sources[
+            #sources
+            + 1
+        ] =
+            snapshotRoot
+    end
+
+    local contestRoot =
+        type(HolyGuildContestRoot)
+            == "function"
+        and HolyGuildContestRoot()
+        or nil
+
+    if type(contestRoot) == "table"
+    and contestRoot ~= snapshotRoot then
+
+        sources[
+            #sources
+            + 1
+        ] =
+            contestRoot
+    end
+
+    for _, source in ipairs(
+        sources
+    ) do
+
+        local rank =
+            tonumber(
+                HolyGuildField(
+                    source,
+                    {
+                        "GlobalRank",
+                        "WeeklyGlobalRank",
+                        "LeaderboardRank",
+                        "GlobalPlacement",
+                        "WeeklyPlacement",
+                    }
+                )
+            )
+
+        if rank ~= nil
+        and rank > 0 then
+
+            return math.floor(
+                rank
+            )
+        end
+    end
+
+    return nil
+end
+
+HOLY_GUILD_PERSONAL_BASE_GET_CONTEST_VIEW =
+    HolyGuildGetContestView
+
+function HolyGuildGetContestView()
+
+    local view =
+        HOLY_GUILD_PERSONAL_BASE_GET_CONTEST_VIEW()
+
+    if type(view) == "table" then
+
+        view.Placement =
+            HolyGuildGetConfirmedGlobalPlacement()
+    end
+
+    return view
+end
+
+function HolyGuildGetOwnLeaderboardRow()
+
+    local data =
+        HolyGuildGetOverviewData()
+
+    if type(data) ~= "table" then
+        return nil
+    end
+
+    local rank =
+        HolyGuildGetConfirmedGlobalPlacement()
+
+    return {
+        Rank =
+            rank
+            or "—",
+
+        Id =
+            data.Id,
+
+        Name =
+            data.Name,
+
+        Tag =
+            data.Tag,
+
+        Score =
+            data.Weekly,
+
+        Members =
+            data.Members,
+
+        MaxMembers =
+            data.Capacity,
+
+        IconId =
+            data.IconId,
+
+        IsOwn =
+            true,
+    }
+end
+
+function HolyGuildContributionNumber(value)
+
+    if type(value) == "number" then
+        return value
+    end
+
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    local cleaned =
+        tostring(value)
+        :gsub(
+            "[,%s_]",
+            ""
+        )
+
+    return tonumber(
+        cleaned
+    )
+end
+
+function HolyGuildFindLocalContributionValue(
+    source,
+    targetUserId,
+    targetUsername,
+    depth,
+    visited
+)
+    if type(source) ~= "table" then
+        return nil
+    end
+
+    depth =
+        tonumber(depth)
+        or 0
+
+    if depth > 7 then
+        return nil
+    end
+
+    visited =
+        type(visited) == "table"
+        and visited
+        or {}
+
+    if visited[source] == true then
+        return nil
+    end
+
+    visited[source] =
+        true
+
+    targetUserId =
+        tonumber(
+            targetUserId
+        )
+
+    targetUsername =
+        HolyCleanText(
+            targetUsername
+        ):lower()
+
+    local directUserId =
+        tonumber(
+            HolyGuildField(
+                source,
+                {
+                    "UserId",
+                    "UserID",
+                    "PlayerId",
+                    "PlayerID",
+                    "Id",
+                }
+            )
+        )
+
+    local directUsername =
+        HolyCleanText(
+            HolyGuildField(
+                source,
+                {
+                    "Username",
+                    "UserName",
+                    "PlayerName",
+                    "Name",
+                },
+                ""
+            )
+        ):lower()
+
+    local idMatches =
+        targetUserId ~= nil
+        and directUserId ~= nil
+        and directUserId == targetUserId
+
+    local nameMatches =
+        targetUsername ~= ""
+        and directUsername ~= ""
+        and directUsername == targetUsername
+
+    if idMatches
+    or nameMatches then
+
+        local score =
+            HolyGuildContributionNumber(
+                HolyGuildField(
+                    source,
+                    {
+                        "WeeklyContribution",
+                        "WeeklyContributions",
+                        "Contribution",
+                        "PersonalContribution",
+                        "PlayerContribution",
+                        "MemberContribution",
+                        "WeeklyScore",
+                        "Score",
+                        "Points",
+                        "Value",
+                        "Amount",
+                        "Shekels",
+                        "Sheckles",
+                    }
+                )
+            )
+
+        if score ~= nil then
+
+            return math.max(
+                0,
+                score
+            )
+        end
+    end
+
+    for key, value in pairs(
+        source
+    ) do
+
+        if targetUserId ~= nil
+        and tonumber(key)
+            == targetUserId then
+
+            local keyedScore =
+                HolyGuildContributionNumber(
+                    value
+                )
+
+            if keyedScore == nil
+            and type(value) == "table" then
+
+                keyedScore =
+                    HolyGuildContributionNumber(
+                        HolyGuildField(
+                            value,
+                            {
+                                "WeeklyContribution",
+                                "WeeklyContributions",
+                                "Contribution",
+                                "PersonalContribution",
+                                "PlayerContribution",
+                                "MemberContribution",
+                                "WeeklyScore",
+                                "Score",
+                                "Points",
+                                "Value",
+                                "Amount",
+                                "Shekels",
+                                "Sheckles",
+                            }
+                        )
+                    )
+            end
+
+            if keyedScore ~= nil then
+
+                return math.max(
+                    0,
+                    keyedScore
+                )
+            end
+        end
+    end
+
+    for _, child in pairs(
+        source
+    ) do
+
+        if type(child) == "table" then
+
+            local found =
+                HolyGuildFindLocalContributionValue(
+                    child,
+                    targetUserId,
+                    targetUsername,
+                    depth + 1,
+                    visited
+                )
+
+            if found ~= nil then
+                return found
+            end
+        end
+    end
+
+    return nil
+end
+
+function HolyGuildSessionGetContribution(view)
+
+    if type(view) ~= "table" then
+        return nil
+    end
+
+    local targetUserId =
+        tonumber(
+            LocalPlayer.UserId
+        )
+
+    local targetUsername =
+        tostring(
+            LocalPlayer.Name
+        )
+
+    local directSources = {}
+
+    if type(view.Root) == "table" then
+
+        directSources[
+            #directSources
+            + 1
+        ] =
+            view.Root
+    end
+
+    if type(view.Shown) == "table"
+    and view.Shown ~= view.Root then
+
+        directSources[
+            #directSources
+            + 1
+        ] =
+            view.Shown
+    end
+
+    for _, source in ipairs(
+        directSources
+    ) do
+
+        local directScore =
+            HolyGuildContributionNumber(
+                HolyGuildField(
+                    source,
+                    {
+                        "OwnContribution",
+                        "YourContribution",
+                        "PersonalContribution",
+                        "PlayerContribution",
+                        "LocalContribution",
+                        "LocalPlayerContribution",
+                        "MemberContribution",
+                        "PersonalScore",
+                        "LocalPlayerScore",
+                    }
+                )
+            )
+
+        if directScore ~= nil then
+
+            return math.max(
+                0,
+                directScore
+            )
+        end
+    end
+
+    local checked = {}
+
+    if type(view.Contributors) == "table" then
+
+        checked[
+            view.Contributors
+        ] =
+            true
+
+        local found =
+            HolyGuildFindLocalContributionValue(
+                view.Contributors,
+                targetUserId,
+                targetUsername,
+                0,
+                {}
+            )
+
+        if found ~= nil then
+            return found
+        end
+    end
+
+    local containerAliases = {
+        "GuildmateScores",
+        "GuildmateContribs",
+        "Contributors",
+        "MemberScores",
+        "ScoresByUserId",
+        "ContributionsByUserId",
+        "PlayerScores",
+        "Members",
+        "Entries",
+        "Rows",
+    }
+
+    for _, source in ipairs(
+        directSources
+    ) do
+
+        for _, alias in ipairs(
+            containerAliases
+        ) do
+
+            local container =
+                HolyGuildField(
+                    source,
+                    {
+                        alias,
+                    }
+                )
+
+            if type(container) == "table"
+            and checked[container] ~= true then
+
+                checked[container] =
+                    true
+
+                local found =
+                    HolyGuildFindLocalContributionValue(
+                        container,
+                        targetUserId,
+                        targetUsername,
+                        0,
+                        {}
+                    )
+
+                if found ~= nil then
+                    return found
+                end
+            end
+        end
+    end
+
+    local localMember =
+        HolyGuildGetLocalMember()
+
+    if type(localMember) == "table"
+    and type(localMember.Raw) == "table" then
+
+        local memberScore =
+            HolyGuildContributionNumber(
+                HolyGuildField(
+                    localMember.Raw,
+                    {
+                        "WeeklyContribution",
+                        "WeeklyContributions",
+                        "WeekContribution",
+                        "PersonalContribution",
+                        "PlayerContribution",
+                        "MemberContribution",
+                        "WeeklyScore",
+                    }
+                )
+            )
+
+        if memberScore ~= nil then
+
+            return math.max(
+                0,
+                memberScore
+            )
+        end
+    end
+
+    return nil
+end
+
+HOLY_GUILD_PERSONAL_BASE_BUILD_CONTEST_MEMBERS =
+    HolyGuildBuildContestMembers
+
+function HolyGuildBuildContestMembers(view)
+
+    local members =
+        HOLY_GUILD_PERSONAL_BASE_BUILD_CONTEST_MEMBERS(
+            view
+        )
+
+    members =
+        type(members) == "table"
+        and members
+        or {}
+
+    local contribution =
+        HolyGuildSessionGetContribution(
+            view
+        )
+
+    if contribution == nil then
+        return members
+    end
+
+    local foundLocal =
+        false
+
+    for _, member in ipairs(
+        members
+    ) do
+
+        if tonumber(member.UserId)
+            == tonumber(
+                LocalPlayer.UserId
+            ) then
+
+            member.UserId =
+                LocalPlayer.UserId
+
+            member.Username =
+                LocalPlayer.Name
+
+            member.Weekly =
+                contribution
+
+            foundLocal =
+                true
+
+            break
+        end
+    end
+
+    if foundLocal ~= true then
+
+        members[
+            #members
+            + 1
+        ] = {
+            UserId =
+                LocalPlayer.UserId,
+
+            Username =
+                LocalPlayer.Name,
+
+            DisplayName =
+                LocalPlayer.DisplayName,
+
+            Role =
+                "Member",
+
+            Weekly =
+                contribution,
+
+            Lifetime =
+                0,
+
+            JoinedAt =
+                nil,
+
+            Online =
+                true,
+
+            Raw =
+                {},
+        }
+    end
+
+    return members
+end
+
+HOLY_GUILD_PERSONAL_BASE_SESSION_DEFAULT =
+    HolyGuildSessionDefault
+
+function HolyGuildSessionDefault(reason)
+
+    local session =
+        HOLY_GUILD_PERSONAL_BASE_SESSION_DEFAULT(
+            reason
+        )
+
+    if type(session) == "table" then
+
+        session.Version =
+            2
+
+        session.ContributionMode =
+            HOLY_GUILD_PERSONAL_CONTRIBUTION_MODE
+    end
+
+    return session
+end
+
+HOLY_GUILD_PERSONAL_BASE_SESSION_NORMALIZE =
+    HolyGuildSessionNormalize
+
+function HolyGuildSessionNormalize(source)
+
+    local session =
+        HOLY_GUILD_PERSONAL_BASE_SESSION_NORMALIZE(
+            source
+        )
+
+    if type(session) == "table" then
+
+        session.Version =
+            2
+
+        session.ContributionMode =
+            type(source) == "table"
+            and HolyCleanText(
+                source.ContributionMode
+            )
+            or ""
+    end
+
+    return session
+end
+
+function HolyGuildCapturePanelScrollState(panel)
+
+    if type(panel) ~= "table"
+    or typeof(panel.Surface) ~= "Instance" then
+
+        return nil
+    end
+
+    local childPositions = {}
+
+    for _, object in ipairs(
+        panel.Surface:GetDescendants()
+    ) do
+
+        if object:IsA(
+            "ScrollingFrame"
+        ) then
+
+            childPositions[
+                #childPositions
+                + 1
+            ] =
+                object.CanvasPosition
+        end
+    end
+
+    local ancestorPositions = {}
+
+    local ancestor =
+        panel.Surface.Parent
+
+    while typeof(ancestor)
+        == "Instance" do
+
+        if ancestor:IsA(
+            "ScrollingFrame"
+        ) then
+
+            ancestorPositions[
+                #ancestorPositions
+                + 1
+            ] = {
+                Object =
+                    ancestor,
+
+                Position =
+                    ancestor.CanvasPosition,
+            }
+        end
+
+        ancestor =
+            ancestor.Parent
+    end
+
+    return {
+        Children =
+            childPositions,
+
+        Ancestors =
+            ancestorPositions,
+    }
+end
+
+function HolyGuildRestorePanelScrollState(
+    panel,
+    state
+)
+    if type(panel) ~= "table"
+    or typeof(panel.Surface) ~= "Instance"
+    or type(state) ~= "table" then
+
+        return
+    end
+
+    local surface =
+        panel.Surface
+
+    task.defer(function()
+
+        for pass = 1, 3 do
+
+            for _, saved in ipairs(
+                state.Ancestors
+                or {}
+            ) do
+
+                if type(saved) == "table"
+                and typeof(saved.Object)
+                    == "Instance"
+                and saved.Object.Parent ~= nil then
+
+                    pcall(function()
+
+                        saved.Object.CanvasPosition =
+                            saved.Position
+                    end)
+                end
+            end
+
+            if surface.Parent ~= nil then
+
+                local currentChildren = {}
+
+                for _, object in ipairs(
+                    surface:GetDescendants()
+                ) do
+
+                    if object:IsA(
+                        "ScrollingFrame"
+                    ) then
+
+                        currentChildren[
+                            #currentChildren
+                            + 1
+                        ] =
+                            object
+                    end
+                end
+
+                for index, position in ipairs(
+                    state.Children
+                    or {}
+                ) do
+
+                    local object =
+                        currentChildren[
+                            index
+                        ]
+
+                    if typeof(object)
+                        == "Instance"
+                    and object.Parent ~= nil then
+
+                        pcall(function()
+
+                            object.CanvasPosition =
+                                position
+                        end)
+                    end
+                end
+            end
+
+            if pass < 3 then
+
+                RunService.Heartbeat:Wait()
+            end
+        end
+    end)
+end
+
+HOLY_GUILD_SCROLL_BASE_BEGIN_INFO_PANEL =
+    HolyGuildBeginInfoPanel
+
+function HolyGuildBeginInfoPanel(
+    panel,
+    signature
+)
+    local scrollState =
+        HolyGuildCapturePanelScrollState(
+            panel
+        )
+
+    local changed,
+        width =
+        HOLY_GUILD_SCROLL_BASE_BEGIN_INFO_PANEL(
+            panel,
+            signature
+        )
+
+    if changed == true
+    and type(panel) == "table" then
+
+        panel.PendingScrollState =
+            scrollState
+
+    elseif type(panel) == "table" then
+
+        panel.PendingScrollState =
+            nil
+    end
+
+    return changed,
+        width
+end
+
+HOLY_GUILD_SCROLL_BASE_SET_INFO_PANEL_HEIGHT =
+    HolyGuildSetInfoPanelHeight
+
+function HolyGuildSetInfoPanelHeight(
+    panel,
+    height
+)
+    local result =
+        HOLY_GUILD_SCROLL_BASE_SET_INFO_PANEL_HEIGHT(
+            panel,
+            height
+        )
+
+    local scrollState =
+        type(panel) == "table"
+        and panel.PendingScrollState
+        or nil
+
+    if type(panel) == "table" then
+
+        panel.PendingScrollState =
+            nil
+    end
+
+    if type(scrollState) == "table" then
+
+        HolyGuildRestorePanelScrollState(
+            panel,
+            scrollState
+        )
+    end
+
+    return result
+end
+
 HolyGuildSessionLoad()
+
+if type(
+    HOLY_GUILD_STATE.Session
+) == "table"
+and HOLY_GUILD_STATE.Session.ContributionMode
+    ~= HOLY_GUILD_PERSONAL_CONTRIBUTION_MODE then
+
+    HolyGuildSessionReset(
+        "Personal contribution tracking upgraded"
+    )
+end
 
 HOLY_GUILD_SESSION_WORKER_TOKEN =
     (
