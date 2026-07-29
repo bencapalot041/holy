@@ -4395,6 +4395,83 @@ HOLY_FARM_MIDDLE_STATE = {
     LastDistance = 0,
 }
 
+function HolyGetDefaultNormalPetNames()
+
+    return {
+        "Owl",
+        "Bunny",
+        "Turtle",
+        "Robin",
+        "Frog",
+        "Deer",
+    }
+end
+
+function HolyBuildDefaultBoughtCleanupRules()
+
+    local rules =
+        {}
+
+    for _, petName in ipairs(
+        HolyGetDefaultNormalPetNames()
+    ) do
+
+        table.insert(
+            rules,
+            {
+                Pet =
+                    petName,
+
+                Sizes = {
+                    "Normal",
+                },
+
+                Variants = {
+                    "Normal",
+                },
+
+                Enabled =
+                    true,
+            }
+        )
+    end
+
+    return rules
+end
+
+function HolyBuildDefaultPetSellRules()
+
+    local rules =
+        {}
+
+    for _, petName in ipairs(
+        HolyGetDefaultNormalPetNames()
+    ) do
+
+        table.insert(
+            rules,
+            {
+                Names = {
+                    petName,
+                },
+
+                Sizes = {
+                    "Normal",
+                },
+
+                Variants = {
+                    "Normal",
+                },
+
+                Enabled =
+                    true,
+            }
+        )
+    end
+
+    return rules
+end
+
 HOLY_SNIPER_STATE = {
     ActivateSniper = false,
     AutoHop = false,
@@ -4415,7 +4492,8 @@ HOLY_SNIPER_STATE = {
         "Any",
     },
 
-    BoughtCleanupRules = {},
+    BoughtCleanupRules =
+        HolyBuildDefaultBoughtCleanupRules(),
     BoughtCleanupSelectedRuleIndex = nil,
 
     BuilderPet = "Raccoon",
@@ -4944,7 +5022,8 @@ HOLY_SHOP_STATE = {
 
     AutoSellPets = false,
 
-    PetSellRules = {},
+    PetSellRules =
+        HolyBuildDefaultPetSellRules(),
 
     PetSellNames = {},
 
@@ -13523,6 +13602,9 @@ function HolySaveShopSettings()
         AutoSellPets =
             HOLY_SHOP_STATE.AutoSellPets == true,
 
+        PetSellDefaultFiltersVersion =
+            1,
+
         PetSellRules =
             HolyPetSellNormalizeRules(
                 HOLY_SHOP_STATE.PetSellRules
@@ -13956,6 +14038,20 @@ function HolyLoadShopSettings()
                 legacyRule
             )
         end
+    end
+
+    if (
+        tonumber(
+            data.PetSellDefaultFiltersVersion
+        )
+        or 0
+    ) < 1
+    and #HOLY_SHOP_STATE.PetSellRules <= 0 then
+
+        HOLY_SHOP_STATE.PetSellRules =
+            HolyPetSellNormalizeRules(
+                HolyBuildDefaultPetSellRules()
+            )
     end
 
     if type(data.PetSellProtectBig) == "boolean" then
@@ -69119,7 +69215,7 @@ function HolySaveSniperSettings()
             HOLY_SNIPER_RUNTIME.BoughtCleanupInventoryBaselineCaptured == true,
 
         BoughtCleanupPersistenceVersion =
-            3,
+            4,
 
         DefendBoughtPets =
             HOLY_SNIPER_STATE.DefendBoughtPets == true,
@@ -69489,16 +69585,25 @@ function HolyLoadSniperSettings()
             or HOLY_SNIPER_STATE.BoughtCleanupBuilderVariants
         )
 
-    HOLY_SNIPER_STATE.BoughtCleanupRules =
-        HolyBoughtPetCleanupNormalizeRules(
-            data.BoughtCleanupRules
-        )
-
     local boughtCleanupPersistenceVersion =
         tonumber(
             data.BoughtCleanupPersistenceVersion
         )
         or 0
+
+    HOLY_SNIPER_STATE.BoughtCleanupRules =
+        HolyBoughtPetCleanupNormalizeRules(
+            data.BoughtCleanupRules
+        )
+
+    if boughtCleanupPersistenceVersion < 4
+    and #HOLY_SNIPER_STATE.BoughtCleanupRules <= 0 then
+
+        HOLY_SNIPER_STATE.BoughtCleanupRules =
+            HolyBoughtPetCleanupNormalizeRules(
+                HolyBuildDefaultBoughtCleanupRules()
+            )
+    end
 
     HOLY_SNIPER_RUNTIME.BoughtCleanupInventoryBaseline =
         boughtCleanupPersistenceVersion >= 3
