@@ -4581,6 +4581,7 @@ HOLY_SNIPER_STATE = {
 
     MovementMode = "Walk",
     BuyMode = "Instant",
+    BuyContestedPets = true,
     ReturnEnabled = false,
     ReturnTiming = "After Batch",
     ReturnMode = "Teleport",
@@ -33044,6 +33045,178 @@ function HolySniperReadEntryPrice(ref, prompt, petName, petKey)
     })
 end
 
+function HolySniperReadOwnershipValue(ref, model, names)
+
+    local value =
+        nil
+
+    if typeof(ref) == "Instance"
+    and ref.Parent ~= nil then
+
+        value =
+            HolySniperReadModelAttribute(
+                ref,
+                names
+            )
+    end
+
+    if value == nil
+    or HolyCleanText(value) == "" then
+
+        if typeof(model) == "Instance"
+        and model.Parent ~= nil then
+
+            value =
+                HolySniperReadModelAttribute(
+                    model,
+                    names
+                )
+        end
+    end
+
+    return value
+end
+
+function HolySniperReadOwnership(ref, model)
+
+    local ownerUserId =
+        tonumber(
+            HolySniperReadOwnershipValue(
+                ref,
+                model,
+                {
+                    "OwnerUserId",
+                    "OwnerUserID",
+                    "Owner",
+                    "UserId",
+                    "UserID",
+                }
+            )
+        )
+        or 0
+
+    local ownerName =
+        HolyCleanText(
+            HolySniperReadOwnershipValue(
+                ref,
+                model,
+                {
+                    "OwnerName",
+                    "OwnerUsername",
+                    "Username",
+                }
+            )
+        )
+
+    local state =
+        HolyCleanText(
+            HolySniperReadOwnershipValue(
+                ref,
+                model,
+                {
+                    "State",
+                    "PetState",
+                }
+            )
+        )
+
+    return ownerUserId,
+        ownerName,
+        state
+end
+
+function HolySniperOwnerIsLocal(ownerUserId, ownerName)
+
+    ownerUserId =
+        tonumber(ownerUserId)
+        or 0
+
+    ownerName =
+        HolyCleanText(
+            ownerName
+        )
+
+    if ownerUserId > 0 then
+
+        return ownerUserId
+            == tonumber(
+                LocalPlayer.UserId
+            )
+    end
+
+    return ownerName ~= ""
+        and ownerName:lower()
+            == tostring(
+                LocalPlayer.Name
+            ):lower()
+end
+
+function HolySniperOwnerIsOther(ownerUserId, ownerName)
+
+    ownerUserId =
+        tonumber(ownerUserId)
+        or 0
+
+    ownerName =
+        HolyCleanText(
+            ownerName
+        )
+
+    if ownerUserId > 0 then
+
+        return ownerUserId
+            ~= tonumber(
+                LocalPlayer.UserId
+            )
+    end
+
+    return ownerName ~= ""
+        and ownerName:lower()
+            ~= tostring(
+                LocalPlayer.Name
+            ):lower()
+end
+
+function HolySniperReadEntryOwnership(entry)
+
+    entry =
+        type(entry) == "table"
+        and entry
+        or {}
+
+    return HolySniperReadOwnership(
+        entry.Ref,
+        entry.Model
+    )
+end
+
+function HolySniperEntryIsContested(entry)
+
+    if HOLY_SNIPER_STATE.BuyContestedPets ~= true
+    or type(entry) ~= "table" then
+
+        return false
+    end
+
+    local ownerUserId,
+        ownerName,
+        state =
+        HolySniperReadEntryOwnership(
+            entry
+        )
+
+    return HolySniperOwnerIsOther(
+        ownerUserId,
+        ownerName
+    ) == true
+        and type(
+            HolySniperPetBuyStateLooksPending
+        ) == "function"
+        and HolySniperPetBuyStateLooksPending(
+            state
+        ) == true
+end
+
 function HolySniperRawBuyable(model, ref, prompt)
 
     if typeof(model) ~= "Instance"
@@ -33060,6 +33233,43 @@ function HolySniperRawBuyable(model, ref, prompt)
             "ref missing"
     end
 
+    local ownerUserId,
+        ownerName,
+        state =
+        HolySniperReadOwnership(
+            ref,
+            model
+        )
+
+    local hasOwner =
+        ownerUserId > 0
+        or ownerName ~= ""
+
+    if hasOwner == true then
+
+        local contested =
+            HOLY_SNIPER_STATE.BuyContestedPets == true
+            and HolySniperOwnerIsOther(
+                ownerUserId,
+                ownerName
+            ) == true
+            and type(
+                HolySniperPetBuyStateLooksPending
+            ) == "function"
+            and HolySniperPetBuyStateLooksPending(
+                state
+            ) == true
+
+        if contested == true then
+
+            return true,
+                "contested"
+        end
+
+        return false,
+            "already owned"
+    end
+
     if typeof(prompt) ~= "Instance"
     or prompt:IsA("ProximityPrompt") ~= true
     or prompt.Parent == nil then
@@ -33072,49 +33282,6 @@ function HolySniperRawBuyable(model, ref, prompt)
 
         return false,
             "prompt disabled"
-    end
-
-    local ownerUserId =
-        tonumber(
-            HolySniperReadModelAttribute(
-                ref,
-                {
-                    "OwnerUserId",
-                }
-            )
-        )
-        or 0
-
-    local ownerName =
-        HolyCleanText(
-            HolySniperReadModelAttribute(
-                ref,
-                {
-                    "OwnerName",
-                }
-            )
-        )
-
-    local state =
-        HolyCleanText(
-            HolySniperReadModelAttribute(
-                ref,
-                {
-                    "State",
-                }
-            )
-        )
-
-    if ownerUserId ~= 0 then
-
-        return false,
-            "already owned"
-    end
-
-    if ownerName ~= "" then
-
-        return false,
-            "already owned"
     end
 
     if state ~= ""
@@ -60089,6 +60256,12 @@ function HolySniperFindMatches(entries)
             entries
         )
 
+    local contestedMatches =
+        {}
+
+    local normalMatches =
+        {}
+
     local matches =
         {}
 
@@ -60131,13 +60304,51 @@ function HolySniperFindMatches(entries)
                 seen[key] =
                     true
 
-                matches[
-                    #matches
-                    + 1
-                ] =
-                    match
+                match.Contested =
+                    HolySniperEntryIsContested(
+                        match.Entry
+                    ) == true
+
+                if match.Contested == true then
+
+                    contestedMatches[
+                        #contestedMatches
+                        + 1
+                    ] =
+                        match
+
+                else
+
+                    normalMatches[
+                        #normalMatches
+                        + 1
+                    ] =
+                        match
+                end
             end
         end
+    end
+
+    for _, match in ipairs(
+        contestedMatches
+    ) do
+
+        matches[
+            #matches
+            + 1
+        ] =
+            match
+    end
+
+    for _, match in ipairs(
+        normalMatches
+    ) do
+
+        matches[
+            #matches
+            + 1
+        ] =
+            match
     end
 
     return matches
@@ -60639,24 +60850,18 @@ function HolySniperAwaitTameResult(entry, token)
         if typeof(ref) == "Instance"
         and ref.Parent ~= nil then
 
-            local owner =
-                tonumber(
-                    HolySniperReadModelAttribute(
-                        ref,
-                        {
-                            "OwnerUserId",
-                            "OwnerUserID",
-                            "Owner",
-                            "UserId",
-                            "UserID",
-                        }
-                    )
+            local owner,
+                ownerName,
+                state =
+                HolySniperReadOwnership(
+                    ref,
+                    entry.Model
                 )
-                or 0
 
-            if owner == tonumber(
-                LocalPlayer.UserId
-            ) then
+            if HolySniperOwnerIsLocal(
+                owner,
+                ownerName
+            ) == true then
 
                 HolySniperRegisterSettlingPet(
                     entry,
@@ -60666,6 +60871,21 @@ function HolySniperAwaitTameResult(entry, token)
                 return true,
                     "owner attribute fallback",
                     "confirmed",
+                    owner
+            end
+
+            if HolySniperOwnerIsOther(
+                owner,
+                ownerName
+            ) == true
+            and HolySniperPetBuyStateLooksPending(
+                state
+            ) == true then
+
+                return false,
+                    "stolen by user "
+                    .. tostring(owner),
+                    "stolen",
                     owner
             end
         end
@@ -60746,9 +60966,234 @@ function HolySniperFireTame(entry)
         or tostring(err)
 end
 
+function HolySniperContestFilterIsActive(filter)
+
+    if type(filter) ~= "table" then
+        return false
+    end
+
+    local wantedPetKey =
+        HolyCleanText(
+            filter.PetKey
+            or HolySniperResolvePetKey(
+                filter.Pet
+            )
+        )
+
+    if wantedPetKey == ""
+    or wantedPetKey == "*" then
+
+        return false
+    end
+
+    local wantedFilterKey =
+        HolySniperFilterKey(
+            filter
+        )
+
+    for _, rawFilter in ipairs(
+        type(HOLY_SNIPER_STATE.Watchlist) == "table"
+        and HOLY_SNIPER_STATE.Watchlist
+        or {}
+    ) do
+
+        local currentFilter =
+            HolySniperNormalizeFilter(
+                rawFilter
+            )
+
+        if currentFilter.Enabled ~= false
+        and HolySniperFilterKey(
+            currentFilter
+        ) == wantedFilterKey then
+
+            return true
+        end
+    end
+
+    return false
+end
+
+function HolySniperContestAmountAvailable(filter)
+
+    local amount =
+        HolySniperReadAmount(
+            filter.Amount
+        )
+
+    if amount >= 999 then
+        return true
+    end
+
+    HOLY_SNIPER_RUNTIME.BoughtCounts =
+        type(HOLY_SNIPER_RUNTIME.BoughtCounts) == "table"
+        and HOLY_SNIPER_RUNTIME.BoughtCounts
+        or {}
+
+    local filterKey =
+        HolySniperFilterKey(
+            filter
+        )
+
+    local bought =
+        tonumber(
+            HOLY_SNIPER_RUNTIME.BoughtCounts[
+                filterKey
+            ]
+        )
+        or 0
+
+    return bought < amount
+end
+
+function HolySniperClearPendingTame(entry)
+
+    local key =
+        HolySniperEntryKey(
+            entry
+        )
+
+    if key == "" then
+        return false
+    end
+
+    HOLY_SNIPER_RUNTIME.PendingTames[
+        key
+    ] =
+        nil
+
+    return true
+end
+
+function HolySniperContestMoveStep(entry, filter, token)
+
+    if token ~= nil
+    and HolySniperStillActive(
+        token
+    ) ~= true then
+
+        return false,
+            entry,
+            "cancelled"
+    end
+
+    local valid,
+        refreshed,
+        reason =
+        HolySniperValidateTargetForBuy(
+            entry,
+            filter
+        )
+
+    entry =
+        refreshed
+        or entry
+
+    if valid ~= true then
+
+        return false,
+            entry,
+            reason
+            or "target invalid"
+    end
+
+    local distance =
+        HolySniperDistanceToEntry(
+            entry
+        )
+
+    local safeRange =
+        HolySniperGetSafeRange(
+            entry.Prompt
+        )
+
+    if distance <= safeRange then
+
+        return true,
+            entry,
+            "in range"
+    end
+
+    if HolySniperNormalizeMovementMode(
+        HOLY_SNIPER_STATE.MovementMode
+    ) == "Teleport" then
+
+        return HolySniperMoveTeleportToEntry(
+            entry,
+            filter,
+            token
+        )
+    end
+
+    local humanoid =
+        HolySniperGetCharacterHumanoid()
+
+    local root =
+        HolySniperGetCharacterRoot()
+
+    local position =
+        HolySniperGetPromptPosition(
+            entry.Prompt,
+            entry.Model
+        )
+
+    if typeof(humanoid) ~= "Instance"
+    or typeof(root) ~= "Instance"
+    or root:IsA("BasePart") ~= true then
+
+        return false,
+            entry,
+            "missing humanoid/root"
+    end
+
+    if typeof(position) ~= "Vector3" then
+
+        return false,
+            entry,
+            "missing pet position"
+    end
+
+    HolySniperClearHeldToolForMovement(
+        "contested pet chase"
+    )
+
+    pcall(function()
+
+        humanoid:MoveTo(
+            position
+        )
+    end)
+
+    HolySniperSetStatus(
+        "Contested · Chasing "
+        .. HolySniperDescribeEntry(
+            entry
+        )
+        .. " · "
+        .. tostring(
+            math.floor(
+                distance + 0.5
+            )
+        )
+        .. " studs"
+    )
+
+    task.wait(
+        0.12
+    )
+
+    return HolySniperDistanceToEntry(
+        entry
+    ) <= safeRange,
+        entry,
+        "chasing"
+end
+
 function HolySniperRequestTame(entry, filter, token)
 
-    local attempts =
+    HolySniperBatchEnsureRuntime()
+
+    local normalAttemptLimit =
         1
         + math.max(
             0,
@@ -60769,12 +61214,168 @@ function HolySniperRequestTame(entry, filter, token)
     local finalOwner =
         0
 
-    for attempt = 1, attempts do
+    local attempt =
+        0
 
-        if attempt > 1 then
+    local contestStartedAt =
+        0
+
+    local contestDeadline =
+        0
+
+    if HolySniperEntryIsContested(
+        currentEntry
+    ) == true then
+
+        contestStartedAt =
+            os.clock()
+
+        contestDeadline =
+            contestStartedAt
+            + math.max(
+                5,
+                tonumber(
+                    HOLY_SNIPER_TARGET_LOCK_TIMEOUT
+                )
+                or 45
+            )
+    end
+
+    while true do
+
+        if token ~= nil
+        and HolySniperStillActive(
+            token
+        ) ~= true then
+
+            HolySniperClearPendingTame(
+                currentEntry
+            )
+
+            return false,
+                "cancelled",
+                "cancelled",
+                0,
+                currentEntry
+        end
+
+        attempt +=
+            1
+
+        if attempt > 1
+        or contestStartedAt > 0 then
+
+            local refreshed =
+                HolySniperRefreshEntry(
+                    currentEntry
+                )
+
+            if type(refreshed) ~= "table" then
+
+                HolySniperClearPendingTame(
+                    currentEntry
+                )
+
+                return false,
+                    "target gone",
+                    contestStartedAt > 0
+                        and "contested"
+                        or "invalid",
+                    0,
+                    currentEntry
+            end
+
+            currentEntry =
+                refreshed
+
+            local ownerUserId,
+                ownerName =
+                HolySniperReadEntryOwnership(
+                    currentEntry
+                )
+
+            if HolySniperOwnerIsLocal(
+                ownerUserId,
+                ownerName
+            ) == true then
+
+                HolySniperRegisterSettlingPet(
+                    currentEntry,
+                    "contested owner fallback"
+                )
+
+                HolySniperClearPendingTame(
+                    currentEntry
+                )
+
+                return true,
+                    "owner attribute fallback",
+                    "confirmed",
+                    ownerUserId,
+                    currentEntry
+            end
+
+            if contestStartedAt > 0 then
+
+                if HOLY_SNIPER_STATE.BuyContestedPets ~= true then
+
+                    HolySniperClearPendingTame(
+                        currentEntry
+                    )
+
+                    return false,
+                        "contested buying disabled",
+                        "contested",
+                        ownerUserId,
+                        currentEntry
+                end
+
+                if os.clock() >= contestDeadline then
+
+                    HolySniperClearPendingTame(
+                        currentEntry
+                    )
+
+                    return false,
+                        "contest safety timeout",
+                        "contested",
+                        ownerUserId,
+                        currentEntry
+                end
+
+                if HolySniperContestFilterIsActive(
+                    filter
+                ) ~= true then
+
+                    HolySniperClearPendingTame(
+                        currentEntry
+                    )
+
+                    return false,
+                        "watchlist filter removed or disabled",
+                        "contested",
+                        ownerUserId,
+                        currentEntry
+                end
+
+                if HolySniperContestAmountAvailable(
+                    filter
+                ) ~= true then
+
+                    HolySniperClearPendingTame(
+                        currentEntry
+                    )
+
+                    return false,
+                        "filter amount reached",
+                        "contested",
+                        ownerUserId,
+                        currentEntry
+                end
+            end
 
             local valid,
-                refreshed,
+                validatedEntry,
                 reason =
                 HolySniperValidateTargetForBuy(
                     currentEntry,
@@ -60782,31 +61383,76 @@ function HolySniperRequestTame(entry, filter, token)
                 )
 
             currentEntry =
-                refreshed
+                validatedEntry
                 or currentEntry
 
             if valid ~= true then
 
-                local invalidKey =
-                    HolySniperEntryKey(
+                HolySniperClearPendingTame(
+                    currentEntry
+                )
+
+                return false,
+                    reason
+                    or "target invalid",
+                    contestStartedAt > 0
+                        and "contested"
+                        or "invalid",
+                    ownerUserId,
+                    currentEntry
+            end
+
+            if contestStartedAt > 0 then
+
+                local inRange,
+                    movedEntry,
+                    moveReason =
+                    HolySniperContestMoveStep(
+                        currentEntry,
+                        filter,
+                        token
+                    )
+
+                currentEntry =
+                    movedEntry
+                    or currentEntry
+
+                if inRange ~= true then
+
+                    if moveReason == "chasing" then
+                        continue
+                    end
+
+                    HolySniperClearPendingTame(
                         currentEntry
                     )
 
-                if invalidKey ~= "" then
-
-                    HOLY_SNIPER_RUNTIME.PendingTames[
-                        invalidKey
-                    ] =
-                        nil
+                    return false,
+                        moveReason
+                        or "contest movement failed",
+                        moveReason == "cancelled"
+                            and "cancelled"
+                            or "contested",
+                        ownerUserId,
+                        currentEntry
                 end
-
-                return false,
-                    reason,
-                    "invalid",
-                    0,
-                    currentEntry
             end
         end
+
+        if contestStartedAt > 0 then
+
+            HolySniperSetStatus(
+                "Contesting "
+                .. HolySniperDescribeEntry(
+                    currentEntry
+                )
+                .. " · retry "
+                .. tostring(attempt)
+            )
+        end
+
+        local firedAt =
+            os.clock()
 
         local fired,
             fireReason =
@@ -60816,22 +61462,15 @@ function HolySniperRequestTame(entry, filter, token)
 
         if fired ~= true then
 
-            local failedKey =
-                HolySniperEntryKey(
-                    currentEntry
-                )
-
-            if failedKey ~= "" then
-
-                HOLY_SNIPER_RUNTIME.PendingTames[
-                    failedKey
-                ] =
-                    nil
-            end
+            HolySniperClearPendingTame(
+                currentEntry
+            )
 
             return false,
                 fireReason,
-                "fire failed",
+                contestStartedAt > 0
+                    and "contested"
+                    or "fire failed",
                 0,
                 currentEntry
         end
@@ -60858,36 +61497,82 @@ function HolySniperRequestTame(entry, filter, token)
             or 0
 
         if confirmed == true
-        or finalCode == "stolen"
         or finalCode == "cancelled" then
 
             break
         end
 
-        if attempt < attempts then
+        if finalCode == "stolen"
+        and HOLY_SNIPER_STATE.BuyContestedPets == true then
 
-            HolySniperSetStatus(
-                "No result, retrying "
-                .. HolySniperDescribeEntry(
-                    currentEntry
-                )
-            )
+            if contestStartedAt <= 0 then
 
-            task.wait(
-                0.08
-            )
+                contestStartedAt =
+                    os.clock()
+
+                contestDeadline =
+                    contestStartedAt
+                    + math.max(
+                        5,
+                        tonumber(
+                            HOLY_SNIPER_TARGET_LOCK_TIMEOUT
+                        )
+                        or 45
+                    )
+            end
         end
-    end
 
-    local key =
-        HolySniperEntryKey(
-            currentEntry
+        if contestStartedAt > 0 then
+
+            local retryDelay =
+                0.35
+                - (
+                    os.clock()
+                    - firedAt
+                )
+
+            if retryDelay > 0 then
+
+                task.wait(
+                    retryDelay
+                )
+
+            else
+
+                task.wait()
+            end
+
+            continue
+        end
+
+        if finalCode == "stolen"
+        or attempt >= normalAttemptLimit then
+
+            break
+        end
+
+        HolySniperSetStatus(
+            "No result, retrying "
+            .. HolySniperDescribeEntry(
+                currentEntry
+            )
         )
 
-    if key ~= "" then
+        task.wait(
+            0.08
+        )
+    end
 
-        HOLY_SNIPER_RUNTIME.PendingTames[key] =
-            nil
+    HolySniperClearPendingTame(
+        currentEntry
+    )
+
+    if contestStartedAt > 0
+    and finalCode ~= "confirmed"
+    and finalCode ~= "cancelled" then
+
+        finalCode =
+            "contested"
     end
 
     return finalCode == "confirmed",
@@ -62896,19 +63581,10 @@ function HolySniperExecuteBatchMatch(match, token, index, total)
                 return
             end
 
-            local defenseRecord =
-                HolyDefenseQueueTarget(
-                    entry,
-                    filter,
-                    "buy request",
-                    match,
-                    false
-                )
-
             local confirmed,
                 tameReason,
                 tameCode,
-                buyerUserId,
+                _buyerUserId,
                 refreshedEntry =
                 HolySniperRequestTame(
                     entry,
@@ -62929,6 +63605,14 @@ function HolySniperExecuteBatchMatch(match, token, index, total)
                 or "failed"
 
             if confirmed == true then
+
+                HolyDefenseQueueTarget(
+                    entry,
+                    filter,
+                    "buy confirmed",
+                    match,
+                    false
+                )
 
                 HolySniperBatchConfirmMatch(
                     match,
@@ -62956,27 +63640,15 @@ function HolySniperExecuteBatchMatch(match, token, index, total)
                 return
             end
 
-            if finalCode == "stolen" then
+            if finalCode == "stolen"
+            or finalCode == "contested" then
 
                 shouldMarkFailed =
                     false
 
-                if type(defenseRecord) == "table" then
-
-                    defenseRecord.LastResultOwnerUserId =
-                        tonumber(
-                            buyerUserId
-                        )
-                        or 0
-
-                    defenseRecord.Reason =
-                        "contested by user "
-                        .. tostring(
-                            defenseRecord.LastResultOwnerUserId
-                        )
-                end
-
-                HolyDefenseMonitorScan()
+                HolySniperBatchForgetDefenseRecord(
+                    entry
+                )
 
                 return
             end
@@ -62997,6 +63669,7 @@ function HolySniperExecuteBatchMatch(match, token, index, total)
 
     if success ~= true
     and finalCode ~= "stolen"
+    and finalCode ~= "contested"
     and finalCode ~= "priority" then
 
         HolySniperBatchForgetDefenseRecord(
@@ -63026,6 +63699,7 @@ function HolySniperExecuteBatchMatch(match, token, index, total)
 
         if finalCode ~= "priority"
         and finalCode ~= "stolen"
+        and finalCode ~= "contested"
         and finalCode ~= "cancelled" then
 
             HolySniperSetStatus(
@@ -67078,6 +67752,7 @@ function HolySniperTick(token)
                 1
 
         elseif code == "stolen"
+        or code == "contested"
         or code == "priority" then
 
             HOLY_SNIPER_RUNTIME.BatchContestedCount +=
@@ -69251,6 +69926,9 @@ function HolySaveSniperSettings()
                 HOLY_SNIPER_STATE.BuyMode
             ),
 
+        BuyContestedPets =
+            HOLY_SNIPER_STATE.BuyContestedPets ~= false,
+
         ReturnEnabled =
             HOLY_SNIPER_STATE.ReturnEnabled == true,
 
@@ -69627,6 +70305,9 @@ function HolyLoadSniperSettings()
             or HOLY_SNIPER_STATE.BuyMode
             or "Instant"
         )
+
+    HOLY_SNIPER_STATE.BuyContestedPets =
+        data.BuyContestedPets ~= false
 
     HOLY_SNIPER_STATE.ReturnEnabled =
         data.ReturnEnabled == true
@@ -195999,6 +196680,26 @@ SniperExecutionBox:AddDropdown(
         HolySniperNormalizeBuyMode(
             value
         )
+
+    HolySaveSniperSettings()
+end)
+
+SniperExecutionBox:AddToggle(
+    "HolySniperBuyContestedPets",
+    {
+        Text =
+            "Buy Contested Pets",
+
+        Default =
+            HOLY_SNIPER_STATE.BuyContestedPets ~= false,
+
+        Tooltip =
+            "Attempts matching pets that another player bought first while they are still travelling to a garden. Continues until you win the pet or it can no longer be bought.",
+    }
+):OnChanged(function(value)
+
+    HOLY_SNIPER_STATE.BuyContestedPets =
+        value == true
 
     HolySaveSniperSettings()
 end)
