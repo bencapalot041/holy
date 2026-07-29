@@ -7528,6 +7528,13 @@ local HOLY_ACCOUNT_INVENTORY_IMAGE_FIELDS = {
     "PropIcon",
     "CrateImage",
     "CrateIcon",
+    "ItemImage",
+    "ItemIcon",
+    "GearImage",
+    "GearIcon",
+    "IconAssetId",
+    "ImageAssetId",
+    "ThumbnailID",
 }
 
 function HolyAccountInventoryCoerceIcon(
@@ -30201,6 +30208,276 @@ function HolyItemAutomationNormalizeChoiceSelection(
     return output
 end
 
+function HolyItemAutomationCleanItemName(value)
+    local name =
+        HolyCleanText(
+            value
+        )
+
+    local legacyGroup,
+        legacyName =
+        name:match(
+            "^([^·]+)%s*·%s*(.+)$"
+        )
+
+    if legacyName
+    and HolyItemAutomationNormalizeCategory(
+        legacyGroup
+    ) ~= nil then
+        name =
+            legacyName
+    end
+
+    name =
+        name:gsub(
+            "_+",
+            " "
+        )
+
+    name =
+        name:gsub(
+            "(%u)(%u%l)",
+            "%1 %2"
+        )
+
+    name =
+        name:gsub(
+            "(%l)(%u)",
+            "%1 %2"
+        )
+
+    name =
+        name:gsub(
+            "(%a)(%d)",
+            "%1 %2"
+        )
+
+    name =
+        name:gsub(
+            "(%d)(%a)",
+            "%1 %2"
+        )
+
+    name =
+        name:gsub(
+            "%s+",
+            " "
+        )
+
+    return HolyCleanText(
+        name
+    )
+end
+
+function HolyItemAutomationCanonicalNameKey(value)
+    if type(HolyAccountInventoryKey)
+        == "function" then
+        return HolyAccountInventoryKey(
+            value
+        )
+    end
+
+    return HolyCleanText(
+        value
+    ):lower():gsub(
+        "[^%w]+",
+        ""
+    )
+end
+
+function HolyItemAutomationCanonicalItemId(
+    group,
+    name
+)
+    group =
+        HolyItemAutomationNormalizeCategory(
+            group
+        )
+
+    name =
+        HolyItemAutomationCleanItemName(
+            name
+        )
+
+    local key =
+        HolyItemAutomationCanonicalNameKey(
+            name
+        )
+
+    if group == nil
+    or name == ""
+    or key == "" then
+        return ""
+    end
+
+    return group
+        .. "|"
+        .. key
+end
+
+function HolyItemAutomationNormalizeItemId(
+    value,
+    fallbackGroup
+)
+    value =
+        HolyCleanText(
+            value
+        )
+
+    if value == ""
+    or value == "All" then
+        return value
+    end
+
+    local group,
+        name =
+        value:match(
+            "^([^|]+)|(.+)$"
+        )
+
+    if name ~= nil then
+        return HolyItemAutomationCanonicalItemId(
+            group,
+            name
+        )
+    end
+
+    group,
+        name =
+        value:match(
+            "^([^·]+)%s*·%s*(.+)$"
+        )
+
+    if name ~= nil
+    and HolyItemAutomationNormalizeCategory(
+        group
+    ) ~= nil then
+        return HolyItemAutomationCanonicalItemId(
+            group,
+            name
+        )
+    end
+
+    return HolyItemAutomationCanonicalItemId(
+        fallbackGroup,
+        value
+    )
+end
+
+function HolyItemAutomationNormalizeItemSelection(
+    value,
+    previous,
+    fallbackGroup
+)
+    local converted = {}
+    local convertedPrevious = {}
+
+    for _, selected in ipairs(
+        HolyShopSelectionArray(
+            value
+        )
+    ) do
+        local normalized =
+            HolyItemAutomationNormalizeItemId(
+                selected,
+                fallbackGroup
+            )
+
+        if normalized ~= "" then
+            table.insert(
+                converted,
+                normalized
+            )
+        end
+    end
+
+    for _, selected in ipairs(
+        HolyShopSelectionArray(
+            previous
+        )
+    ) do
+        local normalized =
+            HolyItemAutomationNormalizeItemId(
+                selected,
+                fallbackGroup
+            )
+
+        if normalized ~= "" then
+            table.insert(
+                convertedPrevious,
+                normalized
+            )
+        end
+    end
+
+    return HolyItemAutomationNormalizeChoiceSelection(
+        converted,
+        convertedPrevious
+    )
+end
+
+function HolyItemAutomationSingleCategory(value)
+    local categories =
+        HolyShopSelectionArray(
+            value
+        )
+
+    if #categories ~= 1
+    or categories[1] == "All" then
+        return nil
+    end
+
+    return HolyItemAutomationNormalizeCategory(
+        categories[1]
+    )
+end
+
+function HolyItemAutomationFormatItemValue(value)
+    value =
+        HolyCleanText(
+            value
+        )
+
+    if value == ""
+    or value == "All" then
+        return value
+    end
+
+    local runtime =
+        type(HOLY_FRUIT_AUTOMATION_RUNTIME) == "table"
+        and HOLY_FRUIT_AUTOMATION_RUNTIME
+        or {}
+
+    local index =
+        type(runtime.ItemCatalogIndex) == "table"
+        and runtime.ItemCatalogIndex
+        or nil
+
+    local entry =
+        type(index) == "table"
+        and type(index.ById) == "table"
+        and index.ById[value]
+        or nil
+
+    if type(entry) == "table"
+    and HolyCleanText(entry.Name) ~= "" then
+        return entry.Name
+    end
+
+    local legacyName =
+        value:match(
+            "^[^·]+%s*·%s*(.+)$"
+        )
+
+    if legacyName ~= nil then
+        return HolyItemAutomationCleanItemName(
+            legacyName
+        )
+    end
+
+    return value
+end
+
 function HolyItemAutomationDisplayName(group, name)
     group =
         HolyItemAutomationNormalizeCategory(
@@ -30263,7 +30540,7 @@ function HolyItemAutomationLegacyFruitItems(value)
         and fruitName ~= "All" then
             table.insert(
                 output,
-                HolyItemAutomationDisplayName(
+                HolyItemAutomationCanonicalItemId(
                     "Fruits",
                     fruitName
                 )
@@ -30271,8 +30548,10 @@ function HolyItemAutomationLegacyFruitItems(value)
         end
     end
 
-    return HolyItemAutomationNormalizeChoiceSelection(
-        output
+    return HolyItemAutomationNormalizeItemSelection(
+        output,
+        nil,
+        "Fruits"
     )
 end
 
@@ -30316,10 +30595,13 @@ function HolyFruitAutomationEnsureState()
         HOLY_FRUIT_AUTOMATION_STATE
 
     local migrateEmptyItemSelections =
-        tonumber(
-            state.ItemSelectionVersion
+        (
+            tonumber(
+                state.ItemSelectionVersion
+            )
+            or 1
         )
-        ~= 3
+        < 3
 
     if state.AutoDropItems == nil then
         state.AutoDropItems =
@@ -30399,13 +30681,21 @@ function HolyFruitAutomationEnsureState()
         )
 
     state.SelectedDropItems =
-        HolyItemAutomationNormalizeChoiceSelection(
-            state.SelectedDropItems
+        HolyItemAutomationNormalizeItemSelection(
+            state.SelectedDropItems,
+            nil,
+            HolyItemAutomationSingleCategory(
+                state.DropCategories
+            )
         )
 
     state.SelectedPickupItems =
-        HolyItemAutomationNormalizeChoiceSelection(
-            state.SelectedPickupItems
+        HolyItemAutomationNormalizeItemSelection(
+            state.SelectedPickupItems,
+            nil,
+            HolyItemAutomationSingleCategory(
+                state.PickupCategories
+            )
         )
 
     state.SelectedDropTraits =
@@ -30433,7 +30723,7 @@ function HolyFruitAutomationEnsureState()
     end
 
     state.ItemSelectionVersion =
-        3
+        4
 
     state.ProtectFavorited =
         state.ProtectFavorited ~= false
@@ -30653,7 +30943,7 @@ function HolySaveFruitAutomationSettings()
         HOLY_FRUIT_AUTOMATION_STATE
 
     local payload = {
-        Version = 3,
+        Version = 4,
 
         AutoDropItems =
             state.AutoDropItems == true,
@@ -31681,12 +31971,14 @@ function HolyItemAutomationRecordPasses(record, side)
         )
 
     if itemMap.All ~= true then
-        if itemMap[
-            HolyItemAutomationDisplayName(
+        local itemId =
+            HolyItemAutomationCanonicalItemId(
                 record.Group,
                 record.Name
             )
-        ] ~= true then
+
+        if itemId == ""
+        or itemMap[itemId] ~= true then
             return false
         end
     end
@@ -31961,28 +32253,157 @@ function HolyItemAutomationCatalogFirstText(...)
 end
 
 function HolyItemAutomationSimpleKey(value)
-    if type(HolyAccountInventoryKey)
-        == "function" then
-        return HolyAccountInventoryKey(
-            value
+    return HolyItemAutomationCanonicalNameKey(
+        value
+    )
+end
+
+function HolyItemAutomationResolveItemIcon(
+    catalogs,
+    group,
+    name,
+    source
+)
+    if type(HolyAccountInventoryFirstIcon)
+        ~= "function" then
+        return ""
+    end
+
+    catalogs =
+        type(catalogs) == "table"
+        and catalogs
+        or {}
+
+    group =
+        HolyItemAutomationNormalizeCategory(
+            group
         )
+
+    local nameKey =
+        HolyItemAutomationSimpleKey(
+            name
+        )
+
+    local row = nil
+    local secondaryRow = nil
+
+    if group == "Fruits"
+    or group == "Seeds" then
+        row =
+            type(catalogs.Seeds) == "table"
+            and catalogs.Seeds[nameKey]
+            or nil
+
+    elseif group == "Pets" then
+        row =
+            type(catalogs.Pets) == "table"
+            and catalogs.Pets[nameKey]
+            or nil
+
+    elseif group == "Eggs" then
+        row =
+            type(catalogs.Eggs) == "table"
+            and catalogs.Eggs[nameKey]
+            or nil
+
+    elseif group == "Gear" then
+        row =
+            type(catalogs.SeedPacks) == "table"
+            and catalogs.SeedPacks[nameKey]
+            or nil
+
+        secondaryRow =
+            type(catalogs.Gear) == "table"
+            and catalogs.Gear[nameKey]
+            or nil
+
+    elseif group == "Props" then
+        row =
+            type(catalogs.Props) == "table"
+            and catalogs.Props[nameKey]
+            or nil
+    end
+
+    local icon = ""
+
+    if group == "Fruits" then
+        icon =
+            HolyAccountInventoryFirstIcon(
+                catalogs,
+                row
+                    and row.FruitImage,
+                row
+                    and row.FruitIcon,
+                row,
+                source
+            )
+
+    elseif group == "Seeds" then
+        icon =
+            HolyAccountInventoryFirstIcon(
+                catalogs,
+                row
+                    and row.SeedImage,
+                row
+                    and row.SeedIcon,
+                row,
+                source
+            )
+
+    else
+        icon =
+            HolyAccountInventoryFirstIcon(
+                catalogs,
+                row,
+                secondaryRow,
+                source
+            )
     end
 
     return HolyCleanText(
-        value
-    ):lower():gsub(
-        "[^%w]+",
-        ""
+        icon
     )
+end
+
+function HolyItemAutomationCatalogNameScore(value)
+    local raw =
+        HolyCleanText(
+            value
+        )
+
+    local clean =
+        HolyItemAutomationCleanItemName(
+            raw
+        )
+
+    local score = 0
+
+    if raw:find("%s") then
+        score =
+            score + 100
+    end
+
+    if raw == clean then
+        score =
+            score + 20
+    end
+
+    return score
+        + math.min(
+            #clean,
+            80
+        )
 end
 
 function HolyItemAutomationCatalogAddItem(
     index,
     group,
-    name
+    name,
+    iconSource
 )
     if type(index) ~= "table"
-    or type(index.Items) ~= "table" then
+    or type(index.Items) ~= "table"
+    or type(index.ById) ~= "table" then
         return false
     end
 
@@ -32003,9 +32424,21 @@ function HolyItemAutomationCatalogAddItem(
             )
     end
 
+    local cleanName =
+        HolyItemAutomationCleanItemName(
+            name
+        )
+
+    local itemId =
+        HolyItemAutomationCanonicalItemId(
+            group,
+            cleanName
+        )
+
     if group == nil
-    or name == ""
-    or name == "All" then
+    or cleanName == ""
+    or cleanName == "All"
+    or itemId == "" then
         return false
     end
 
@@ -32014,18 +32447,56 @@ function HolyItemAutomationCatalogAddItem(
         and index.Items[group]
         or {}
 
-    local display =
-        HolyItemAutomationDisplayName(
-            group,
+    local entry =
+        index.ById[itemId]
+
+    if type(entry) ~= "table" then
+        entry = {
+            Id = itemId,
+            Group = group,
+            Name = cleanName,
+            Icon = "",
+            NameScore = -math.huge,
+        }
+
+        index.ById[itemId] =
+            entry
+
+        index.Items[group][itemId] =
+            entry
+    end
+
+    local nameScore =
+        HolyItemAutomationCatalogNameScore(
             name
         )
 
-    if display == "" then
-        return false
+    if nameScore > (
+        tonumber(
+            entry.NameScore
+        )
+        or -math.huge
+    ) then
+        entry.Name =
+            cleanName
+
+        entry.NameScore =
+            nameScore
     end
 
-    index.Items[group][display] =
-        true
+    local icon =
+        HolyItemAutomationResolveItemIcon(
+            index.Catalogs,
+            group,
+            cleanName,
+            iconSource
+        )
+
+    if entry.Icon == ""
+    and icon ~= "" then
+        entry.Icon =
+            icon
+    end
 
     return true
 end
@@ -32089,7 +32560,11 @@ function HolyItemAutomationCatalogAddRecord(
     HolyItemAutomationCatalogAddItem(
         index,
         record.Group,
-        record.Name
+        record.Name,
+        record.Icon
+            or record.Instance
+            or record.Tool
+            or record.Item
     )
 
     for _, trait in ipairs(
@@ -32134,9 +32609,14 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
         return runtime.ItemCatalogIndex
     end
 
+    local catalogs =
+        HolyItemAutomationGetCatalogs()
+
     local index = {
         Items = {},
         Traits = {},
+        ById = {},
+        Catalogs = catalogs,
     }
 
     for _, category in ipairs(
@@ -32229,9 +32709,6 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
         "Rainbow"
     )
 
-    local catalogs =
-        HolyItemAutomationGetCatalogs()
-
     for key, row in pairs(
         catalogs.Seeds
         or {}
@@ -32245,7 +32722,8 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
                     row.FruitName,
                     row.CropName,
                     row.PlantName
-                )
+                ),
+                row
             )
 
             HolyItemAutomationCatalogAddItem(
@@ -32259,7 +32737,8 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
                     row.FruitName,
                     row.CropName,
                     key
-                )
+                ),
+                row
             )
         end
     end
@@ -32278,7 +32757,8 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
                     row.ItemName,
                     row.Name,
                     key
-                )
+                ),
+                row
             )
         end
     end
@@ -32297,7 +32777,8 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
                     row.DisplayName,
                     row.Name,
                     key
-                )
+                ),
+                row
             )
         end
     end
@@ -32317,7 +32798,8 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
                     row.DisplayName,
                     row.Name,
                     key
-                )
+                ),
+                row
             )
         end
     end
@@ -32363,7 +32845,8 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
                 HolyItemAutomationCatalogAddItem(
                     index,
                     "Gear",
-                    name
+                    name,
+                    row
                 )
             end
         end
@@ -32383,7 +32866,8 @@ function HolyItemAutomationBuildCatalogIndex(forceRefresh)
                     row.DisplayName,
                     row.Name,
                     key
-                )
+                ),
+                row
             )
         end
     end
@@ -32457,8 +32941,18 @@ function HolyItemAutomationItemValueGroup(value)
             value
             or ""
         ):match(
-            "^([^·]+)%s*·"
+            "^([^|]+)|"
         )
+
+    if group == nil then
+        group =
+            tostring(
+                value
+                or ""
+            ):match(
+                "^([^·]+)%s*·"
+            )
+    end
 
     return HolyItemAutomationNormalizeCategory(
         group
@@ -32530,7 +33024,15 @@ function HolyItemAutomationAddDropdownValue(
     return true
 end
 
-function HolyItemAutomationSortDropdownValues(values)
+function HolyItemAutomationSortDropdownValues(
+    values,
+    displayNames
+)
+    displayNames =
+        type(displayNames) == "table"
+        and displayNames
+        or {}
+
     table.sort(values, function(a, b)
         if a == "All" then
             return b ~= "All"
@@ -32538,6 +33040,23 @@ function HolyItemAutomationSortDropdownValues(values)
 
         if b == "All" then
             return false
+        end
+
+        local aName =
+            tostring(
+                displayNames[a]
+                or a
+            ):lower()
+
+        local bName =
+            tostring(
+                displayNames[b]
+                or b
+            ):lower()
+
+        if aName ~= bName then
+            return aName
+                < bName
         end
 
         return tostring(a):lower()
@@ -32574,6 +33093,9 @@ function HolyItemAutomationBuildSideFilterValues(side)
         "All",
     }
 
+    local itemImages = {}
+    local itemNames = {}
+
     local itemSeen = {
         All = true,
     }
@@ -32586,15 +33108,27 @@ function HolyItemAutomationBuildSideFilterValues(side)
         HOLY_ITEM_AUTOMATION_CATEGORIES
     ) do
         if categoryMap[category] == true then
-            for display in pairs(
+            for itemId, entry in pairs(
                 index.Items[category]
                 or {}
             ) do
                 HolyItemAutomationAddDropdownValue(
                     itemValues,
                     itemSeen,
-                    display
+                    itemId
                 )
+
+                if type(entry) == "table" then
+                    itemNames[itemId] =
+                        entry.Name
+
+                    if HolyCleanText(
+                        entry.Icon
+                    ) ~= "" then
+                        itemImages[itemId] =
+                            entry.Icon
+                    end
+                end
             end
 
             if category == "Fruits"
@@ -32618,24 +33152,42 @@ function HolyItemAutomationBuildSideFilterValues(side)
         and state.SelectedDropItems
         or state.SelectedPickupItems
 
-    for _, display in ipairs(
+    for _, itemId in ipairs(
         selectedItems
     ) do
         local group =
             HolyItemAutomationItemValueGroup(
-                display
+                itemId
             )
 
-        if display == "All"
+        local entry =
+            type(index.ById) == "table"
+            and index.ById[itemId]
+            or nil
+
+        if itemId == "All"
         or (
             group
             and categoryMap[group] == true
+            and type(entry) == "table"
         ) then
             HolyItemAutomationAddDropdownValue(
                 itemValues,
                 itemSeen,
-                display
+                itemId
             )
+
+            if type(entry) == "table" then
+                itemNames[itemId] =
+                    entry.Name
+
+                if HolyCleanText(
+                    entry.Icon
+                ) ~= "" then
+                    itemImages[itemId] =
+                        entry.Icon
+                end
+            end
         end
     end
 
@@ -32660,7 +33212,8 @@ function HolyItemAutomationBuildSideFilterValues(side)
     end
 
     HolyItemAutomationSortDropdownValues(
-        itemValues
+        itemValues,
+        itemNames
     )
 
     HolyItemAutomationSortDropdownValues(
@@ -32670,7 +33223,8 @@ function HolyItemAutomationBuildSideFilterValues(side)
     return itemValues,
         traitValues,
         categoryMap.Fruits == true
-            or categoryMap.Pets == true
+            or categoryMap.Pets == true,
+        itemImages
 end
 
 function HolyItemAutomationArraysEqual(a, b)
@@ -32779,7 +33333,7 @@ function HolyItemAutomationReconcileSideSelections(
     end
 
     nextItems =
-        HolyItemAutomationNormalizeChoiceSelection(
+        HolyItemAutomationNormalizeItemSelection(
             nextItems
         )
 
@@ -32830,6 +33384,18 @@ function HolyItemAutomationGetItemDropdownValues(side)
         )
 
     return itemValues
+end
+
+function HolyItemAutomationGetItemDropdownImages(side)
+    local _,
+        _,
+        _,
+        itemImages =
+        HolyItemAutomationBuildFilterValues(
+            side
+        )
+
+    return itemImages
 end
 
 function HolyItemAutomationGetTraitDropdownValues(side)
@@ -34067,9 +34633,14 @@ function HolyItemAutomationSetItems(side, value)
         or "SelectedPickupItems"
 
     state[field] =
-        HolyItemAutomationNormalizeChoiceSelection(
+        HolyItemAutomationNormalizeItemSelection(
             value,
-            state[field]
+            state[field],
+            HolyItemAutomationSingleCategory(
+                side == "Drop"
+                and state.DropCategories
+                or state.PickupCategories
+            )
         )
 
     HolySaveFruitAutomationSettings()
@@ -34354,14 +34925,16 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
 
     local dropItemValues,
         dropTraitValues,
-        dropTraitsEnabled =
+        dropTraitsEnabled,
+        dropItemImages =
         HolyItemAutomationBuildSideFilterValues(
             "Drop"
         )
 
     local pickupItemValues,
         pickupTraitValues,
-        pickupTraitsEnabled =
+        pickupTraitsEnabled,
+        pickupItemImages =
         HolyItemAutomationBuildSideFilterValues(
             "Pickup"
         )
@@ -34435,6 +35008,9 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
             Values =
                 dropItemValues,
 
+            ValueImages =
+                dropItemImages,
+
             Selected =
                 state.SelectedDropItems,
         },
@@ -34445,6 +35021,9 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
 
             Values =
                 pickupItemValues,
+
+            ValueImages =
+                pickupItemImages,
 
             Selected =
                 state.SelectedPickupItems,
@@ -34479,6 +35058,27 @@ function HolyFruitAutomationRefreshDropdowns(forceRefresh)
 
         if type(control) == "table" then
             pcall(function()
+                if type(row.ValueImages) == "table" then
+                    local stableImages =
+                        type(control.ValueImages) == "table"
+                        and control.ValueImages
+                        or {}
+
+                    table.clear(
+                        stableImages
+                    )
+
+                    for value, image in pairs(
+                        row.ValueImages
+                    ) do
+                        stableImages[value] =
+                            image
+                    end
+
+                    control.ValueImages =
+                        stableImages
+                end
+
                 if type(control.SetValues)
                     == "function" then
                     control:SetValues(
@@ -203699,6 +204299,17 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                         "Drop"
                     ),
 
+                ValueImages =
+                    HolyItemAutomationGetItemDropdownImages(
+                        "Drop"
+                    ),
+
+                FormatListValue =
+                    HolyItemAutomationFormatItemValue,
+
+                FormatDisplayValue =
+                    HolyItemAutomationFormatItemValue,
+
                 Default =
                     HOLY_FRUIT_AUTOMATION_STATE.SelectedDropItems,
 
@@ -203712,7 +204323,7 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                     10,
 
                 Tooltip =
-                    "Empty or All means every item inside the selected categories. The list is built from your live inventory and visible ground items.",
+                    "All selects every item inside the selected categories. Clearing the Items selection selects nothing.",
             }
         )
 
@@ -204141,6 +204752,17 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                         "Pickup"
                     ),
 
+                ValueImages =
+                    HolyItemAutomationGetItemDropdownImages(
+                        "Pickup"
+                    ),
+
+                FormatListValue =
+                    HolyItemAutomationFormatItemValue,
+
+                FormatDisplayValue =
+                    HolyItemAutomationFormatItemValue,
+
                 Default =
                     HOLY_FRUIT_AUTOMATION_STATE.SelectedPickupItems,
 
@@ -204154,7 +204776,7 @@ and type(FarmFruitAutomationBox.AddInput) == "function" then
                     10,
 
                 Tooltip =
-                    "Empty or All means every item inside the selected Pickup categories.",
+                    "All selects every item inside the selected Pickup categories. Clearing the Items selection selects nothing.",
             }
         )
 
