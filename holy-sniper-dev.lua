@@ -66686,12 +66686,56 @@ end
 
 function HolyBoughtPetCleanupBusy()
 
-    if HOLY_SNIPER_RUNTIME.Buying == true
-    or HOLY_SNIPER_RUNTIME.Returning == true
-    or HOLY_SNIPER_RUNTIME.BatchDispatching == true then
+    local runtime =
+        type(HOLY_SNIPER_RUNTIME) == "table"
+        and HOLY_SNIPER_RUNTIME
+        or {}
+
+    if runtime.Buying == true
+    or runtime.Returning == true
+    or runtime.BatchDispatching == true
+    or runtime.AutoHopInProgress == true then
 
         return true,
             "sniper busy"
+    end
+
+    if runtime.CurrentTarget ~= nil
+    or HolyCleanText(
+        runtime.CurrentTargetKey
+    ) ~= "" then
+
+        return true,
+            "sniper target has priority"
+    end
+
+    local lastScanAt =
+        tonumber(
+            runtime.LastScanAt
+        )
+        or 0
+
+    if type(HOLY_SNIPER_STATE) == "table"
+    and HOLY_SNIPER_STATE.ActivateSniper == true
+    and runtime.Running == true then
+
+        if lastScanAt <= 0
+        or os.clock() - lastScanAt > 0.45 then
+
+            return true,
+                "waiting for fresh sniper scan"
+        end
+
+        if (
+            tonumber(
+                runtime.MatchCount
+            )
+            or 0
+        ) > 0 then
+
+            return true,
+                "sniper match has priority"
+        end
     end
 
     if type(HOLY_DEFENSE_RUNTIME) == "table"
@@ -66710,8 +66754,231 @@ function HolyBoughtPetCleanupBusy()
             "contested pet has priority"
     end
 
+    if type(
+        HolySniperPetBuyProtectionActive
+    ) == "function" then
+
+        local checkOk,
+            active =
+            pcall(
+                HolySniperPetBuyProtectionActive
+            )
+
+        if checkOk == true
+        and active == true then
+
+            return true,
+                "pet purchase protection active"
+        end
+    end
+
     return false,
         ""
+end
+
+function HolyBoughtPetCleanupTryRemoveGroundItem(item)
+
+    if typeof(item) ~= "Instance" then
+        return false
+    end
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    runtime.BoughtCleanupGroundPending =
+        type(
+            runtime.BoughtCleanupGroundPending
+        ) == "table"
+        and runtime.BoughtCleanupGroundPending
+        or {}
+
+    local now =
+        os.clock()
+
+    for petId,
+        deadline in pairs(
+            runtime.BoughtCleanupGroundPending
+        ) do
+
+        if now > (
+            tonumber(
+                deadline
+            )
+            or 0
+        ) then
+
+            runtime.BoughtCleanupGroundPending[
+                petId
+            ] =
+                nil
+
+        elseif HolyBoughtPetCleanupContainsPetId(
+            item,
+            petId
+        ) == true then
+
+            local removed =
+                pcall(function()
+
+                    item:Destroy()
+                end)
+
+            if removed == true then
+
+                runtime.BoughtCleanupGroundPending[
+                    petId
+                ] =
+                    nil
+
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function HolyBoughtPetCleanupEnsureGroundWatcher()
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    local droppedRoot =
+        workspace:FindFirstChild(
+            "DroppedItems"
+        )
+
+    if typeof(droppedRoot) ~= "Instance" then
+        return nil
+    end
+
+    local connection =
+        runtime.BoughtCleanupGroundConnection
+
+    if runtime.BoughtCleanupGroundRoot
+        == droppedRoot
+    and typeof(connection)
+        == "RBXScriptConnection"
+    and connection.Connected == true then
+
+        return droppedRoot
+    end
+
+    if typeof(connection)
+        == "RBXScriptConnection" then
+
+        pcall(function()
+
+            connection:Disconnect()
+        end)
+    end
+
+    runtime.BoughtCleanupGroundRoot =
+        droppedRoot
+
+    runtime.BoughtCleanupGroundConnection =
+        droppedRoot.ChildAdded:Connect(function(item)
+
+            task.defer(function()
+
+                if HolyBoughtPetCleanupTryRemoveGroundItem(
+                    item
+                ) ~= true then
+
+                    task.delay(0.12, function()
+
+                        if typeof(item) == "Instance"
+                        and item.Parent == droppedRoot then
+
+                            HolyBoughtPetCleanupTryRemoveGroundItem(
+                                item
+                            )
+                        end
+                    end)
+                end
+            end)
+        end)
+
+    return droppedRoot
+end
+
+function HolyBoughtPetCleanupQueueGroundPetId(petId)
+
+    petId =
+        HolyCleanText(
+            petId
+        )
+
+    if petId == "" then
+        return false
+    end
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    runtime.BoughtCleanupGroundPending =
+        type(
+            runtime.BoughtCleanupGroundPending
+        ) == "table"
+        and runtime.BoughtCleanupGroundPending
+        or {}
+
+    local deadline =
+        os.clock()
+        + 2.5
+
+    runtime.BoughtCleanupGroundPending[
+        petId
+    ] =
+        deadline
+
+    HolyBoughtPetCleanupEnsureGroundWatcher()
+
+    task.delay(2.6, function()
+
+        local _,
+            currentRuntime =
+            HolyBoughtPetCleanupEnsure()
+
+        if type(
+            currentRuntime.BoughtCleanupGroundPending
+        ) == "table"
+        and currentRuntime.BoughtCleanupGroundPending[
+            petId
+        ] == deadline then
+
+            currentRuntime.BoughtCleanupGroundPending[
+                petId
+            ] =
+                nil
+        end
+    end)
+
+    return true
+end
+
+function HolyBoughtPetCleanupClearGroundPetId(petId)
+
+    local _,
+        runtime =
+        HolyBoughtPetCleanupEnsure()
+
+    if type(
+        runtime.BoughtCleanupGroundPending
+    ) == "table" then
+
+        runtime.BoughtCleanupGroundPending[
+            HolyCleanText(
+                petId
+            )
+        ] =
+            nil
+    end
+
+    return true
 end
 
 function HolyBoughtPetCleanupDropOne(record, token)
@@ -66736,31 +67003,57 @@ function HolyBoughtPetCleanupDropOne(record, token)
             "paused"
     end
 
-    local liveMatches =
-        HolySniperRunScan()
+    local backpack =
+        LocalPlayer:FindFirstChildOfClass(
+            "Backpack"
+        )
 
-    if #liveMatches > 0 then
+    local character =
+        LocalPlayer.Character
+
+    local humanoid =
+        character
+        and character:FindFirstChildWhichIsA(
+            "Humanoid"
+        )
+        or nil
+
+    local requestDrop =
+        HolyBoughtPetCleanupGetRequestDrop()
+
+    if typeof(backpack) ~= "Instance" then
 
         return false,
-            "New sniper match found",
+            "Backpack unavailable",
+            "retry"
+    end
+
+    if typeof(character) ~= "Instance"
+    or typeof(humanoid) ~= "Instance" then
+
+        return false,
+            "Character unavailable",
             "paused"
     end
 
+    if type(requestDrop) ~= "table" then
+
+        return false,
+            "RequestDrop unavailable",
+            "retry"
+    end
+
     local tool =
-        HolyBoughtPetCleanupFindTool(
-            record.PetId
-        )
+        type(record) == "table"
+        and record.FastDropTool
+        or nil
 
-    local toolDeadline =
-        os.clock()
-        + 3
-
-    while typeof(tool) ~= "Instance"
-    and os.clock() < toolDeadline do
-
-        task.wait(
-            0.10
-        )
+    if typeof(tool) ~= "Instance"
+    or tool:IsA("Tool") ~= true
+    or (
+        tool.Parent ~= backpack
+        and tool.Parent ~= character
+    ) then
 
         tool =
             HolyBoughtPetCleanupFindTool(
@@ -66794,71 +67087,22 @@ function HolyBoughtPetCleanupDropOne(record, token)
             "protected"
     end
 
-    local backpack =
-        LocalPlayer:FindFirstChildOfClass(
-            "Backpack"
-        )
+    if tool.Parent == character then
 
-    local character =
-        LocalPlayer.Character
+        humanoid:UnequipTools()
 
-    local humanoid =
-        character
-        and character:FindFirstChildWhichIsA(
-            "Humanoid"
-        )
-        or nil
+        local returnDeadline =
+            os.clock()
+            + 0.65
 
-    local droppedRoot =
-        workspace:FindFirstChild(
-            "DroppedItems"
-        )
+        while tool.Parent == character
+        and os.clock() < returnDeadline do
 
-    local requestDrop =
-        HolyBoughtPetCleanupGetRequestDrop()
-
-    if typeof(backpack) ~= "Instance" then
-
-        return false,
-            "Backpack unavailable",
-            "retry"
+            RunService.Heartbeat:Wait()
+        end
     end
 
-    if typeof(character) ~= "Instance"
-    or typeof(humanoid) ~= "Instance" then
-
-        return false,
-            "Character unavailable",
-            "paused"
-    end
-
-    if typeof(droppedRoot) ~= "Instance" then
-
-        return false,
-            "DroppedItems unavailable",
-            "retry"
-    end
-
-    if type(requestDrop) ~= "table" then
-
-        return false,
-            "RequestDrop unavailable",
-            "retry"
-    end
-
-    humanoid:UnequipTools()
-
-    task.wait(
-        0.20
-    )
-
-    tool =
-        HolyBoughtPetCleanupFindTool(
-            record.PetId
-        )
-
-    if typeof(tool) ~= "Instance"
-    or tool.Parent ~= backpack then
+    if tool.Parent ~= backpack then
 
         return false,
             "Pet did not return to Backpack",
@@ -66876,84 +67120,28 @@ function HolyBoughtPetCleanupDropOne(record, token)
             "paused"
     end
 
-    liveMatches =
-        HolySniperRunScan()
-
-    if #liveMatches > 0 then
-
-        return false,
-            "New sniper match found",
-            "paused"
-    end
-
-    local existingItems = {}
-
-    for _,
-        child in ipairs(
-            droppedRoot:GetChildren()
-        ) do
-
-        existingItems[child] =
-            true
-    end
-
-    local observedItems = {}
-    local observedSet = {}
-
-    local function recordObserved(child)
-
-        if typeof(child) ~= "Instance"
-        or existingItems[child] == true
-        or observedSet[child] == true then
-
-            return
-        end
-
-        observedSet[child] =
-            true
-
-        table.insert(
-            observedItems,
-            child
-        )
-    end
-
-    local groundConnection =
-        droppedRoot.ChildAdded:Connect(function(child)
-
-            recordObserved(
-                child
-            )
-        end)
-
     humanoid:EquipTool(
         tool
     )
 
     local equipDeadline =
         os.clock()
-        + 3
+        + 1.25
 
-    while os.clock() < equipDeadline
-    and tool.Parent ~= character do
+    while tool.Parent ~= character
+    and os.clock() < equipDeadline do
 
-        task.wait()
+        RunService.Heartbeat:Wait()
     end
 
     if tool.Parent ~= character then
-
-        groundConnection:Disconnect()
-
-        humanoid:UnequipTools()
 
         return false,
             "Equip was not confirmed",
             "retry"
     end
 
-    task.wait(
-        0.55
-    )
+    RunService.Heartbeat:Wait()
 
     busy,
         busyReason =
@@ -66961,14 +67149,18 @@ function HolyBoughtPetCleanupDropOne(record, token)
 
     if busy == true then
 
-        groundConnection:Disconnect()
-
-        humanoid:UnequipTools()
+        if tool.Parent == character then
+            humanoid:UnequipTools()
+        end
 
         return false,
             busyReason,
             "paused"
     end
+
+    HolyBoughtPetCleanupQueueGroundPetId(
+        record.PetId
+    )
 
     local fireOk,
         fireError =
@@ -66982,9 +67174,13 @@ function HolyBoughtPetCleanupDropOne(record, token)
 
     if fireOk ~= true then
 
-        groundConnection:Disconnect()
+        HolyBoughtPetCleanupClearGroundPetId(
+            record.PetId
+        )
 
-        humanoid:UnequipTools()
+        if tool.Parent == character then
+            humanoid:UnequipTools()
+        end
 
         return false,
             tostring(
@@ -66993,155 +67189,41 @@ function HolyBoughtPetCleanupDropOne(record, token)
             "retry"
     end
 
-    local inventoryRemoved =
-        false
-
     local removalDeadline =
         os.clock()
-        + 6
+        + 2.5
 
     while os.clock() < removalDeadline do
 
-        if HolyBoughtPetCleanupFindTool(
-            record.PetId
-        ) == nil then
+        if tool.Parent ~= backpack
+        and tool.Parent ~= character then
 
-            inventoryRemoved =
-                true
-
-            break
+            return true,
+                "Dropped",
+                "dropped"
         end
 
         task.wait(
-            0.05
+            0.03
         )
     end
 
-    local groundDeadline =
-        os.clock()
-        + 5
+    HolyBoughtPetCleanupClearGroundPetId(
+        record.PetId
+    )
 
-    while os.clock() < groundDeadline do
+    local becameBusy =
+        HolyBoughtPetCleanupBusy()
 
-        for _,
-            child in ipairs(
-                droppedRoot:GetChildren()
-            ) do
-
-            recordObserved(
-                child
-            )
-        end
-
-        if inventoryRemoved == true
-        and #observedItems > 0 then
-
-            task.wait(
-                0.30
-            )
-
-            break
-        end
-
-        task.wait(
-            0.10
-        )
-    end
-
-    groundConnection:Disconnect()
-
-    if inventoryRemoved ~= true then
+    if becameBusy ~= true
+    and tool.Parent == character then
 
         humanoid:UnequipTools()
-
-        return false,
-            "Server did not remove the PetId",
-            "retry"
     end
 
-    local liveNewItems = {}
-
-    for _,
-        item in ipairs(
-            observedItems
-        ) do
-
-        if typeof(item) == "Instance"
-        and item.Parent == droppedRoot then
-
-            table.insert(
-                liveNewItems,
-                item
-            )
-        end
-    end
-
-    local exactMatches = {}
-
-    for _,
-        item in ipairs(
-            liveNewItems
-        ) do
-
-        if HolyBoughtPetCleanupContainsPetId(
-            item,
-            record.PetId
-        ) == true then
-
-            table.insert(
-                exactMatches,
-                item
-            )
-        end
-    end
-
-    local groundTarget =
-        nil
-
-    if #exactMatches == 1 then
-
-        groundTarget =
-            exactMatches[1]
-
-    elseif #exactMatches <= 0
-    and #liveNewItems == 1 then
-
-        groundTarget =
-            liveNewItems[1]
-    end
-
-    local groundRemoved =
-        false
-
-    if typeof(groundTarget) == "Instance" then
-
-        local destroyOk =
-            pcall(function()
-
-                groundTarget:Destroy()
-            end)
-
-        task.wait(
-            0.15
-        )
-
-        groundRemoved =
-            destroyOk == true
-            and groundTarget.Parent == nil
-    end
-
-    humanoid:UnequipTools()
-
-    if groundRemoved == true then
-
-        return true,
-            "Dropped and locally removed",
-            "dropped"
-    end
-
-    return true,
-        "Dropped; ground model was not removed unsafely",
-        "dropped"
+    return false,
+        "Server did not remove the PetId",
+        "retry"
 end
 
 function HolyBoughtPetCleanupRun(token)
@@ -67174,7 +67256,7 @@ function HolyBoughtPetCleanupRun(token)
     if #candidates <= 0 then
 
         return true,
-            "Nothing queued"
+            "Nothing ready"
     end
 
     runtime.BoughtCleanupRunning =
@@ -67189,7 +67271,10 @@ function HolyBoughtPetCleanupRun(token)
     local droppedCount =
         0
 
-    local skippedCount =
+    local deferredCount =
+        0
+
+    local attemptedCount =
         0
 
     local runOk,
@@ -67225,6 +67310,16 @@ function HolyBoughtPetCleanupRun(token)
                     return
                 end
 
+                local retryAt =
+                    tonumber(
+                        record.RetryAt
+                    )
+                    or 0
+
+                if retryAt > os.clock() then
+                    continue
+                end
+
                 local classification =
                     HolyBoughtPetCleanupClassify(
                         record
@@ -67234,8 +67329,11 @@ function HolyBoughtPetCleanupRun(token)
                     continue
                 end
 
+                attemptedCount +=
+                    1
+
                 HolySniperSetStatus(
-                    "Cleanup "
+                    "Fast Drop "
                     .. tostring(index)
                     .. "/"
                     .. tostring(
@@ -67247,139 +67345,124 @@ function HolyBoughtPetCleanupRun(token)
                     )
                 )
 
-                local resolved =
-                    false
+                local success,
+                    reason,
+                    code =
+                    HolyBoughtPetCleanupDropOne(
+                        record,
+                        token
+                    )
 
-                local lastReason =
-                    "Drop failed"
+                record.LastError =
+                    tostring(
+                        reason
+                        or "Drop failed"
+                    )
 
-                for attempt = 1, 3 do
-
-                    local success,
-                        reason,
-                        code =
-                        HolyBoughtPetCleanupDropOne(
-                            record,
-                            token
-                        )
-
-                    lastReason =
-                        tostring(
-                            reason
-                            or lastReason
-                        )
+                if success == true then
 
                     record.Attempts =
-                        attempt
+                        0
 
-                    record.LastError =
-                        lastReason
+                    record.RetryAt =
+                        nil
 
-                    if success == true then
+                    HolyBoughtPetCleanupRemoveQueueRecord(
+                        record
+                    )
 
-                        runtime.BoughtCleanupQueue[
-                            record.PetId
-                        ] =
-                            nil
-
-                        droppedCount +=
-                            1
-
-                        resolved =
-                            true
-
-                        break
-                    end
-
-                    if code == "protected" then
-
-                        resolved =
-                            true
-
-                        break
-                    end
-
-                    if code == "paused"
-                    or code == "cancelled" then
-
-                        paused =
-                            true
-
-                        pauseReason =
-                            lastReason
-
-                        return
-                    end
-
-                    if attempt < 3 then
-
-                        HolySniperSetStatus(
-                            "Cleanup retry "
-                            .. tostring(attempt)
-                            .. "/3: "
-                            .. tostring(
-                                record.Pet
-                            )
-                        )
-
-                        task.wait(
-                            attempt * 0.75
-                        )
-                    end
-                end
-
-                if resolved ~= true then
-
-                    record.SkipThisServer =
-                        true
-
-                    record.LastError =
-                        lastReason
-
-                    skippedCount +=
+                    droppedCount +=
                         1
 
-                    if type(HolyNotify) == "function" then
+                    RunService.Heartbeat:Wait()
 
-                        HolyNotify(
-                            "Bought Pet Cleanup",
-                            "Kept "
-                                .. tostring(
-                                    record.Pet
-                                )
-                                .. " after three failed drop attempts.",
-                            5
-                        )
-                    end
+                    continue
                 end
 
-                HolyBoughtPetCleanupRefreshAll()
+                if code == "protected" then
 
-                task.wait(
-                    0.25
-                )
+                    record.Attempts =
+                        0
+
+                    record.RetryAt =
+                        nil
+
+                    continue
+                end
+
+                if code == "paused"
+                or code == "cancelled" then
+
+                    paused =
+                        true
+
+                    pauseReason =
+                        record.LastError
+
+                    return
+                end
+
+                record.Attempts =
+                    (
+                        tonumber(
+                            record.Attempts
+                        )
+                        or 0
+                    )
+                    + 1
+
+                local retryDelay =
+                    record.Attempts == 1
+                    and 0.5
+                    or record.Attempts == 2
+                        and 2
+                        or 5
+
+                record.RetryAt =
+                    os.clock()
+                    + retryDelay
+
+                record.SkipThisServer =
+                    false
+
+                deferredCount +=
+                    1
             end
         end)
 
     runtime.BoughtCleanupRunning =
         false
 
-    local character =
-        LocalPlayer.Character
-
-    local humanoid =
-        character
-        and character:FindFirstChildWhichIsA(
-            "Humanoid"
-        )
-        or nil
-
-    if typeof(humanoid) == "Instance" then
-
-        humanoid:UnequipTools()
-    end
-
     HolyBoughtPetCleanupRefreshAll()
+
+    if droppedCount > 0 then
+
+        local persistBusy =
+            HolyBoughtPetCleanupBusy()
+
+        if persistBusy == true then
+
+            HolyBoughtPetCleanupRequestPersist()
+
+        else
+
+            runtime.BoughtCleanupSaveGeneration =
+                (
+                    tonumber(
+                        runtime.BoughtCleanupSaveGeneration
+                    )
+                    or 0
+                )
+                + 1
+
+            runtime.BoughtCleanupSavePending =
+                false
+
+            HolyBoughtPetCleanupPersistNow(
+                "completed fast drop batch"
+            )
+        end
+    end
 
     if runOk ~= true then
 
@@ -67403,7 +67486,7 @@ function HolyBoughtPetCleanupRun(token)
         )
 
         HolySniperSetStatus(
-            "Cleanup paused: "
+            "Fast Drop paused: "
             .. tostring(
                 pauseReason
             )
@@ -67413,18 +67496,24 @@ function HolyBoughtPetCleanupRun(token)
             pauseReason
     end
 
+    if attemptedCount <= 0 then
+
+        return true,
+            "Waiting for retry"
+    end
+
     HolySniperSetStatus(
-        "Cleanup complete: "
+        "Fast Drop complete: "
         .. tostring(
             droppedCount
         )
         .. " dropped"
         .. (
-            skippedCount > 0
+            deferredCount > 0
             and (
                 " · "
-                .. tostring(skippedCount)
-                .. " kept"
+                .. tostring(deferredCount)
+                .. " deferred"
             )
             or ""
         )
@@ -68358,21 +68447,54 @@ function HolyBoughtPetCleanupRequestPersist()
         runtime =
         HolyBoughtPetCleanupEnsure()
 
-    if runtime.BoughtCleanupSavePending == true then
-        return false
-    end
+    runtime.BoughtCleanupSaveGeneration =
+        (
+            tonumber(
+                runtime.BoughtCleanupSaveGeneration
+            )
+            or 0
+        )
+        + 1
+
+    local generation =
+        runtime.BoughtCleanupSaveGeneration
 
     runtime.BoughtCleanupSavePending =
         true
 
-    task.delay(0.15, function()
+    task.delay(0.75, function()
 
         local _,
             currentRuntime =
             HolyBoughtPetCleanupEnsure()
 
+        if currentRuntime.BoughtCleanupSaveGeneration
+            ~= generation then
+
+            return
+        end
+
         currentRuntime.BoughtCleanupSavePending =
             false
+
+        if type(
+            HolyBoughtPetCleanupBusy
+        ) == "function" then
+
+            local checkOk,
+                busy =
+                pcall(
+                    HolyBoughtPetCleanupBusy
+                )
+
+            if checkOk == true
+            and busy == true then
+
+                HolyBoughtPetCleanupRequestPersist()
+
+                return
+            end
+        end
 
         HolyBoughtPetCleanupPersistNow(
             "pending-pet ledger"
@@ -68388,39 +68510,65 @@ function HolyBoughtPetCleanupRefreshAll()
         runtime =
         HolyBoughtPetCleanupEnsure()
 
-    if type(
-        HolyBoughtPetCleanupRefreshBuilderPreview
-    ) == "function" then
-
-        HolyBoughtPetCleanupRefreshBuilderPreview()
+    if runtime.BoughtCleanupRefreshPending == true then
+        return false
     end
 
-    if type(
-        HolyBoughtPetCleanupRefreshSavedFilters
-    ) == "function" then
+    runtime.BoughtCleanupRefreshPending =
+        true
 
-        HolyBoughtPetCleanupRefreshSavedFilters()
-    end
+    task.delay(0.30, function()
 
-    if type(
-        HolyBoughtPetCleanupRefreshPreview
-    ) == "function" then
+        local _,
+            currentRuntime =
+            HolyBoughtPetCleanupEnsure()
 
-        HolyBoughtPetCleanupRefreshPreview(
-            true
-        )
-    end
+        currentRuntime.BoughtCleanupRefreshPending =
+            false
 
-    local signature =
-        HolyBoughtPetCleanupQueueSignature()
+        local setupVisible =
+            type(HOLY_SNIPER_PAGE_STATE) ~= "table"
+            or HOLY_SNIPER_PAGE_STATE.Mode
+                == "Sniper Setup"
 
-    if signature ~= tostring(
-        runtime.BoughtCleanupLastSavedSignature
-        or ""
-    ) then
+        if setupVisible == true then
 
-        HolyBoughtPetCleanupRequestPersist()
-    end
+            if type(
+                HolyBoughtPetCleanupRefreshBuilderPreview
+            ) == "function" then
+
+                HolyBoughtPetCleanupRefreshBuilderPreview()
+            end
+
+            if type(
+                HolyBoughtPetCleanupRefreshSavedFilters
+            ) == "function" then
+
+                HolyBoughtPetCleanupRefreshSavedFilters()
+            end
+
+            if type(
+                HolyBoughtPetCleanupRefreshPreview
+            ) == "function" then
+
+                HolyBoughtPetCleanupRefreshPreview()
+            end
+        end
+
+        local signature =
+            HolyBoughtPetCleanupQueueSignature()
+
+        if signature ~= tostring(
+            currentRuntime
+                .BoughtCleanupLastSavedSignature
+            or ""
+        ) then
+
+            HolyBoughtPetCleanupRequestPersist()
+        end
+    end)
+
+    return true
 end
 
 function HolyBoughtPetCleanupAddBuilderRule()
@@ -68840,13 +68988,16 @@ function HolyBoughtPetCleanupStartWorker()
     runtime.BoughtCleanupWorkerToken =
         token
 
+    runtime.BoughtCleanupNextWorkerAt =
+        0
+
     HOLY_BOUGHT_CLEANUP_WORKER_TOKEN =
         token
 
     task.spawn(function()
 
         task.wait(
-            1.5
+            0.35
         )
 
         while token.Active == true
@@ -68856,40 +69007,60 @@ function HolyBoughtPetCleanupStartWorker()
                 runtime =
                 HolyBoughtPetCleanupEnsure()
 
+            local hasQueued =
+                type(
+                    runtime.BoughtCleanupQueue
+                ) == "table"
+                and next(
+                    runtime.BoughtCleanupQueue
+                ) ~= nil
+
             if state.AutoDropBoughtPets == true
             and state.ActivateSniper == true
             and #state.BoughtCleanupRules > 0
+            and hasQueued == true
             and runtime.BoughtCleanupRunning ~= true
-            and os.clock() >= runtime.BoughtCleanupNextWorkerAt then
+            and os.clock() >= (
+                tonumber(
+                    runtime.BoughtCleanupNextWorkerAt
+                )
+                or 0
+            ) then
 
                 local busy =
                     HolyBoughtPetCleanupBusy()
 
                 if busy ~= true then
 
-                    local candidates =
-                        HolyBoughtPetCleanupCandidates()
+                    local cleanupOk,
+                        cleanupReason =
+                        HolyBoughtPetCleanupRun(
+                            token
+                        )
 
-                    if #candidates > 0 then
+                    local delay =
+                        0.18
 
-                        local cleanupOk =
-                            HolyBoughtPetCleanupRun(
-                                token
-                            )
+                    if cleanupOk == true
+                    and cleanupReason == "Cleanup complete" then
 
-                        runtime.BoughtCleanupNextWorkerAt =
-                            os.clock()
-                            + (
-                                cleanupOk == true
-                                and 0.45
-                                or 1.5
-                            )
+                        delay =
+                            0.06
+
+                    elseif cleanupOk == true then
+
+                        delay =
+                            0.45
                     end
+
+                    runtime.BoughtCleanupNextWorkerAt =
+                        os.clock()
+                        + delay
                 end
             end
 
             task.wait(
-                0.65
+                0.10
             )
         end
     end)
@@ -69780,6 +69951,25 @@ function HolyBoughtPetCleanupClassify(record)
             "No matching drop filter"
     end
 
+    local retryAt =
+        tonumber(
+            record.RetryAt
+        )
+        or 0
+
+    if retryAt > os.clock() then
+
+        return "Waiting",
+            "Retrying in "
+            .. string.format(
+                "%.1fs",
+                math.max(
+                    0,
+                    retryAt - os.clock()
+                )
+            )
+    end
+
     local tool,
         resolveReason =
         HolyBoughtPetCleanupResolveExactTool(
@@ -69832,8 +70022,7 @@ function HolyBoughtPetCleanupClassify(record)
 end
 
 HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID =
-    HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID
-    or HolyBoughtPetCleanupDropOne
+    HolyBoughtPetCleanupDropOne
 
 function HolyBoughtPetCleanupDropOne(record, token)
 
@@ -69850,18 +70039,41 @@ function HolyBoughtPetCleanupDropOne(record, token)
                 resolveReason
                 or "Waiting for exact inventory PetId"
             ),
-            "paused"
+            "retry"
     end
 
-    local success,
+    record.FastDropTool =
+        tool
+
+    local callOk,
+        success,
         reason,
         code =
-        HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID(
+        pcall(
+            HOLY_BOUGHT_CLEANUP_BASE_DROP_ONE_EXACT_ID,
             record,
             token
         )
 
+    record.FastDropTool =
+        nil
+
+    if callOk ~= true then
+
+        return false,
+            tostring(
+                success
+            ),
+            "retry"
+    end
+
     if success == true then
+
+        record.Attempts =
+            0
+
+        record.RetryAt =
+            nil
 
         HolyBoughtPetCleanupRemoveQueueRecord(
             record
@@ -193257,10 +193469,25 @@ function HolyBoughtPetCleanupBuildPreviewUI(groupbox)
         and HOLY_BOUGHT_CLEANUP_PREVIEW_TOKEN == token
         and surface.Parent ~= nil do
 
-            HolyBoughtPetCleanupRefreshPreview()
+            local setupVisible =
+                type(HOLY_SNIPER_PAGE_STATE) ~= "table"
+                or HOLY_SNIPER_PAGE_STATE.Mode
+                    == "Sniper Setup"
+
+            local _,
+                runtime =
+                HolyBoughtPetCleanupEnsure()
+
+            if setupVisible == true
+            and runtime.BoughtCleanupRunning ~= true then
+
+                HolyBoughtPetCleanupRefreshPreview()
+            end
 
             task.wait(
-                0.85
+                setupVisible == true
+                and 0.85
+                or 1.50
             )
         end
     end)
