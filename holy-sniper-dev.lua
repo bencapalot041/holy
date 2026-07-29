@@ -166273,9 +166273,7 @@ function HolyGuildRefreshSelectedGuildPanel()
 
     if info.IsOwn == true then
 
-        catchupText info.IsOwn == true then
-
-        =
+        catchupText =
             "This is your guild"
 
     elseif scoreDifference ~= nil
