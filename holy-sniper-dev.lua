@@ -46271,6 +46271,296 @@ function HolyGlobalPetSnipeQueue(entry)
     return true
 end
 
+--==================================================
+-- [ANDROID APK BRIDGE]
+--==================================================
+
+function HolyAndroidBridgeRequest(
+    eventName,
+    extraPayload
+)
+
+    local requestFunction =
+        HolyGetRequestFunction()
+
+    if type(requestFunction) ~= "function" then
+
+        return false,
+            nil,
+            "This executor does not support HTTP requests."
+    end
+
+    eventName =
+        HolyCleanText(
+            eventName
+        )
+
+    if eventName == "" then
+
+        return false,
+            nil,
+            "Bridge event name is empty."
+    end
+
+    local payload = {
+        event =
+            eventName,
+
+        event_id =
+            HttpService:GenerateGUID(
+                false
+            ),
+
+        roblox_user_id =
+            tostring(
+                LocalPlayer.UserId
+            ),
+
+        roblox_username =
+            tostring(
+                LocalPlayer.Name
+            ),
+
+        place_id =
+            tostring(
+                game.PlaceId
+            ),
+
+        job_id =
+            tostring(
+                game.JobId
+            ),
+
+        sent_at =
+            os.time(),
+    }
+
+    if type(extraPayload) == "table" then
+
+        for key, value in pairs(
+            extraPayload
+        ) do
+
+            payload[key] =
+                value
+        end
+    end
+
+    local encodeOk,
+        encoded =
+        pcall(function()
+
+            return HttpService:JSONEncode(
+                payload
+            )
+        end)
+
+    if encodeOk ~= true
+    or type(encoded) ~= "string" then
+
+        return false,
+            nil,
+            "Could not encode the APK bridge request."
+    end
+
+    local requestOk,
+        response =
+        pcall(function()
+
+            return requestFunction({
+                Url =
+                    "http://127.0.0.1:17371/event",
+
+                Method =
+                    "POST",
+
+                Headers = {
+                    ["Accept"] =
+                        "application/json",
+
+                    ["Content-Type"] =
+                        "application/json",
+
+                    ["Cache-Control"] =
+                        "no-cache",
+
+                    ["Connection"] =
+                        "close",
+                },
+
+                Body =
+                    encoded,
+            })
+        end)
+
+    if requestOk ~= true then
+
+        return false,
+            nil,
+            "Local request failed: "
+            .. tostring(
+                response
+            )
+    end
+
+    local statusCode =
+        0
+
+    local responseBody =
+        nil
+
+    if type(response) == "table" then
+
+        statusCode =
+            tonumber(
+                response.StatusCode
+                or response.Status
+                or response.status_code
+                or 0
+            )
+            or 0
+
+        responseBody =
+            response.Body
+            or response.body
+            or response.ResponseBody
+            or response.responseBody
+
+    elseif type(response) == "string" then
+
+        statusCode =
+            200
+
+        responseBody =
+            response
+    end
+
+    if type(responseBody) ~= "string"
+    or responseBody == "" then
+
+        return false,
+            nil,
+            "The APK bridge returned an empty response."
+    end
+
+    local decodeOk,
+        data =
+        pcall(function()
+
+            return HttpService:JSONDecode(
+                responseBody
+            )
+        end)
+
+    if decodeOk ~= true
+    or type(data) ~= "table" then
+
+        return false,
+            nil,
+            "The APK bridge returned invalid JSON."
+    end
+
+    if statusCode < 200
+    or statusCode >= 300
+    or data.ok ~= true then
+
+        return false,
+            data,
+            tostring(
+                data.error
+                or (
+                    "APK bridge returned HTTP "
+                    .. tostring(statusCode)
+                )
+            )
+    end
+
+    return true,
+        data,
+        nil
+end
+
+function HolyAndroidBridgeTest()
+
+    task.spawn(function()
+
+        if type(HolyNotify) == "function" then
+
+            HolyNotify(
+                "HOLY APK Bridge",
+                "Testing the local APK connection...",
+                3
+            )
+        end
+
+        local success,
+            data,
+            requestError =
+            HolyAndroidBridgeRequest(
+                "bridge_test",
+                {
+                    script =
+                        "HOLY Premium",
+
+                    status =
+                        "manual test",
+                }
+            )
+
+        if success == true then
+
+            local message =
+                "APK bridge connected on port "
+                .. tostring(
+                    data
+                    and data.port
+                    or 17371
+                )
+                .. "."
+
+            print(
+                "[HOLY APK BRIDGE]",
+                message
+            )
+
+            if type(HolyNotify) == "function" then
+
+                HolyNotify(
+                    "HOLY APK Bridge",
+                    message,
+                    5
+                )
+            end
+
+            return true
+        end
+
+        local message =
+            tostring(
+                requestError
+                or "Unknown bridge error"
+            )
+
+        warn(
+            "[HOLY APK BRIDGE]",
+            message
+        )
+
+        if type(HolyNotify) == "function" then
+
+            HolyNotify(
+                "HOLY APK Bridge Failed",
+                message,
+                8
+            )
+        end
+
+        return false
+    end)
+
+    return true
+end
+
 function HolySniperMarkBought(match, entry)
 
     HOLY_SNIPER_RUNTIME.Handled =
@@ -178215,6 +178505,2602 @@ function HolyGuildStart()
 end
 
 --==================================================
+-- HOLY GUILD ANALYTICS V1
+--==================================================
+
+HOLY_GUILD_STATE.SelectedContributorUserId = tonumber(HOLY_GUILD_STATE.SelectedContributorUserId) or LocalPlayer.UserId
+
+HOLY_GUILD_STATE.GuildDetailsRaw = type(HOLY_GUILD_STATE.GuildDetailsRaw) == "table"
+        and HOLY_GUILD_STATE.GuildDetailsRaw
+    or {}
+
+HOLY_GUILD_RUNTIME.GuildDetailsFetchedAt = type(HOLY_GUILD_RUNTIME.GuildDetailsFetchedAt) == "table"
+        and HOLY_GUILD_RUNTIME.GuildDetailsFetchedAt
+    or {}
+
+HOLY_GUILD_RUNTIME.GuildDetailsLastAttemptAt = type(HOLY_GUILD_RUNTIME.GuildDetailsLastAttemptAt)
+            == "table"
+        and HOLY_GUILD_RUNTIME.GuildDetailsLastAttemptAt
+    or {}
+
+HOLY_GUILD_RUNTIME.ContributorTracking = type(HOLY_GUILD_RUNTIME.ContributorTracking) == "table"
+        and HOLY_GUILD_RUNTIME.ContributorTracking
+    or {
+        Key = "",
+        LastSampleToken = "",
+        Members = {},
+        Guild = nil,
+    }
+
+HOLY_GUILD_RUNTIME.LeaderboardTracking = type(HOLY_GUILD_RUNTIME.LeaderboardTracking) == "table"
+        and HOLY_GUILD_RUNTIME.LeaderboardTracking
+    or {
+        Key = "",
+        LastSampleToken = "",
+        Guilds = {},
+    }
+
+HOLY_GUILD_RUNTIME.CompetitionSampleSerial = tonumber(HOLY_GUILD_RUNTIME.CompetitionSampleSerial) or 0
+
+HOLY_GUILD_RUNTIME.LeaderboardSampleSerial = tonumber(HOLY_GUILD_RUNTIME.LeaderboardSampleSerial) or 0
+
+HOLY_GUILD_RUNTIME.AnalyticsNameAttemptAt = type(HOLY_GUILD_RUNTIME.AnalyticsNameAttemptAt)
+            == "table"
+        and HOLY_GUILD_RUNTIME.AnalyticsNameAttemptAt
+    or {}
+
+HOLY_GUILD_ANALYTICS_BASE_REQUEST_NAME = HolyGuildRequestName
+
+function HolyGuildRequestName(userId)
+    userId = tonumber(userId)
+
+    if userId == nil or userId <= 0 then
+        return false
+    end
+
+    if HolyCleanText(HOLY_GUILD_STATE.NameCache[userId]) ~= "" then
+        return true
+    end
+
+    local now = os.clock()
+
+    local lastAttempt = tonumber(HOLY_GUILD_RUNTIME.AnalyticsNameAttemptAt[userId]) or 0
+
+    if lastAttempt > 0 and now - lastAttempt < 60 then
+        return false
+    end
+
+    HOLY_GUILD_RUNTIME.AnalyticsNameAttemptAt[userId] = now
+
+    return HOLY_GUILD_ANALYTICS_BASE_REQUEST_NAME(userId)
+end
+
+function HolyGuildAnalyticsInvalidate()
+    for _, panel in ipairs({
+        HOLY_GUILD_UI.OverviewPanel,
+        HOLY_GUILD_UI.MemberListPanel,
+        HOLY_GUILD_UI.SelectedMemberPanel,
+        HOLY_GUILD_UI.ContestProgressPanel,
+        HOLY_GUILD_UI.SelectedGuildPanel,
+    }) do
+        if type(panel) == "table" then
+            panel.Signature = ""
+        end
+    end
+end
+
+function HolyGuildAnalyticsScore(value)
+    local number = HolyGuildContributionNumber(value)
+
+    if number == nil then
+        return nil
+    end
+
+    if number < 0 then
+        return nil
+    end
+
+    return number
+end
+
+function HolyGuildAnalyticsEntryScore(source)
+    if type(source) ~= "table" then
+        return nil
+    end
+
+    return HolyGuildAnalyticsScore(HolyGuildField(source, {
+        "Score",
+        "Contribution",
+        "WeeklyContribution",
+        "WeeklyContributions",
+        "WeeklyScore",
+        "WeekContribution",
+        "Points",
+        "Shekels",
+        "Sheckles",
+    }))
+end
+
+function HolyGuildAnalyticsMemberById(members, userId)
+    userId = tonumber(userId)
+
+    for _, member in ipairs(type(members) == "table" and members or {}) do
+        if tonumber(member.UserId) == userId then
+            return member
+        end
+    end
+
+    return nil
+end
+
+function HolyGuildAnalyticsMergeContestMember(members, byUserId, userId, username, score, raw)
+    userId = tonumber(userId)
+
+    score = HolyGuildAnalyticsScore(score)
+
+    if userId == nil or userId <= 0 or score == nil then
+        return false
+    end
+
+    username = HolyCleanText(username)
+
+    local member = byUserId[userId]
+
+    if type(member) ~= "table" then
+        member = {
+            UserId = userId,
+
+            Username = username ~= "" and username
+                or (HOLY_GUILD_STATE.NameCache[userId] or ("User " .. tostring(userId))),
+
+            DisplayName = "",
+
+            Role = HolyGuildRole(type(raw) == "table" and HolyGuildField(raw, {
+                "Role",
+                "GuildRole",
+                "Rank",
+            }, "Member") or "Member"),
+
+            Weekly = score,
+
+            Lifetime = 0,
+
+            JoinedAt = nil,
+
+            Online = HOLY_GUILD_STATE.OnlineMembers[userId] == true,
+
+            Raw = type(raw) == "table" and raw or {},
+        }
+
+        members[#members + 1] = member
+
+        byUserId[userId] = member
+    end
+
+    if username ~= "" then
+        member.Username = username
+
+        HOLY_GUILD_STATE.NameCache[userId] = username
+    end
+
+    if member.Username == nil or member.Username == "" or member.Username == ("User " .. tostring(userId)) then
+        HolyGuildRequestName(userId)
+    end
+
+    member.Weekly = math.max(tonumber(member.ContestScoreKnown == true and member.Weekly or nil) or 0, score)
+
+    member.ContestScoreKnown = true
+
+    member.ContestRaw = type(raw) == "table" and raw or member.ContestRaw
+
+    return true
+end
+
+function HolyGuildAnalyticsApplyContestContainer(source, members, byUserId, depth, visited)
+    if type(source) ~= "table" then
+        return false
+    end
+
+    depth = tonumber(depth) or 0
+
+    if depth > 5 then
+        return false
+    end
+
+    visited = type(visited) == "table" and visited or {}
+
+    if visited[source] == true then
+        return false
+    end
+
+    visited[source] = true
+
+    local strongUsername = HolyCleanText(HolyGuildField(source, {
+        "Username",
+        "UserName",
+        "PlayerName",
+    }, ""))
+
+    local directUserId = tonumber(HolyGuildField(source, {
+        "UserId",
+        "UserID",
+        "PlayerId",
+        "PlayerID",
+    }))
+
+    if directUserId == nil and strongUsername ~= "" then
+        directUserId = tonumber(HolyGuildField(source, {
+            "Id",
+        }))
+    end
+
+    local directScore = HolyGuildAnalyticsEntryScore(source)
+
+    local changed = false
+
+    if directUserId ~= nil and directScore ~= nil then
+        HolyGuildAnalyticsMergeContestMember(members, byUserId, directUserId, strongUsername, directScore, source)
+
+        changed = true
+    end
+
+    for key, value in pairs(source) do
+        local keyedUserId = tonumber(key)
+
+        if keyedUserId ~= nil and keyedUserId > 1000 then
+            local keyedScore = HolyGuildAnalyticsScore(value)
+
+            if keyedScore == nil and type(value) == "table" then
+                keyedScore = HolyGuildAnalyticsEntryScore(value)
+            end
+
+            if keyedScore ~= nil then
+                local keyedName = type(value) == "table"
+                        and HolyGuildField(value, {
+                            "Username",
+                            "UserName",
+                            "PlayerName",
+                            "Name",
+                        }, "")
+                    or ""
+
+                HolyGuildAnalyticsMergeContestMember(members, byUserId, keyedUserId, keyedName, keyedScore, value)
+
+                changed = true
+            end
+        end
+
+        if type(value) == "table" then
+            if HolyGuildAnalyticsApplyContestContainer(value, members, byUserId, depth + 1, visited) == true then
+                changed = true
+            end
+        end
+    end
+
+    return changed
+end
+
+HOLY_GUILD_ANALYTICS_BASE_BUILD_CONTEST_MEMBERS = HolyGuildBuildContestMembers
+
+function HolyGuildBuildContestMembers(view)
+    local members = HOLY_GUILD_ANALYTICS_BASE_BUILD_CONTEST_MEMBERS(view)
+
+    members = type(members) == "table" and members or {}
+
+    local byUserId = {}
+
+    for _, member in ipairs(members) do
+        member.ContestScoreKnown = false
+
+        if tonumber(member.UserId) then
+            byUserId[tonumber(member.UserId)] = member
+        end
+    end
+
+    local visited = {}
+
+    if type(view) == "table" then
+        HolyGuildAnalyticsApplyContestContainer(view.Contributors, members, byUserId, 0, visited)
+
+        local aliases = {
+            "GuildmateScores",
+            "GuildmateContribs",
+            "Contributors",
+            "MemberScores",
+            "ScoresByUserId",
+            "ContributionsByUserId",
+            "PlayerScores",
+        }
+
+        for _, source in ipairs({
+            view.Root,
+            view.Shown,
+        }) do
+            if type(source) == "table" then
+                for _, alias in ipairs(aliases) do
+                    HolyGuildAnalyticsApplyContestContainer(
+                        HolyGuildField(source, {
+                            alias,
+                        }),
+                        members,
+                        byUserId,
+                        0,
+                        visited
+                    )
+                end
+            end
+        end
+
+        local localContribution = HolyGuildSessionGetContribution(view)
+
+        if localContribution ~= nil then
+            HolyGuildAnalyticsMergeContestMember(
+                members,
+                byUserId,
+                LocalPlayer.UserId,
+                LocalPlayer.Name,
+                localContribution,
+                {}
+            )
+        end
+    end
+
+    return members
+end
+
+function HolyGuildAnalyticsKnownContestMembers(view)
+    local cacheKey = table.concat({
+        type(view) == "table" and tostring(view.CompetitionKey or "") or "",
+        tostring(HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt or 0),
+        tostring(HOLY_GUILD_RUNTIME.LastSnapshotAt or 0),
+    }, "|")
+
+    local cached = HOLY_GUILD_RUNTIME.AnalyticsKnownMembersCache
+
+    if type(cached) == "table" and cached.Key == cacheKey and type(cached.Members) == "table" then
+        for _, member in ipairs(cached.Members) do
+            local cachedName = HOLY_GUILD_STATE.NameCache[tonumber(member.UserId)]
+
+            if HolyCleanText(cachedName) ~= "" then
+                member.Username = cachedName
+            end
+        end
+
+        return cached.Members
+    end
+
+    local known = {}
+    local knownByUserId = {}
+
+    for _, member in ipairs(HolyGuildBuildContestMembers(view)) do
+        if member.ContestScoreKnown == true then
+            local userId = tonumber(member.UserId)
+
+            local existing = userId and knownByUserId[userId] or nil
+
+            if type(existing) == "table" then
+                if (tonumber(member.Weekly) or 0) > (tonumber(existing.Weekly) or 0) then
+                    existing.Weekly = member.Weekly
+                end
+
+                if HolyCleanText(existing.Username) == "" and HolyCleanText(member.Username) ~= "" then
+                    existing.Username = member.Username
+                end
+            else
+                known[#known + 1] = member
+
+                if userId then
+                    knownByUserId[userId] = member
+                end
+            end
+        end
+    end
+
+    table.sort(known, function(left, right)
+        if (tonumber(left.Weekly) or 0) ~= (tonumber(right.Weekly) or 0) then
+            return (tonumber(left.Weekly) or 0) > (tonumber(right.Weekly) or 0)
+        end
+
+        return tostring(left.Username):lower() < tostring(right.Username):lower()
+    end)
+
+    HOLY_GUILD_RUNTIME.AnalyticsKnownMembersCache = {
+        Key = cacheKey,
+
+        Members = known,
+    }
+
+    return known
+end
+
+function HolyGuildAnalyticsGuildScoreField(source, allowGeneric)
+    if type(source) ~= "table" then
+        return nil
+    end
+
+    local aliases = {
+        "GuildScore",
+        "TotalGuildScore",
+        "GuildTotal",
+        "TeamScore",
+        "WeeklyGuildScore",
+    }
+
+    if allowGeneric == true then
+        aliases[#aliases + 1] = "Score"
+
+        aliases[#aliases + 1] = "CurrentScore"
+
+        aliases[#aliases + 1] = "WeeklyScore"
+
+        aliases[#aliases + 1] = "Value"
+    end
+
+    return HolyGuildAnalyticsScore(HolyGuildField(source, aliases))
+end
+
+HOLY_GUILD_ANALYTICS_BASE_GET_CONTEST_VIEW = HolyGuildGetContestView
+
+function HolyGuildGetContestView()
+    local view = HOLY_GUILD_ANALYTICS_BASE_GET_CONTEST_VIEW()
+
+    if type(view) ~= "table" then
+        return view
+    end
+
+    local cacheKey = table.concat({
+        tostring(view.CompetitionKey or ""),
+        tostring(HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt or 0),
+        tostring(HOLY_GUILD_RUNTIME.LastSnapshotAt or 0),
+        tostring(HOLY_GUILD_RUNTIME.LastLeaderboardAt or 0),
+    }, "|")
+
+    local cached = HOLY_GUILD_RUNTIME.AnalyticsScoreCache
+
+    if type(cached) == "table" and cached.Key == cacheKey then
+        view.Score = cached.Score
+
+        view.ScoreKnown = cached.ScoreKnown
+
+        view.ContributorTotal = cached.ContributorTotal
+
+        view.ScoreLowerBound = cached.ScoreLowerBound
+
+        view.ScoreSource = cached.ScoreSource
+
+        return view
+    end
+
+    local authoritative = HolyGuildAnalyticsGuildScoreField(view.OwnStanding, true)
+
+    local scoreSource = authoritative ~= nil and "Guild standing" or ""
+
+    if authoritative == nil then
+        for _, source in ipairs({
+            view.Root,
+            view.Shown,
+        }) do
+            authoritative = HolyGuildAnalyticsGuildScoreField(source, false)
+
+            if authoritative ~= nil then
+                scoreSource = "Explicit guild total"
+
+                break
+            end
+        end
+    end
+
+    if authoritative == nil then
+        local ownGuildId = HolyGuildGetGuildId()
+
+        local snapshotRoot = HolyGuildSnapshotRoot(HOLY_GUILD_STATE.Snapshot)
+
+        local ownName = type(snapshotRoot) == "table"
+                and HolyCleanText(HolyGuildField(snapshotRoot, {
+                    "Name",
+                    "GuildName",
+                }, "")):lower()
+            or ""
+
+        local ownTag = type(snapshotRoot) == "table"
+                and HolyCleanText(HolyGuildField(snapshotRoot, {
+                    "Tag",
+                    "GuildTag",
+                }, "")):lower()
+            or ""
+
+        for _, row in ipairs(HolyGuildLeaderboardArray()) do
+            local idMatches = ownGuildId ~= "" and tostring(row.Id) == tostring(ownGuildId)
+
+            local nameMatches = ownName ~= ""
+                and HolyCleanText(row.Name):lower() == ownName
+                and (ownTag == "" or HolyCleanText(row.Tag):lower() == ownTag)
+
+            if idMatches or nameMatches then
+                authoritative = HolyGuildAnalyticsScore(row.Score)
+
+                if authoritative ~= nil then
+                    scoreSource = "Global leaderboard"
+                end
+
+                break
+            end
+        end
+    end
+
+    local knownMembers = HolyGuildAnalyticsKnownContestMembers(view)
+
+    local contributorTotal = 0
+
+    for _, member in ipairs(knownMembers) do
+        contributorTotal = contributorTotal + (tonumber(member.Weekly) or 0)
+    end
+
+    local roster = HolyGuildBuildMembers()
+
+    local knownByUserId = {}
+
+    for _, member in ipairs(knownMembers) do
+        local userId = tonumber(member.UserId)
+
+        if userId ~= nil then
+            knownByUserId[userId] = true
+        end
+    end
+
+    local completeCoverage = #roster > 0 and #knownMembers == #roster
+
+    if completeCoverage == true then
+        for _, member in ipairs(roster) do
+            local userId = tonumber(member.UserId)
+
+            if userId == nil or knownByUserId[userId] ~= true then
+                completeCoverage = false
+
+                break
+            end
+        end
+    end
+
+    local scoreKnown = false
+
+    local scoreLowerBound = false
+
+    local resolved = authoritative
+
+    if authoritative ~= nil and authoritative >= contributorTotal then
+        scoreKnown = true
+    elseif completeCoverage == true then
+        resolved = contributorTotal
+
+        scoreKnown = true
+
+        scoreSource = "Complete contributor roster"
+    elseif contributorTotal > 0 then
+        resolved = contributorTotal
+
+        scoreLowerBound = true
+
+        scoreSource = "Partial contributor lower bound"
+    else
+        resolved = authoritative
+
+        scoreKnown = authoritative ~= nil
+    end
+
+    view.Score = resolved or 0
+
+    view.ScoreKnown = scoreKnown
+
+    view.ScoreLowerBound = scoreLowerBound
+
+    view.ScoreSource = scoreSource ~= "" and scoreSource or "Unavailable"
+
+    view.ContributorTotal = contributorTotal
+
+    HOLY_GUILD_RUNTIME.AnalyticsScoreCache = {
+        Key = cacheKey,
+
+        Score = view.Score,
+
+        ScoreKnown = view.ScoreKnown,
+
+        ContributorTotal = contributorTotal,
+
+        ScoreLowerBound = view.ScoreLowerBound,
+
+        ScoreSource = view.ScoreSource,
+    }
+
+    return view
+end
+
+function HolyGuildAnalyticsTrackingKey(view)
+    return table.concat({
+        HolyGuildGetGuildId(),
+        type(view) == "table" and tostring(view.CompetitionId or view.Name or "") or "",
+        type(view) == "table" and tostring(view.StartsAt or "") or "",
+        type(view) == "table" and tostring(view.EndsAt or "") or "",
+    }, "|")
+end
+
+function HolyGuildAnalyticsUpdateRecord(record, score, name, sampleToken, now)
+    score = HolyGuildAnalyticsScore(score)
+
+    if score == nil then
+        return record, false
+    end
+
+    name = HolyCleanText(name)
+
+    sampleToken = tostring(sampleToken or "")
+
+    now = tonumber(now) or os.time()
+
+    if type(record) ~= "table" then
+        record = {
+            Name = name,
+
+            BaselineScore = score,
+
+            CurrentScore = score,
+
+            FirstObservedAt = now,
+
+            LastObservedAt = now,
+
+            LastGainAt = 0,
+
+            SampleCount = 1,
+
+            LastSampleToken = sampleToken,
+        }
+
+        return record, true
+    end
+
+    if record.LastSampleToken == sampleToken then
+        return record, false
+    end
+
+    record.LastSampleToken = sampleToken
+
+    record.SampleCount = (tonumber(record.SampleCount) or 0) + 1
+
+    record.LastObservedAt = now
+
+    local currentScore = tonumber(record.CurrentScore) or score
+
+    if score < currentScore then
+        if tonumber(record.PendingLowerScore) == score then
+            record.PendingLowerCount = (tonumber(record.PendingLowerCount) or 0) + 1
+        else
+            record.PendingLowerScore = score
+
+            record.PendingLowerCount = 1
+        end
+
+        if record.PendingLowerCount >= 2 then
+            record.BaselineScore = score
+
+            record.CurrentScore = score
+
+            record.FirstObservedAt = now
+
+            record.LastObservedAt = now
+
+            record.LastGainAt = 0
+
+            record.SampleCount = 1
+
+            record.PendingLowerScore = nil
+
+            record.PendingLowerCount = nil
+        end
+
+        return record, true
+    end
+
+    record.PendingLowerScore = nil
+
+    record.PendingLowerCount = nil
+
+    if name ~= "" and record.Name ~= name then
+        record.Name = name
+    end
+
+    if score > currentScore then
+        record.CurrentScore = score
+
+        record.LastGainAt = now
+    end
+
+    return record, true
+end
+
+function HolyGuildObserveContestContributors(view, sampleToken)
+    if type(view) ~= "table" or view.State == "Upcoming" then
+        return false
+    end
+
+    local runtime = HOLY_GUILD_RUNTIME.ContributorTracking
+
+    local key = HolyGuildAnalyticsTrackingKey(view)
+
+    if runtime.Key ~= key then
+        runtime.Key = key
+
+        runtime.LastSampleToken = ""
+
+        runtime.Members = {}
+
+        runtime.Guild = nil
+    end
+
+    sampleToken = tostring(sampleToken or (HOLY_GUILD_RUNTIME.CompetitionSampleSerial or 0))
+
+    if runtime.LastSampleToken == sampleToken then
+        return false
+    end
+
+    runtime.LastSampleToken = sampleToken
+
+    local now = os.time()
+
+    local changed = false
+
+    for _, member in ipairs(HolyGuildAnalyticsKnownContestMembers(view)) do
+        local keyId = tostring(member.UserId)
+
+        local record, recordChanged =
+            HolyGuildAnalyticsUpdateRecord(runtime.Members[keyId], member.Weekly, member.Username, sampleToken, now)
+
+        runtime.Members[keyId] = record
+
+        if recordChanged == true then
+            changed = true
+        end
+    end
+
+    if view.ScoreKnown == true then
+        local record, recordChanged =
+            HolyGuildAnalyticsUpdateRecord(runtime.Guild, view.Score, "Your Guild", sampleToken, now)
+
+        runtime.Guild = record
+
+        if recordChanged == true then
+            changed = true
+        end
+    end
+
+    if changed == true then
+        HolyGuildAnalyticsInvalidate()
+    end
+
+    return true
+end
+
+function HolyGuildAnalyticsRecordMetrics(record, view)
+    local now = os.time()
+
+    if type(record) ~= "table" then
+        return {
+            Ready = false,
+            RateReady = false,
+            Stable = false,
+            CurrentScore = 0,
+            PointsGained = 0,
+            Elapsed = 0,
+            PointsPerHour = 0,
+            ProjectedScore = nil,
+            LastGainAt = 0,
+            SampleAge = 0,
+            SampleCount = 0,
+        }
+    end
+
+    local current = math.max(0, tonumber(record.CurrentScore) or 0)
+
+    local baseline = math.max(0, tonumber(record.BaselineScore) or current)
+
+    local elapsed = math.max(0, (tonumber(record.LastObservedAt) or now) - (tonumber(record.FirstObservedAt) or now))
+
+    local gained = math.max(0, current - baseline)
+
+    local sampleCount = math.max(0, tonumber(record.SampleCount) or 0)
+
+    local rateReady = sampleCount >= 2 and elapsed >= 30
+
+    local pointsPerHour = rateReady and (gained / math.max(1, elapsed) * 3600) or 0
+
+    local projection = nil
+
+    if
+        rateReady == true
+        and type(view) == "table"
+        and view.State == "Active"
+        and tonumber(view.EndsAt)
+        and tonumber(view.EndsAt) > now
+    then
+        projection = current + pointsPerHour * ((tonumber(view.EndsAt) - now) / 3600)
+    end
+
+    return {
+        Ready = true,
+
+        RateReady = rateReady,
+
+        Stable = rateReady and elapsed >= 180,
+
+        CurrentScore = current,
+
+        PointsGained = gained,
+
+        Elapsed = elapsed,
+
+        PointsPerHour = pointsPerHour,
+
+        ProjectedScore = projection,
+
+        LastGainAt = tonumber(record.LastGainAt) or 0,
+
+        SampleAge = math.max(0, now - (tonumber(record.LastObservedAt) or now)),
+
+        SampleCount = sampleCount,
+    }
+end
+
+function HolyGuildContributorMetrics(userId, view)
+    local runtime = HOLY_GUILD_RUNTIME.ContributorTracking
+
+    return HolyGuildAnalyticsRecordMetrics(
+        type(runtime) == "table" and type(runtime.Members) == "table" and runtime.Members[tostring(userId)] or nil,
+        view
+    )
+end
+
+function HolyGuildGuildMetrics(view)
+    local runtime = HOLY_GUILD_RUNTIME.ContributorTracking
+
+    return HolyGuildAnalyticsRecordMetrics(type(runtime) == "table" and runtime.Guild or nil, view)
+end
+
+function HolyGuildAnalyticsContributorSummary(view, members)
+    members = type(members) == "table" and members or HolyGuildAnalyticsKnownContestMembers(view)
+
+    local active = 0
+
+    local fastest = nil
+
+    local localRank = nil
+
+    for index, member in ipairs(members) do
+        if (tonumber(member.Weekly) or 0) > 0 then
+            active = active + 1
+        end
+
+        if tonumber(member.UserId) == tonumber(LocalPlayer.UserId) then
+            localRank = index
+        end
+
+        local metrics = HolyGuildContributorMetrics(member.UserId, view)
+
+        if metrics.RateReady == true and (fastest == nil or metrics.PointsPerHour > fastest.PointsPerHour) then
+            fastest = {
+                Member = member,
+
+                PointsPerHour = metrics.PointsPerHour,
+            }
+        end
+    end
+
+    return {
+        ActiveContributors = active,
+
+        LocalRank = localRank,
+
+        Fastest = fastest,
+
+        GuildMetrics = HolyGuildGuildMetrics(view),
+    }
+end
+
+HOLY_GUILD_ANALYTICS_BASE_LEADERBOARD_ARRAY = HolyGuildLeaderboardArray
+
+function HolyGuildLeaderboardArray()
+    local rows = HOLY_GUILD_ANALYTICS_BASE_LEADERBOARD_ARRAY()
+
+    for _, row in ipairs(type(rows) == "table" and rows or {}) do
+        row.AnalyticsLeaderboardRow = true
+
+        if HolyCleanText(row.Id) == "" and type(row.Raw) == "table" then
+            local guild = HolyGuildField(row.Raw, {
+                "Guild",
+                "GuildData",
+            }, row.Raw)
+
+            row.Id = HolyCleanText(HolyGuildField(
+                type(guild) == "table" and guild or row.Raw,
+                {
+                    "GuildId",
+                    "GuildID",
+                    "Id",
+                    "ID",
+                },
+                HolyGuildField(row.Raw, {
+                    "GuildId",
+                    "GuildID",
+                    "Id",
+                    "ID",
+                }, "")
+            ))
+        end
+    end
+
+    return rows
+end
+
+function HolyGuildAnalyticsLeaderboardKey(row)
+    if type(row) ~= "table" then
+        return ""
+    end
+
+    local guildId = HolyCleanText(row.Id)
+
+    if guildId ~= "" then
+        return "id:" .. guildId
+    end
+
+    local name = HolyGuildKey(row.Name)
+
+    local tag = HolyGuildKey(row.Tag)
+
+    if name == "" then
+        return ""
+    end
+
+    return "name:" .. name .. "|" .. tag
+end
+
+function HolyGuildObserveLeaderboardRows(sampleToken)
+    local runtime = HOLY_GUILD_RUNTIME.LeaderboardTracking
+
+    local view = HolyGuildGetContestView()
+
+    local key = HolyGuildAnalyticsTrackingKey(view)
+
+    if runtime.Key ~= key then
+        runtime.Key = key
+
+        runtime.LastSampleToken = ""
+
+        runtime.Guilds = {}
+    end
+
+    sampleToken = tostring(sampleToken or (HOLY_GUILD_RUNTIME.LeaderboardSampleSerial or 0))
+
+    if runtime.LastSampleToken == sampleToken then
+        return false
+    end
+
+    runtime.LastSampleToken = sampleToken
+
+    local now = os.time()
+
+    for _, row in ipairs(HolyGuildLeaderboardArray()) do
+        local rowId = HolyGuildAnalyticsLeaderboardKey(row)
+
+        if rowId ~= "" then
+            local record = HolyGuildAnalyticsUpdateRecord(runtime.Guilds[rowId], row.Score, row.Name, sampleToken, now)
+
+            runtime.Guilds[rowId] = record
+        end
+    end
+
+    HolyGuildAnalyticsInvalidate()
+
+    return true
+end
+
+function HolyGuildLeaderboardGuildMetrics(row, view)
+    if type(row) ~= "table" then
+        return HolyGuildAnalyticsRecordMetrics(nil, view)
+    end
+
+    local runtime = HOLY_GUILD_RUNTIME.LeaderboardTracking
+
+    return HolyGuildAnalyticsRecordMetrics(
+        type(runtime) == "table"
+                and type(runtime.Guilds) == "table"
+                and runtime.Guilds[HolyGuildAnalyticsLeaderboardKey(row)]
+            or nil,
+        view
+    )
+end
+
+HOLY_GUILD_ANALYTICS_BASE_REFRESH_LEADERBOARD = HolyGuildRefreshLeaderboard
+
+function HolyGuildRefreshLeaderboard(quiet)
+    local refreshed = HOLY_GUILD_ANALYTICS_BASE_REFRESH_LEADERBOARD(quiet)
+
+    if refreshed == true then
+        HOLY_GUILD_RUNTIME.LastAnalyticsLeaderboardAttemptAt = os.clock()
+
+        HOLY_GUILD_RUNTIME.LeaderboardSampleSerial = (tonumber(HOLY_GUILD_RUNTIME.LeaderboardSampleSerial) or 0) + 1
+
+        HolyGuildObserveLeaderboardRows(HOLY_GUILD_RUNTIME.LeaderboardSampleSerial)
+
+        if
+            HOLY_GUILD_STATE.Page == "Leaderboard"
+            and (type(HolyGuildDashboardAwake) ~= "function" or HolyGuildDashboardAwake() == true)
+        then
+            HolyGuildRefreshUI()
+
+            local row = HolyGuildGetSelectedLeaderboardGuild()
+
+            local guildId = type(row) == "table" and HolyCleanText(row.Id) or ""
+
+            if guildId ~= "" and row.IsOwn ~= true then
+                task.spawn(function()
+                    HolyGuildRefreshGuildDetails(guildId, true, false)
+                end)
+            end
+        end
+    end
+
+    return refreshed
+end
+
+function HolyGuildRefreshGuildDetails(guildId, quiet, force)
+    guildId = HolyCleanText(guildId)
+
+    if guildId == "" then
+        return false
+    end
+
+    local state = HOLY_GUILD_STATE
+
+    local runtime = HOLY_GUILD_RUNTIME
+
+    local nowClock = os.clock()
+
+    local nowEpoch = os.time()
+
+    local cached = state.GuildDetails[guildId]
+
+    local fetchedAt = tonumber(runtime.GuildDetailsFetchedAt[guildId]) or 0
+
+    if force ~= true and type(cached) == "table" and nowEpoch - fetchedAt < 180 then
+        return true
+    end
+
+    if runtime.GuildDetailsLoading[guildId] == true then
+        return false
+    end
+
+    local lastAttempt = tonumber(runtime.GuildDetailsLastAttemptAt[guildId]) or 0
+
+    if nowClock - lastAttempt < 8 then
+        return false
+    end
+
+    runtime.GuildDetailsLastAttemptAt[guildId] = nowClock
+
+    runtime.GuildDetailsLoading[guildId] = true
+
+    local ok, first, second, third = HolyGuildCall("GetGuildById", guildId)
+
+    runtime.GuildDetailsLoading[guildId] = nil
+
+    if HOLY_GUILD_RUNTIME ~= runtime or HOLY_GUILD_STATE ~= state then
+        return false
+    end
+
+    if ok ~= true then
+        if quiet ~= true then
+            HolyGuildSetStatus("Guild details failed: " .. tostring(first))
+        end
+
+        return false
+    end
+
+    local result = HolyGuildFirstTable(first, second, third)
+
+    local root = HolyGuildSnapshotRoot(result)
+
+    if type(root) ~= "table" then
+        if quiet ~= true then
+            HolyGuildSetStatus("The selected guild returned no details.")
+        end
+
+        return false
+    end
+
+    state.GuildDetails[guildId] = root
+
+    state.GuildDetailsRaw[guildId] = result
+
+    runtime.GuildDetailsFetchedAt[guildId] = nowEpoch
+
+    HolyGuildInvalidateInvitePanels()
+
+    if type(HolyGuildDashboardAwake) ~= "function" or HolyGuildDashboardAwake() == true then
+        HolyGuildRefreshInfoPanels()
+    end
+
+    return true
+end
+
+HOLY_GUILD_ANALYTICS_BASE_BUILD_GUILD_SUMMARY = HolyGuildBuildGuildSummary
+
+function HolyGuildBuildGuildSummary(row)
+    local info = HOLY_GUILD_ANALYTICS_BASE_BUILD_GUILD_SUMMARY(row)
+
+    if type(info) ~= "table" then
+        return info
+    end
+
+    if type(row) == "table" and row.AnalyticsLeaderboardRow == true and row.Score ~= nil then
+        info.Score = row.Score
+    end
+
+    info.Root = info.IsOwn == true and HolyGuildSnapshotRoot(HOLY_GUILD_STATE.Snapshot)
+        or HOLY_GUILD_STATE.GuildDetails[info.Id]
+
+    info.Raw = info.IsOwn == true and HOLY_GUILD_STATE.Snapshot or HOLY_GUILD_STATE.GuildDetailsRaw[info.Id]
+
+    info.DetailsFetchedAt = info.IsOwn == true and 0
+        or (tonumber(HOLY_GUILD_RUNTIME.GuildDetailsFetchedAt[info.Id]) or 0)
+
+    return info
+end
+
+function HolyGuildAnalyticsBuildRivalMembers(info)
+    local rows = {}
+    local byUserId = {}
+
+    if type(info) ~= "table" then
+        return rows,
+            {
+                Known = 0,
+                Total = 0,
+                Sum = 0,
+                Average = nil,
+                Median = nil,
+                TopThreeShare = nil,
+                Zero = 0,
+            }
+    end
+
+    local root = type(info.Root) == "table" and info.Root or {}
+
+    local rawMembers = HolyGuildField(root, {
+        "Members",
+        "MemberList",
+        "GuildMembers",
+        "Roster",
+    }, {})
+
+    for key, rawMember in pairs(type(rawMembers) == "table" and rawMembers or {}) do
+        local memberData = type(rawMember) == "table" and rawMember or {}
+
+        local userId = tonumber(HolyGuildField(memberData, {
+            "UserId",
+            "UserID",
+            "PlayerId",
+            "PlayerID",
+            "Id",
+        }))
+
+        if userId == nil then
+            if type(rawMember) == "number" and tonumber(key) and tonumber(key) <= 1000 then
+                userId = tonumber(rawMember)
+            elseif tonumber(key) and tonumber(key) > 1000 then
+                userId = tonumber(key)
+            end
+        end
+
+        local username = HolyCleanText(HolyGuildField(memberData, {
+            "Username",
+            "UserName",
+            "PlayerName",
+            "Name",
+        }, type(rawMember) == "string" and rawMember or ""))
+
+        if userId ~= nil then
+            if username == "" then
+                username = HOLY_GUILD_STATE.NameCache[userId] or ("User " .. tostring(userId))
+
+                HolyGuildRequestName(userId)
+            else
+                HOLY_GUILD_STATE.NameCache[userId] = username
+            end
+
+            local weekly = HolyGuildAnalyticsScore(HolyGuildField(memberData, {
+                "WeeklyContribution",
+                "WeeklyContributions",
+                "WeeklyScore",
+                "WeekContribution",
+            }))
+
+            local member = {
+                UserId = userId,
+
+                Username = username,
+
+                DisplayName = HolyCleanText(HolyGuildField(memberData, {
+                    "DisplayName",
+                }, "")),
+
+                Role = HolyGuildRole(HolyGuildField(memberData, {
+                    "Role",
+                    "GuildRole",
+                    "Rank",
+                }, "Member")),
+
+                Weekly = weekly or 0,
+
+                WeeklyKnown = weekly ~= nil,
+
+                ContestScoreKnown = weekly ~= nil,
+
+                Lifetime = HolyGuildAnalyticsScore(HolyGuildField(memberData, {
+                    "LifetimeContribution",
+                    "LifetimeContributions",
+                    "TotalContribution",
+                })),
+
+                Raw = memberData,
+            }
+
+            local existing = byUserId[userId]
+
+            if type(existing) == "table" then
+                if
+                    HolyCleanText(existing.Username) == ""
+                    or tostring(existing.Username)
+                        == ("User " .. tostring(userId))
+                then
+                    existing.Username = member.Username
+                end
+
+                if member.WeeklyKnown == true and (existing.WeeklyKnown ~= true or member.Weekly > existing.Weekly) then
+                    existing.Weekly = member.Weekly
+
+                    existing.WeeklyKnown = true
+
+                    existing.ContestScoreKnown = true
+                end
+
+                if member.Lifetime ~= nil and (existing.Lifetime == nil or member.Lifetime > existing.Lifetime) then
+                    existing.Lifetime = member.Lifetime
+                end
+            else
+                rows[#rows + 1] = member
+
+                byUserId[userId] = member
+            end
+        end
+    end
+
+    local visited = {}
+
+    local aliases = {
+        "GuildmateScores",
+        "GuildmateContribs",
+        "Contributors",
+        "MemberScores",
+        "ScoresByUserId",
+        "ContributionsByUserId",
+        "PlayerScores",
+    }
+
+    for _, source in ipairs({
+        info.Root,
+        info.Raw,
+    }) do
+        if type(source) == "table" then
+            for _, alias in ipairs(aliases) do
+                HolyGuildAnalyticsApplyContestContainer(
+                    HolyGuildField(source, {
+                        alias,
+                    }),
+                    rows,
+                    byUserId,
+                    0,
+                    visited
+                )
+            end
+        end
+    end
+
+    local knownValues = {}
+    local known = 0
+    local sum = 0
+    local zero = 0
+
+    for _, member in ipairs(rows) do
+        member.WeeklyKnown = member.ContestScoreKnown == true
+
+        if member.WeeklyKnown == true then
+            known = known + 1
+
+            sum = sum + (tonumber(member.Weekly) or 0)
+
+            knownValues[#knownValues + 1] = tonumber(member.Weekly) or 0
+
+            if (tonumber(member.Weekly) or 0) <= 0 then
+                zero = zero + 1
+            end
+        end
+    end
+
+    table.sort(rows, function(left, right)
+        if left.WeeklyKnown ~= right.WeeklyKnown then
+            return left.WeeklyKnown == true
+        end
+
+        if (tonumber(left.Weekly) or 0) ~= (tonumber(right.Weekly) or 0) then
+            return (tonumber(left.Weekly) or 0) > (tonumber(right.Weekly) or 0)
+        end
+
+        return tostring(left.Username):lower() < tostring(right.Username):lower()
+    end)
+
+    table.sort(knownValues)
+
+    local median = nil
+
+    if #knownValues > 0 then
+        local middle = math.floor((#knownValues + 1) / 2)
+
+        if #knownValues % 2 == 1 then
+            median = knownValues[middle]
+        else
+            median = (knownValues[middle] + knownValues[middle + 1]) / 2
+        end
+    end
+
+    local denominator = math.max(0, HolyGuildAnalyticsScore(info.Score) or 0, sum)
+
+    local topThree = 0
+
+    for index = 1, math.min(3, #rows) do
+        if rows[index].WeeklyKnown == true then
+            topThree = topThree + (tonumber(rows[index].Weekly) or 0)
+        end
+    end
+
+    return rows,
+        {
+            Known = known,
+
+            Total = #rows,
+
+            Sum = sum,
+
+            Average = known > 0 and sum / known or nil,
+
+            Median = median,
+
+            TopThreeShare = denominator > 0 and math.clamp(topThree / denominator, 0, 1) or nil,
+
+            Zero = zero,
+        }
+end
+
+function HolyGuildAnalyticsAddStatGrid(panel, parent, stats, startY)
+    startY = tonumber(startY) or 0
+
+    for index, stat in ipairs(type(stats) == "table" and stats or {}) do
+        local column = (index - 1) % 2
+
+        local rowIndex = math.floor((index - 1) / 2)
+
+        local tile = Instance.new("Frame")
+
+        tile.BackgroundColor3 = Library.Scheme.MainColor
+
+        tile.BackgroundTransparency = 0.40
+
+        tile.BorderSizePixel = 0
+
+        tile.Position = UDim2.new(column * 0.5, column == 0 and 10 or 3, 0, startY + rowIndex * 42)
+
+        tile.Size = UDim2.new(0.5, -13, 0, 36)
+
+        tile.Parent = parent
+
+        local corner = Instance.new("UICorner")
+
+        corner.CornerRadius = UDim.new(0, 4)
+
+        corner.Parent = tile
+
+        HolyGuildTrackPanelObject(panel, tile, {
+            BackgroundColor3 = "MainColor",
+        })
+
+        HolyGuildPanelText(panel, tile, stat[1], UDim2.fromOffset(7, 3), UDim2.new(1, -14, 0, 12), {
+            TextSize = 8,
+            Transparency = 0.50,
+            Truncate = true,
+        })
+
+        HolyGuildPanelText(panel, tile, stat[2], UDim2.fromOffset(7, 15), UDim2.new(1, -14, 0, 17), {
+            TextSize = 10,
+            Truncate = true,
+        })
+    end
+
+    return math.ceil(#stats / 2) * 42
+end
+
+function HolyGuildAnalyticsLastGainText(metrics)
+    if type(metrics) ~= "table" or metrics.Ready ~= true then
+        return "Collecting..."
+    end
+
+    if metrics.LastGainAt > 0 then
+        return HolyGuildFormatDuration(os.time() - metrics.LastGainAt) .. " ago"
+    end
+
+    return "No observed gain"
+end
+
+function HolyGuildRefreshContestProgressPanel()
+    local panel = HOLY_GUILD_UI.ContestProgressPanel
+
+    local view = HolyGuildGetContestView()
+
+    if type(view) == "table" then
+        HolyGuildObserveContestContributors(view, HOLY_GUILD_RUNTIME.CompetitionSampleSerial or 0)
+    end
+
+    local members = type(view) == "table" and HolyGuildAnalyticsKnownContestMembers(view) or {}
+
+    local selected = HolyGuildAnalyticsMemberById(members, HOLY_GUILD_STATE.SelectedContributorUserId)
+
+    if selected == nil then
+        selected = HolyGuildAnalyticsMemberById(members, LocalPlayer.UserId) or members[1]
+
+        HOLY_GUILD_STATE.SelectedContributorUserId = selected and selected.UserId or nil
+    end
+
+    local selectedMetrics = selected
+            and HolyGuildContributorMetrics(selected.UserId, view)
+        or HolyGuildAnalyticsRecordMetrics(nil, view)
+
+    local signatureParts = {
+        tostring(view and view.State or "none"),
+        tostring(view and view.Score or 0),
+        tostring(view and view.ScoreKnown or false),
+        tostring(view and view.ScoreLowerBound or false),
+        tostring(view and view.Placement or ""),
+        tostring(HOLY_GUILD_STATE.SelectedContributorUserId),
+        tostring(selectedMetrics.PointsGained),
+        tostring(math.floor(selectedMetrics.PointsPerHour)),
+        tostring(math.floor(os.time() / 10)),
+    }
+
+    for _, member in ipairs(members) do
+        signatureParts[#signatureParts + 1] = tostring(member.UserId) .. ":" .. tostring(member.Weekly)
+    end
+
+    local changed = HolyGuildBeginInfoPanel(panel, table.concat(signatureParts, "\31"))
+
+    if changed ~= true then
+        return
+    end
+
+    if type(view) ~= "table" or view.State == "Upcoming" then
+        local card = HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 126), false)
+
+        HolyGuildPanelBadge(panel, card, view and "WAITING" or "NO DATA", UDim2.new(0.5, -36, 0, 18), 72, "Accent")
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            view and "Competition has not started" or "Progress is unavailable",
+            UDim2.fromOffset(12, 48),
+            UDim2.new(1, -24, 0, 24),
+            {
+                TextSize = 11,
+                XAlignment = Enum.TextXAlignment.Center,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            card,
+            view and "Scores and member contributions will appear here when it goes live."
+                or "Refresh the competition to load progress.",
+            UDim2.fromOffset(16, 76),
+            UDim2.new(1, -32, 0, 36),
+            {
+                TextSize = 9,
+                Transparency = 0.44,
+                Wrapped = true,
+                XAlignment = Enum.TextXAlignment.Center,
+                YAlignment = Enum.TextYAlignment.Top,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(panel, 126)
+
+        return
+    end
+
+    if selected == nil then
+        local emptyCard =
+            HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 126), false)
+
+        HolyGuildPanelText(
+            panel,
+            emptyCard,
+            "No member contribution rows were exposed.",
+            UDim2.fromOffset(12, 24),
+            UDim2.new(1, -24, 0, 70),
+            {
+                TextSize = 10,
+                Transparency = 0.35,
+                Wrapped = true,
+                XAlignment = Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(panel, 126)
+
+        return
+    end
+
+    local selectedIsLocal = tonumber(selected.UserId) == tonumber(LocalPlayer.UserId)
+
+    local contribution = tonumber(selected.Weekly) or 0
+
+    local share = view.Score > 0 and math.clamp(contribution / view.Score, 0, 1) or 0
+
+    local visibleRows = math.min(#members, 7)
+
+    local listHeight = math.max(48, visibleRows * 38)
+
+    local totalHeight = 266 + listHeight
+
+    local card = HolyGuildPanelCard(
+        panel,
+        panel.Surface,
+        UDim2.fromOffset(0, 0),
+        UDim2.new(1, 0, 0, totalHeight),
+        view.State == "Active"
+    )
+
+    local selectedLabel = selectedIsLocal and "YOUR" or "MEMBER"
+
+    local stats = {
+        {
+            view.State == "Completed" and "FINAL GUILD SCORE" or "GUILD SCORE",
+
+            view.ScoreKnown == true
+                    and HolyGuildFormatContestScore(view.Score, view.RawScoreFormat)
+                or (
+                    view.ScoreLowerBound == true
+                        and (HolyGuildFormatContestScore(view.Score, view.RawScoreFormat) .. "+")
+                    or "Unavailable"
+                ),
+        },
+        {
+            view.State == "Completed" and "FINAL PLACE" or "PLACEMENT",
+
+            view.Placement and ("#" .. tostring(view.Placement)) or "Not ranked",
+        },
+        {
+            selectedLabel .. " SCORE",
+
+            HolyGuildFormatContestScore(contribution, view.RawScoreFormat),
+        },
+        {
+            selectedLabel .. " SHARE",
+
+            view.ScoreKnown == true
+                    and string.format("%.1f%%", share * 100)
+                or (view.ScoreLowerBound == true and string.format("≤ %.1f%%", share * 100) or "Unavailable"),
+        },
+        {
+            "OBSERVED GAIN",
+            selectedMetrics.Ready == true
+                    and HolyGuildFormatContestScore(selectedMetrics.PointsGained, view.RawScoreFormat)
+                or "Collecting...",
+        },
+        {
+            "OBSERVED P/H",
+            selectedMetrics.RateReady == true
+                    and HolyGuildFormatContestScore(selectedMetrics.PointsPerHour, view.RawScoreFormat)
+                or "Collecting...",
+        },
+        {
+            "PROJECTED MEMBER",
+            selectedMetrics.ProjectedScore ~= nil
+                    and HolyGuildFormatContestScore(selectedMetrics.ProjectedScore, view.RawScoreFormat)
+                or "Collecting...",
+        },
+        {
+            "TRACKED / LAST GAIN",
+            selectedMetrics.Ready == true
+                    and (HolyGuildFormatDuration(selectedMetrics.Elapsed) .. " / " .. HolyGuildAnalyticsLastGainText(
+                        selectedMetrics
+                    ))
+                or "Collecting...",
+        },
+    }
+
+    HolyGuildAnalyticsAddStatGrid(panel, card, stats, 10)
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "Viewing @" .. tostring(selected.Username) .. "  •  tap a contributor below",
+        UDim2.fromOffset(10, 181),
+        UDim2.new(1, -20, 0, 18),
+        {
+            TextSize = 9,
+            Transparency = 0.35,
+            Truncate = true,
+        }
+    )
+
+    local progressTrack = Instance.new("Frame")
+
+    progressTrack.BackgroundColor3 = Library.Scheme.OutlineColor
+
+    progressTrack.BackgroundTransparency = 0.65
+
+    progressTrack.BorderSizePixel = 0
+
+    progressTrack.Position = UDim2.fromOffset(10, 204)
+
+    progressTrack.Size = UDim2.new(1, -20, 0, 7)
+
+    progressTrack.Parent = card
+
+    local progressCorner = Instance.new("UICorner")
+
+    progressCorner.CornerRadius = UDim.new(1, 0)
+
+    progressCorner.Parent = progressTrack
+
+    local progressFill = Instance.new("Frame")
+
+    progressFill.BackgroundColor3 = Library.Scheme.AccentColor
+
+    progressFill.BorderSizePixel = 0
+
+    progressFill.Size = UDim2.new(share, 0, 1, 0)
+
+    progressFill.Parent = progressTrack
+
+    local fillCorner = Instance.new("UICorner")
+
+    fillCorner.CornerRadius = UDim.new(1, 0)
+
+    fillCorner.Parent = progressFill
+
+    HolyGuildTrackPanelObject(panel, progressTrack, {
+        BackgroundColor3 = "OutlineColor",
+    })
+
+    HolyGuildTrackPanelObject(panel, progressFill, {
+        BackgroundColor3 = "AccentColor",
+    })
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        view.State == "Completed" and "FINAL CONTRIBUTORS • TAP TO INSPECT" or "TOP CONTRIBUTORS • TAP TO INSPECT",
+        UDim2.fromOffset(10, 224),
+        UDim2.new(1, -20, 0, 16),
+        {
+            TextSize = 8,
+            Transparency = 0.50,
+        }
+    )
+
+    local scroll = Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency = 1
+
+    scroll.BorderSizePixel = 0
+
+    scroll.Position = UDim2.fromOffset(6, 244)
+
+    scroll.Size = UDim2.new(1, -12, 0, listHeight)
+
+    scroll.CanvasSize = UDim2.fromOffset(0, math.max(listHeight, #members * 38))
+
+    scroll.ScrollBarThickness = #members > visibleRows and 3 or 0
+
+    scroll.ScrollBarImageColor3 = Library.Scheme.AccentColor
+
+    scroll.Parent = card
+
+    HolyGuildTrackPanelObject(panel, scroll, {
+        ScrollBarImageColor3 = "AccentColor",
+    })
+
+    for index, member in ipairs(members) do
+        local mine = tonumber(member.UserId) == tonumber(LocalPlayer.UserId)
+
+        local rowSelected = tonumber(member.UserId) == tonumber(selected.UserId)
+
+        local row = Instance.new("TextButton")
+
+        row.AutoButtonColor = false
+
+        row.BackgroundColor3 = rowSelected and Library.Scheme.AccentColor or Library.Scheme.MainColor
+
+        row.BackgroundTransparency = rowSelected and 0.82 or 1
+
+        row.BorderSizePixel = 0
+
+        row.Position = UDim2.fromOffset(0, (index - 1) * 38)
+
+        row.Size = UDim2.new(1, -4, 0, 36)
+
+        row.Text = ""
+
+        row.Parent = scroll
+
+        local corner = Instance.new("UICorner")
+
+        corner.CornerRadius = UDim.new(0, 4)
+
+        corner.Parent = row
+
+        HolyGuildTrackPanelObject(panel, row, {
+            BackgroundColor3 = rowSelected and "AccentColor" or "MainColor",
+        })
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            "#" .. tostring(index) .. "  " .. member.Username .. (mine and "  •  You" or ""),
+            UDim2.fromOffset(7, 0),
+            UDim2.new(0.68, -7, 1, 0),
+            {
+                TextSize = 9,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            row,
+            HolyGuildFormatContestScore(member.Weekly, view.RawScoreFormat),
+            UDim2.new(0.68, 0, 0, 0),
+            UDim2.new(0.32, -7, 1, 0),
+            {
+                TextSize = 9,
+                XAlignment = Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+
+        row.Activated:Connect(function()
+            HOLY_GUILD_STATE.SelectedContributorUserId = member.UserId
+
+            panel.Signature = ""
+
+            HolyGuildRefreshContestProgressPanel()
+        end)
+    end
+
+    HolyGuildSetInfoPanelHeight(panel, totalHeight)
+end
+
+function HolyGuildRefreshOverviewPanel()
+    local panel = HOLY_GUILD_UI.OverviewPanel
+
+    local data = HolyGuildGetOverviewData()
+
+    local view = HolyGuildGetContestView()
+
+    if type(view) == "table" then
+        HolyGuildObserveContestContributors(view, HOLY_GUILD_RUNTIME.CompetitionSampleSerial or 0)
+    end
+
+    local members = type(view) == "table" and HolyGuildAnalyticsKnownContestMembers(view) or {}
+
+    local summary = HolyGuildAnalyticsContributorSummary(view, members)
+
+    local signature = type(data) == "table"
+            and table.concat({
+                tostring(data.Id),
+                tostring(data.Name),
+                tostring(data.Tag),
+                tostring(data.Description),
+                tostring(data.IconId),
+                tostring(data.Role),
+                tostring(data.Members),
+                tostring(data.Capacity),
+                tostring(data.Online),
+                tostring(data.Coins),
+                tostring(data.Lifetime),
+                tostring(view and view.Score or 0),
+                tostring(view and view.ScoreKnown or false),
+                tostring(view and view.ScoreLowerBound or false),
+                tostring(HolyGuildGetConfirmedGlobalPlacement()),
+                tostring(summary.GuildMetrics.PointsGained),
+                tostring(math.floor(summary.GuildMetrics.PointsPerHour)),
+                tostring(math.floor(os.time() / 15)),
+            }, "\31")
+        or "no-guild"
+
+    local changed, width = HolyGuildBeginInfoPanel(panel, signature)
+
+    if changed ~= true then
+        return
+    end
+
+    if type(data) ~= "table" then
+        local emptyCard =
+            HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 92), false)
+
+        HolyGuildPanelText(panel, emptyCard, "No Active Guild", UDim2.fromOffset(12, 12), UDim2.new(1, -24, 0, 22), {
+            TextSize = 13,
+        })
+
+        HolyGuildPanelText(
+            panel,
+            emptyCard,
+            "Join or create a guild to load its dashboard.",
+            UDim2.fromOffset(12, 38),
+            UDim2.new(1, -24, 0, 38),
+            {
+                TextSize = 10,
+                Transparency = 0.38,
+                Wrapped = true,
+                YAlignment = Enum.TextYAlignment.Top,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(panel, 92)
+
+        return
+    end
+
+    local description = data.Description ~= "" and data.Description or "No guild description."
+
+    local descriptionHeight = HolyGuildMeasurePanelText(description, 10, width - 24)
+
+    local statsY = 86 + descriptionHeight
+
+    local totalHeight = statsY + 218
+
+    local card =
+        HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, totalHeight), false)
+
+    HolyGuildPanelImage(panel, card, data.IconId, UDim2.fromOffset(12, 12), UDim2.fromOffset(52, 52))
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        data.Name .. (data.Tag ~= "" and (" [" .. data.Tag .. "]") or ""),
+        UDim2.fromOffset(74, 11),
+        UDim2.new(1, -86, 0, 24),
+        {
+            TextSize = 14,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(panel, card, data.Role, UDim2.fromOffset(74, 40), 64, "Accent")
+
+    HolyGuildPanelText(panel, card, "GUILD PULSE", UDim2.fromOffset(12, 72), UDim2.new(1, -24, 0, 12), {
+        TextSize = 9,
+        Transparency = 0.48,
+    })
+
+    HolyGuildPanelText(panel, card, description, UDim2.fromOffset(12, 86), UDim2.new(1, -24, 0, descriptionHeight), {
+        TextSize = 10,
+        Wrapped = true,
+        YAlignment = Enum.TextYAlignment.Top,
+    })
+
+    HolyGuildPanelDivider(panel, card, statsY - 8)
+
+    local fastestText = summary.Fastest ~= nil
+            and (summary.Fastest.Member.Username .. " • " .. HolyGuildFormatNumber(summary.Fastest.PointsPerHour) .. "/h")
+        or "Collecting..."
+
+    local stats = {
+        {
+            "MEMBERS / ONLINE",
+            tostring(data.Members)
+                .. (data.Capacity and ("/" .. tostring(data.Capacity)) or "")
+                .. " • "
+                .. tostring(data.Online),
+        },
+        {
+            "GLOBAL RANK",
+            HolyGuildGetConfirmedGlobalPlacement()
+                    and ("#" .. tostring(HolyGuildGetConfirmedGlobalPlacement()))
+                or "Not ranked",
+        },
+        {
+            "GUILD SCORE",
+            type(view) == "table" and view.ScoreKnown == true and HolyGuildFormatContestScore(
+                view.Score,
+                view.RawScoreFormat
+            ) or (type(view) == "table" and view.ScoreLowerBound == true and (HolyGuildFormatContestScore(
+                view.Score,
+                view.RawScoreFormat
+            ) .. "+") or "Unavailable"),
+        },
+        {
+            "ACTIVE CONTRIBUTORS",
+            tostring(summary.ActiveContributors) .. " / " .. tostring(#members),
+        },
+        {
+            "OBSERVED GUILD P/H",
+            summary.GuildMetrics.RateReady == true
+                    and HolyGuildFormatNumber(summary.GuildMetrics.PointsPerHour)
+                or "Collecting...",
+        },
+        {
+            "PROJECTED FINISH",
+            summary.GuildMetrics.ProjectedScore ~= nil
+                    and HolyGuildFormatNumber(summary.GuildMetrics.ProjectedScore)
+                or "Collecting...",
+        },
+        {
+            "YOUR CONTRIBUTION RANK",
+            summary.LocalRank and ("#" .. tostring(summary.LocalRank)) or "Unavailable",
+        },
+        {
+            "FASTEST GROWING",
+            fastestText,
+        },
+        {
+            "GUILD COINS",
+            HolyGuildFormatNumber(data.Coins),
+        },
+        {
+            "LIFETIME",
+            HolyGuildFormatNumber(data.Lifetime),
+        },
+    }
+
+    HolyGuildAnalyticsAddStatGrid(panel, card, stats, statsY)
+
+    HolyGuildSetInfoPanelHeight(panel, totalHeight)
+end
+
+HOLY_GUILD_ANALYTICS_BASE_BUILD_MEMBERS = HolyGuildBuildMembers
+
+function HolyGuildBuildMembers()
+    local members = HOLY_GUILD_ANALYTICS_BASE_BUILD_MEMBERS()
+
+    if tostring(HOLY_GUILD_STATE.MemberSort) == "Points / Hour" then
+        table.sort(members, function(left, right)
+            local leftMetrics = HolyGuildContributorMetrics(left.UserId)
+
+            local rightMetrics = HolyGuildContributorMetrics(right.UserId)
+
+            if leftMetrics.RateReady ~= rightMetrics.RateReady then
+                return leftMetrics.RateReady == true
+            end
+
+            if leftMetrics.PointsPerHour ~= rightMetrics.PointsPerHour then
+                return leftMetrics.PointsPerHour > rightMetrics.PointsPerHour
+            end
+
+            return tostring(left.Username):lower() < tostring(right.Username):lower()
+        end)
+    end
+
+    return members
+end
+
+function HolyGuildRefreshSelectedMemberPanel()
+    local panel = HOLY_GUILD_UI.SelectedMemberPanel
+
+    local member = HolyGuildGetSelectedMember()
+
+    local view = HolyGuildGetContestView()
+
+    if type(view) == "table" then
+        HolyGuildObserveContestContributors(view, HOLY_GUILD_RUNTIME.CompetitionSampleSerial or 0)
+    end
+
+    local contestMembers = type(view) == "table" and HolyGuildAnalyticsKnownContestMembers(view) or {}
+
+    local contestMember = type(member) == "table" and HolyGuildAnalyticsMemberById(contestMembers, member.UserId) or nil
+
+    local metrics = type(member) == "table"
+            and HolyGuildContributorMetrics(member.UserId, view)
+        or HolyGuildAnalyticsRecordMetrics(nil, view)
+
+    local rank = nil
+
+    if type(member) == "table" then
+        for index, row in ipairs(contestMembers) do
+            if tonumber(row.UserId) == tonumber(member.UserId) then
+                rank = index
+
+                break
+            end
+        end
+    end
+
+    local signature = type(member) == "table"
+            and table.concat({
+                tostring(member.UserId),
+                tostring(member.Username),
+                tostring(member.DisplayName),
+                tostring(member.Role),
+                tostring(member.Online),
+                tostring(member.Lifetime),
+                tostring(member.JoinedAt),
+                tostring(contestMember and contestMember.Weekly or ""),
+                tostring(rank),
+                tostring(metrics.PointsGained),
+                tostring(math.floor(metrics.PointsPerHour)),
+                tostring(math.floor(os.time() / 15)),
+            }, "\31")
+        or "none"
+
+    local changed = HolyGuildBeginInfoPanel(panel, signature)
+
+    if changed ~= true then
+        return
+    end
+
+    if type(member) ~= "table" then
+        local emptyCard =
+            HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 82), false)
+
+        HolyGuildPanelText(
+            panel,
+            emptyCard,
+            "Select a guild member.",
+            UDim2.fromOffset(10, 10),
+            UDim2.new(1, -20, 0, 56),
+            {
+                TextSize = 11,
+                Transparency = 0.35,
+                XAlignment = Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(panel, 82)
+
+        return
+    end
+
+    local contribution = contestMember and tonumber(contestMember.Weekly) or nil
+
+    local share = contribution ~= nil
+            and type(view) == "table"
+            and view.ScoreKnown == true
+            and view.Score > 0
+            and math.clamp(contribution / view.Score, 0, 1)
+        or nil
+
+    local card = HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 278), true)
+
+    HolyGuildPanelImage(
+        panel,
+        card,
+        "rbxthumb://type=AvatarHeadShot&id=" .. tostring(member.UserId) .. "&w=150&h=150",
+        UDim2.fromOffset(12, 12),
+        UDim2.fromOffset(54, 54)
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        member.DisplayName ~= "" and member.DisplayName or member.Username,
+        UDim2.fromOffset(76, 10),
+        UDim2.new(1, -88, 0, 22),
+        {
+            TextSize = 13,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        card,
+        "@" .. tostring(member.Username),
+        UDim2.fromOffset(76, 30),
+        UDim2.new(1, -88, 0, 17),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(panel, card, member.Role, UDim2.fromOffset(76, 49), 60, "Accent")
+
+    HolyGuildPanelBadge(
+        panel,
+        card,
+        member.Online and "Online" or "Offline",
+        UDim2.fromOffset(142, 49),
+        62,
+        member.Online and "Success" or "Accent"
+    )
+
+    HolyGuildPanelDivider(panel, card, 78)
+
+    local details = {
+        {
+            "Joined",
+            HolyGuildFormatDate(member.JoinedAt),
+        },
+        {
+            "Competition contribution",
+            contribution ~= nil
+                    and HolyGuildFormatContestScore(contribution, type(view) == "table" and view.RawScoreFormat or "")
+                or "Unavailable",
+        },
+        {
+            "Contribution rank",
+            rank and ("#" .. tostring(rank) .. " of " .. tostring(#contestMembers)) or "Unavailable",
+        },
+        {
+            "Observed gain",
+            metrics.Ready == true and HolyGuildFormatNumber(metrics.PointsGained) or "Collecting...",
+        },
+        {
+            "Observed points / hour",
+            metrics.RateReady == true and HolyGuildFormatNumber(metrics.PointsPerHour) or "Collecting...",
+        },
+        {
+            "Guild score share",
+            share ~= nil and string.format("%.1f%%", share * 100) or "Unavailable",
+        },
+        {
+            "Lifetime contribution",
+            HolyGuildFormatNumber(member.Lifetime),
+        },
+    }
+
+    for index, detail in ipairs(details) do
+        local y = 83 + (index - 1) * 25
+
+        HolyGuildPanelText(panel, card, detail[1], UDim2.fromOffset(12, y), UDim2.new(0.58, -12, 0, 22), {
+            TextSize = 9,
+            Transparency = 0.45,
+            Truncate = true,
+        })
+
+        HolyGuildPanelText(panel, card, detail[2], UDim2.new(0.58, 0, 0, y), UDim2.new(0.42, -12, 0, 22), {
+            TextSize = 9,
+            XAlignment = Enum.TextXAlignment.Right,
+            Truncate = true,
+        })
+    end
+
+    HolyGuildSetInfoPanelHeight(panel, 278)
+end
+
+function HolyGuildRefreshSelectedGuildPanel()
+    local panel = HOLY_GUILD_UI.SelectedGuildPanel
+
+    local row = HolyGuildGetSelectedLeaderboardGuild()
+
+    local info = HolyGuildBuildGuildSummary(row)
+
+    if
+        type(info) == "table"
+        and info.IsOwn ~= true
+        and info.Id ~= ""
+        and HOLY_GUILD_RUNTIME.GuildDetailsLoading[info.Id] ~= true
+    then
+        local stale = info.Loaded ~= true or os.time() - (tonumber(info.DetailsFetchedAt) or 0) >= 180
+
+        if stale == true then
+            task.spawn(function()
+                HolyGuildRefreshGuildDetails(info.Id, true, info.Loaded == true)
+            end)
+        end
+    end
+
+    local rivalMembers, rivalMeta = HolyGuildAnalyticsBuildRivalMembers(info)
+
+    local contestView = HolyGuildGetContestView()
+
+    local selectedMetrics = HolyGuildLeaderboardGuildMetrics(row, contestView)
+
+    local signatureParts = {
+        type(info) == "table" and tostring(info.Id) or "none",
+        type(info) == "table" and tostring(info.Rank) or "",
+        type(info) == "table" and tostring(info.Name) or "",
+        type(info) == "table" and tostring(info.Score) or "",
+        type(info) == "table" and tostring(info.Members) or "",
+        type(info) == "table" and tostring(info.Loaded) or "",
+        type(info) == "table" and tostring(info.DetailsFetchedAt) or "",
+        tostring(rivalMeta.Known),
+        tostring(rivalMeta.Total),
+        tostring(math.floor(selectedMetrics.PointsPerHour)),
+        tostring(math.floor(os.time() / 15)),
+    }
+
+    for _, member in ipairs(rivalMembers) do
+        signatureParts[#signatureParts + 1] = tostring(member.UserId)
+            .. ":"
+            .. tostring(member.Username)
+            .. ":"
+            .. tostring(member.WeeklyKnown)
+            .. ":"
+            .. tostring(member.Weekly)
+    end
+
+    local changed = HolyGuildBeginInfoPanel(panel, table.concat(signatureParts, "\31"))
+
+    if changed ~= true then
+        return
+    end
+
+    if type(info) ~= "table" then
+        local emptyCard =
+            HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 184), false)
+
+        HolyGuildPanelText(
+            panel,
+            emptyCard,
+            "Select a guild from the leaderboard.",
+            UDim2.fromOffset(12, 32),
+            UDim2.new(1, -24, 0, 60),
+            {
+                TextSize = 11,
+                Transparency = 0.22,
+                Wrapped = true,
+                XAlignment = Enum.TextXAlignment.Center,
+            }
+        )
+
+        HolyGuildSetInfoPanelHeight(panel, 184)
+
+        return
+    end
+
+    local ownScore = type(contestView) == "table"
+            and contestView.ScoreKnown == true
+            and HolyGuildAnalyticsScore(contestView.Score)
+        or nil
+
+    local selectedScore = info.IsOwn == true
+            and type(contestView) == "table"
+            and contestView.ScoreKnown == true
+            and HolyGuildAnalyticsScore(contestView.Score)
+        or HolyGuildAnalyticsScore(info.Score)
+        or 0
+
+    local scoreDifference = ownScore ~= nil and selectedScore - ownScore or nil
+
+    local memberCount = tonumber(info.Members) or rivalMeta.Total
+
+    local scorePerMember = memberCount > 0 and selectedScore / memberCount or nil
+
+    local memberShareDenominator = math.max(selectedScore, tonumber(rivalMeta.Sum) or 0)
+
+    local memberShareIsUpperBound = (tonumber(rivalMeta.Sum) or 0) > selectedScore
+
+    local catchupText = "Event timing unavailable"
+
+    if info.IsOwn == true then
+        catchupText = "This is your guild"
+    elseif scoreDifference ~= nil and scoreDifference <= 0 then
+        catchupText = "No catch-up needed"
+    elseif
+        scoreDifference ~= nil
+        and type(contestView) == "table"
+        and contestView.State == "Active"
+        and tonumber(contestView.EndsAt)
+        and tonumber(contestView.EndsAt) > HolyGuildNow()
+    then
+        if selectedMetrics.RateReady == true then
+            local hoursLeft = math.max(1 / 60, (tonumber(contestView.EndsAt) - HolyGuildNow()) / 3600)
+
+            catchupText = HolyGuildFormatNumber(selectedMetrics.PointsPerHour + scoreDifference / hoursLeft)
+                .. "/hr required"
+        else
+            catchupText = "Collecting rival rate..."
+        end
+    end
+
+    local differenceText = info.IsOwn and "This is your guild"
+        or (
+            scoreDifference == nil and "Unavailable"
+            or (
+                scoreDifference > 0
+                    and (HolyGuildFormatNumber(scoreDifference) .. " ahead")
+                or (scoreDifference < 0 and (HolyGuildFormatNumber(math.abs(scoreDifference)) .. " behind") or "Tied")
+            )
+        )
+
+    local summaryHeight = 314
+
+    local visibleRows = math.max(1, math.min(#rivalMembers, 7))
+
+    local listHeight = #rivalMembers <= 0 and 70 or visibleRows * 46
+
+    local rosterHeight = 36 + listHeight
+
+    local totalHeight = summaryHeight + 8 + rosterHeight
+
+    local summaryCard =
+        HolyGuildPanelCard(panel, panel.Surface, UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, summaryHeight), true)
+
+    HolyGuildPanelImage(panel, summaryCard, info.IconId, UDim2.fromOffset(12, 12), UDim2.fromOffset(54, 54))
+
+    HolyGuildPanelText(panel, summaryCard, info.Name, UDim2.fromOffset(76, 10), UDim2.new(1, -88, 0, 22), {
+        TextSize = 14,
+        Truncate = true,
+    })
+
+    HolyGuildPanelText(
+        panel,
+        summaryCard,
+        info.Tag ~= "" and ("[" .. info.Tag .. "]") or "No guild tag",
+        UDim2.fromOffset(76, 31),
+        UDim2.new(1, -88, 0, 17),
+        {
+            TextSize = 10,
+            Transparency = 0.20,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelBadge(
+        panel,
+        summaryCard,
+        info.IsOwn and "YOUR GUILD" or (info.Loaded and "GLOBAL" or "LOADING"),
+        UDim2.fromOffset(76, 49),
+        info.IsOwn and 76 or 62,
+        "Accent"
+    )
+
+    HolyGuildPanelDivider(panel, summaryCard, 78)
+
+    local stats = {
+        {
+            "GLOBAL RANK",
+            tonumber(info.Rank) and ("#" .. tostring(info.Rank)) or "Not ranked",
+        },
+        {
+            "WEEKLY SCORE",
+            HolyGuildFormatNumber(selectedScore),
+        },
+        {
+            "MEMBERS",
+            info.Members ~= nil and (tostring(info.Members) .. (info.MaxMembers ~= nil and ("/" .. tostring(
+                info.MaxMembers
+            )) or "")) or tostring(rivalMeta.Total),
+        },
+        {
+            "CONTRIBUTIONS EXPOSED",
+            tostring(rivalMeta.Known) .. " / " .. tostring(rivalMeta.Total),
+        },
+        {
+            "SCORE / MEMBER",
+            scorePerMember ~= nil and HolyGuildFormatNumber(scorePerMember) or "Unavailable",
+        },
+        {
+            "MEDIAN EXPOSED",
+            rivalMeta.Median ~= nil and HolyGuildFormatNumber(rivalMeta.Median) or "Unavailable",
+        },
+        {
+            "EXPOSED TOP 3 SHARE",
+            rivalMeta.TopThreeShare ~= nil and string.format("%.1f%%", rivalMeta.TopThreeShare * 100) or "Unavailable",
+        },
+        {
+            "OBSERVED GUILD P/H",
+            selectedMetrics.RateReady == true
+                    and HolyGuildFormatNumber(selectedMetrics.PointsPerHour)
+                or "Collecting...",
+        },
+    }
+
+    HolyGuildAnalyticsAddStatGrid(panel, summaryCard, stats, 84)
+
+    HolyGuildPanelText(
+        panel,
+        summaryCard,
+        "Compared with your guild: " .. differenceText,
+        UDim2.fromOffset(12, 252),
+        UDim2.new(1, -24, 0, 18),
+        {
+            TextSize = 9,
+            Transparency = 0.30,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        summaryCard,
+        "Catch-up pace: " .. catchupText,
+        UDim2.fromOffset(12, 270),
+        UDim2.new(1, -24, 0, 18),
+        {
+            TextSize = 9,
+            Transparency = 0.30,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelText(
+        panel,
+        summaryCard,
+        info.IsOwn == true and "Guild details: live snapshot"
+            or (
+                info.DetailsFetchedAt > 0
+                    and ("Guild details updated: " .. HolyGuildFormatLocalDateTime(info.DetailsFetchedAt))
+                or "Guild details are loading..."
+            ),
+        UDim2.fromOffset(12, 288),
+        UDim2.new(1, -24, 0, 18),
+        {
+            TextSize = 9,
+            Transparency = 0.42,
+            Truncate = true,
+        }
+    )
+
+    local rosterCard = HolyGuildPanelCard(
+        panel,
+        panel.Surface,
+        UDim2.fromOffset(0, summaryHeight + 8),
+        UDim2.new(1, 0, 0, rosterHeight),
+        false
+    )
+
+    HolyGuildPanelText(
+        panel,
+        rosterCard,
+        "MEMBER CONTRIBUTIONS  •  " .. tostring(rivalMeta.Known) .. "/" .. tostring(rivalMeta.Total) .. " EXPOSED",
+        UDim2.fromOffset(10, 5),
+        UDim2.new(1, -20, 0, 23),
+        {
+            TextSize = 9,
+            Transparency = 0.30,
+            Truncate = true,
+        }
+    )
+
+    HolyGuildPanelDivider(panel, rosterCard, 32)
+
+    local scroll = Instance.new("ScrollingFrame")
+
+    scroll.BackgroundTransparency = 1
+
+    scroll.BorderSizePixel = 0
+
+    scroll.Position = UDim2.fromOffset(4, 34)
+
+    scroll.Size = UDim2.new(1, -8, 0, listHeight)
+
+    scroll.CanvasSize = UDim2.fromOffset(0, math.max(listHeight, #rivalMembers * 46))
+
+    scroll.ScrollBarThickness = #rivalMembers > visibleRows and 3 or 0
+
+    scroll.ScrollBarImageColor3 = Library.Scheme.AccentColor
+
+    scroll.Parent = rosterCard
+
+    HolyGuildTrackPanelObject(panel, scroll, {
+        ScrollBarImageColor3 = "AccentColor",
+    })
+
+    if #rivalMembers <= 0 then
+        HolyGuildPanelText(
+            panel,
+            scroll,
+            info.Loaded == true and "This guild response did not expose a member roster."
+                or "Loading the selected guild roster...",
+            UDim2.fromOffset(12, 8),
+            UDim2.new(1, -24, 0, 54),
+            {
+                TextSize = 10,
+                Transparency = 0.35,
+                Wrapped = true,
+                XAlignment = Enum.TextXAlignment.Center,
+            }
+        )
+    end
+
+    for index, member in ipairs(rivalMembers) do
+        local rowFrame = Instance.new("Frame")
+
+        rowFrame.BackgroundTransparency = 1
+
+        rowFrame.BorderSizePixel = 0
+
+        rowFrame.Position = UDim2.fromOffset(0, (index - 1) * 46)
+
+        rowFrame.Size = UDim2.new(1, -4, 0, 44)
+
+        rowFrame.Parent = scroll
+
+        HolyGuildPanelImage(
+            panel,
+            rowFrame,
+            "rbxthumb://type=AvatarHeadShot&id=" .. tostring(member.UserId) .. "&w=150&h=150",
+            UDim2.fromOffset(7, 6),
+            UDim2.fromOffset(32, 32)
+        )
+
+        HolyGuildPanelText(
+            panel,
+            rowFrame,
+            "#" .. tostring(index) .. "  " .. tostring(member.Username),
+            UDim2.fromOffset(46, 4),
+            UDim2.new(1, -148, 0, 19),
+            {
+                TextSize = 9,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            rowFrame,
+            tostring(member.Role),
+            UDim2.fromOffset(46, 22),
+            UDim2.new(1, -148, 0, 16),
+            {
+                TextSize = 8,
+                Transparency = 0.50,
+                Truncate = true,
+            }
+        )
+
+        local memberShare = member.WeeklyKnown == true
+                and memberShareDenominator > 0
+                and math.clamp((tonumber(member.Weekly) or 0) / memberShareDenominator, 0, 1)
+            or nil
+
+        HolyGuildPanelText(
+            panel,
+            rowFrame,
+            member.WeeklyKnown == true and HolyGuildFormatNumber(member.Weekly) or "Unavailable",
+            UDim2.new(1, -96, 0, 4),
+            UDim2.fromOffset(88, 18),
+            {
+                TextSize = 9,
+                XAlignment = Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+
+        HolyGuildPanelText(
+            panel,
+            rowFrame,
+            memberShare ~= nil
+                    and (memberShareIsUpperBound and string.format("≤ %.1f%% exposed", memberShare * 100) or string.format(
+                        "%.1f%% share",
+                        memberShare * 100
+                    ))
+                or "not exposed",
+            UDim2.new(1, -96, 0, 22),
+            UDim2.fromOffset(88, 16),
+            {
+                TextSize = 8,
+                Transparency = 0.50,
+                XAlignment = Enum.TextXAlignment.Right,
+                Truncate = true,
+            }
+        )
+    end
+
+    HolyGuildSetInfoPanelHeight(panel, totalHeight)
+end
+
+--==================================================
 -- HOLY LOADOUTS BACKEND
 -- Place this entire block directly above:
 --
@@ -203157,6 +206043,20 @@ HOLY_SNIPER_UI.DefenseRebuyToggle:OnChanged(function(value)
         value == true
     )
 end)
+
+SniperExecutionBox:AddButton({
+    Text =
+        "Test APP",
+
+    Tooltip =
+        "Checks whether this Roblox instance can communicate with the HOLY Manager app on this Android device.",
+
+    Func =
+        function()
+
+            HolyAndroidBridgeTest()
+        end,
+})
 
 SniperExecutionBox:AddDropdown(
     "HolySniperMovementMode",
