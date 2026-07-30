@@ -3853,10 +3853,159 @@ HOLY_PERFORMANCE_MONITOR_RUNTIME = {
     DragStartPosition = nil,
 }
 
+function HolyPerformanceModeEnabled()
+
+    return type(HOLY_DEV_UI_STATE) == "table"
+        and HOLY_DEV_UI_STATE.PerformanceMode == true
+end
+
 function HolyLowEndModeEnabled()
 
     return type(HOLY_DEV_UI_STATE) == "table"
-        and HOLY_DEV_UI_STATE.LowEndMode == true
+        and (
+            HOLY_DEV_UI_STATE.LowEndMode == true
+            or HOLY_DEV_UI_STATE.PerformanceMode == true
+        )
+end
+
+function HolyPerformanceGuiActuallyVisible(object)
+
+    if typeof(object) ~= "Instance"
+    or object.Parent == nil then
+
+        return false
+    end
+
+    local current =
+        object
+
+    while typeof(current) == "Instance" do
+
+        if current:IsA("GuiObject")
+        and current.Visible ~= true then
+
+            return false
+        end
+
+        if current:IsA("LayerCollector")
+        and current.Enabled ~= true then
+
+            return false
+        end
+
+        current =
+            current.Parent
+    end
+
+    return true
+end
+
+function HolyPerformancePanelActive(groupbox)
+
+    if HolyPerformanceModeEnabled() ~= true then
+        return true
+    end
+
+    if type(groupbox) ~= "table" then
+        return false
+    end
+
+    local holder =
+        groupbox.BoxHolder
+        or groupbox.Holder
+
+    return HolyPerformanceGuiActuallyVisible(
+        holder
+    )
+end
+
+function HolyPerformanceApplyScriptProfile(reason)
+
+    HOLY_PERFORMANCE_STATE =
+        type(HOLY_PERFORMANCE_STATE) == "table"
+        and HOLY_PERFORMANCE_STATE
+        or {}
+
+    local enabled =
+        HolyPerformanceModeEnabled()
+
+    HOLY_PERFORMANCE_STATE.PassiveMode =
+        enabled
+
+    HOLY_PERFORMANCE_STATE.PassiveGeneration =
+        (
+            tonumber(
+                HOLY_PERFORMANCE_STATE.PassiveGeneration
+            )
+            or 0
+        )
+        + 1
+
+    HOLY_PERFORMANCE_STATE.PassiveReason =
+        tostring(
+            reason
+            or "profile changed"
+        )
+
+    local library =
+        type(HOLY_DEV_LIBRARY) == "table"
+        and HOLY_DEV_LIBRARY
+        or nil
+
+    if type(library) == "table"
+    and type(library.SetAnimations) == "function" then
+
+        pcall(function()
+
+            library:SetAnimations(
+                {
+                    ToggleWindow = false,
+
+                    TabSwitch =
+                        HOLY_DEV_UI_STATE.InterfaceAnimations
+                        ~= false
+                        and HolyLowEndModeEnabled()
+                            ~= true,
+
+                    Groupbox = false,
+                    Dropdown = false,
+                    KeyPicker = false,
+                },
+                0.16,
+                12,
+                "bottom"
+            )
+        end)
+    end
+
+    if enabled ~= true then
+
+        if type(HOLY_LIVE_PETS_RUNTIME) == "table" then
+
+            HOLY_LIVE_PETS_RUNTIME.RefreshQueued =
+                true
+        end
+
+        if type(HOLY_PET_INVENTORY_RUNTIME) == "table" then
+
+            HOLY_PET_INVENTORY_RUNTIME.RefreshQueued =
+                true
+        end
+
+        if type(HOLY_FARM_DETAILS_RUNTIME) == "table" then
+
+            HOLY_FARM_DETAILS_RUNTIME.RefreshQueued =
+                true
+        end
+
+        if type(HOLY_GUILD_RUNTIME) == "table" then
+
+            HOLY_GUILD_RUNTIME.UIRefreshQueued =
+                true
+        end
+    end
+
+    return enabled
 end
 
 if type(getgenv().HOLY_SprinklerESPStop) == "function" then
@@ -9167,6 +9316,11 @@ function HolyAccountQueueMailInventorySync(
     local now =
         os.clock()
 
+    local minimumInterval =
+        HolyPerformanceModeEnabled() == true
+        and 60
+        or 10
+
     if force ~= true
     and now
         - (
@@ -9176,7 +9330,7 @@ function HolyAccountQueueMailInventorySync(
             )
             or 0
         )
-        < 10 then
+        < minimumInterval then
 
         return false
     end
@@ -51898,54 +52052,66 @@ function HolyLivePetsStart()
 
         while HOLY_LIVE_PETS_RUNTIME.Token == token do
 
+            local panelActive =
+                HolyPerformancePanelActive(
+                    MainLivePetsBox
+                )
+
             local lowEnd =
                 HolyLowEndModeEnabled()
 
-            local periodicInterval =
-                lowEnd == true
-                and 1
-                or 0.35
+            if panelActive == true then
 
-            local eventInterval =
-                lowEnd == true
-                and 0.75
-                or 0.25
+                local periodicInterval =
+                    lowEnd == true
+                    and 1
+                    or 0.35
 
-            local now =
-                os.clock()
+                local eventInterval =
+                    lowEnd == true
+                    and 0.75
+                    or 0.25
 
-            local elapsed =
-                now
-                - (
-                    tonumber(
-                        HOLY_LIVE_PETS_RUNTIME.LastRefreshAt
-                    )
-                    or 0
-                )
+                local now =
+                    os.clock()
 
-            local eventReady =
-                HOLY_LIVE_PETS_RUNTIME.RefreshQueued == true
-                and elapsed >= eventInterval
-
-            local periodicReady =
-                elapsed >= periodicInterval
-
-            if eventReady
-            or periodicReady then
-
-                HOLY_LIVE_PETS_RUNTIME.RefreshQueued =
-                    false
-
-                HOLY_LIVE_PETS_RUNTIME.LastRefreshAt =
+                local elapsed =
                     now
+                    - (
+                        tonumber(
+                            HOLY_LIVE_PETS_RUNTIME.LastRefreshAt
+                        )
+                        or 0
+                    )
 
-                HolyLivePetsRefreshUI()
+                local eventReady =
+                    HOLY_LIVE_PETS_RUNTIME.RefreshQueued == true
+                    and elapsed >= eventInterval
+
+                local periodicReady =
+                    elapsed >= periodicInterval
+
+                if eventReady
+                or periodicReady then
+
+                    HOLY_LIVE_PETS_RUNTIME.RefreshQueued =
+                        false
+
+                    HOLY_LIVE_PETS_RUNTIME.LastRefreshAt =
+                        now
+
+                    HolyLivePetsRefreshUI()
+                end
             end
 
             task.wait(
-                lowEnd == true
-                and 0.25
-                or 0.10
+                panelActive == true
+                and (
+                    lowEnd == true
+                    and 0.25
+                    or 0.10
+                )
+                or 0.50
             )
         end
 
@@ -52464,7 +52630,20 @@ function HolyPetInventoryRefreshUI(force)
     HOLY_PET_INVENTORY_RUNTIME.RefreshQueued =
         false
 
-    if type(HolyPetSellHandleInventoryChanged) == "function" then
+    local sellerNeedsUpdate =
+        HolyPerformanceModeEnabled() ~= true
+        or HolyPerformancePanelActive(
+            ShopPetSellerBox
+        ) == true
+        or (
+            type(HOLY_SHOP_STATE) == "table"
+            and HOLY_SHOP_STATE.AutoSellPets == true
+        )
+
+    if sellerNeedsUpdate == true
+    and type(
+        HolyPetSellHandleInventoryChanged
+    ) == "function" then
 
         HolyPetSellHandleInventoryChanged()
     end
@@ -52749,9 +52928,37 @@ function HolyPetInventoryStart()
     HOLY_PET_INVENTORY_RUNTIME.RefreshQueued =
         true
 
-    HolyPetInventoryRefreshUI(
-        true
-    )
+    local mainPanelActive =
+        HolyPerformancePanelActive(
+            MainPetInventoryBox
+        )
+
+    local sellerPanelActive =
+        HolyPerformancePanelActive(
+            ShopPetSellerBox
+        )
+
+    if mainPanelActive == true then
+
+        HolyPetInventoryRefreshUI(
+            true
+        )
+
+    elseif sellerPanelActive == true
+    and type(
+        HolyPetSellHandleInventoryChanged
+    ) == "function" then
+
+        pcall(
+            HolyPetSellHandleInventoryChanged
+        )
+    end
+
+    local mainWasActive =
+        mainPanelActive
+
+    local sellerWasActive =
+        sellerPanelActive
 
     task.spawn(function()
 
@@ -52761,6 +52968,16 @@ function HolyPetInventoryStart()
 
             local lowEnd =
                 HolyLowEndModeEnabled()
+
+            mainPanelActive =
+                HolyPerformancePanelActive(
+                    MainPetInventoryBox
+                )
+
+            sellerPanelActive =
+                HolyPerformancePanelActive(
+                    ShopPetSellerBox
+                )
 
             local pacedPetSelling =
                 type(HOLY_SHOP_STATE) == "table"
@@ -52788,8 +53005,11 @@ function HolyPetInventoryStart()
                     or 5
                 )
 
-            local elapsed =
+            local now =
                 os.clock()
+
+            local elapsed =
+                now
                 - (
                     tonumber(
                         HOLY_PET_INVENTORY_RUNTIME.LastRefreshAt
@@ -52804,16 +53024,71 @@ function HolyPetInventoryStart()
             local safetyReady =
                 elapsed >= safetyInterval
 
-            if dirtyReady
-            or safetyReady then
+            local mainOpened =
+                mainPanelActive == true
+                and mainWasActive ~= true
 
-                HolyPetInventoryRefreshUI()
+            local sellerOpened =
+                sellerPanelActive == true
+                and sellerWasActive ~= true
+
+            if mainPanelActive == true then
+
+                if mainOpened == true then
+
+                    HolyPetInventoryRefreshUI(
+                        true
+                    )
+
+                elseif dirtyReady
+                or safetyReady then
+
+                    HolyPetInventoryRefreshUI()
+                end
+
+            elseif sellerPanelActive == true
+            or pacedPetSelling == true then
+
+                if sellerOpened == true
+                or dirtyReady
+                or safetyReady then
+
+                    HOLY_PET_INVENTORY_RUNTIME.RefreshQueued =
+                        false
+
+                    HOLY_PET_INVENTORY_RUNTIME.LastRefreshAt =
+                        now
+
+                    if type(
+                        HolyPetSellHandleInventoryChanged
+                    ) == "function" then
+
+                        pcall(
+                            HolyPetSellHandleInventoryChanged
+                        )
+                    end
+                end
             end
 
+            mainWasActive =
+                mainPanelActive
+
+            sellerWasActive =
+                sellerPanelActive
+
+            local performanceSleeping =
+                HolyPerformanceModeEnabled() == true
+                and mainPanelActive ~= true
+                and sellerPanelActive ~= true
+
             task.wait(
-                lowEnd == true
-                and 0.25
-                or 0.10
+                performanceSleeping == true
+                and 0.50
+                or (
+                    lowEnd == true
+                    and 0.25
+                    or 0.10
+                )
             )
         end
     end)
@@ -64364,17 +64639,46 @@ function HolyFarmDetailsStart()
     runtime.Status =
         "Loading"
 
-    if HolyFarmDetailsConnectEvents() == true then
+    local function startPanel()
 
-        HolyFarmDetailsRequestSnapshot()
+        runtime.LastRequestAt =
+            os.clock()
 
-    else
+        if HolyFarmDetailsConnectEvents() == true then
+
+            HolyFarmDetailsRequestSnapshot()
+
+            return true
+        end
 
         runtime.Status =
             "Unavailable"
 
         HolyFarmDetailsScheduleRender()
+
+        return false
     end
+
+    local panelActive =
+        HolyPerformancePanelActive(
+            MainFarmDetailsBox
+        )
+
+    if panelActive == true then
+
+        startPanel()
+
+    else
+
+        runtime.Status =
+            "Sleeping in Performance Mode"
+
+        runtime.RefreshQueued =
+            true
+    end
+
+    local wasPanelActive =
+        panelActive
 
     task.spawn(function()
 
@@ -64383,73 +64687,108 @@ function HolyFarmDetailsStart()
             local now =
                 os.clock()
 
-            if runtime.EventsConnected ~= true
-            and now
-                - (
-                    tonumber(runtime.LastRequestAt)
-                    or 0
+            panelActive =
+                HolyPerformancePanelActive(
+                    MainFarmDetailsBox
                 )
-                >= 5 then
 
-                if HolyFarmDetailsConnectEvents() == true then
+            if panelActive == true
+            and wasPanelActive ~= true then
 
-                    HolyFarmDetailsRequestSnapshot()
+                startPanel()
+
+            elseif panelActive ~= true
+            and HolyPerformanceModeEnabled() == true then
+
+                if #(
+                    runtime.Connections
+                    or {}
+                ) > 0 then
+
+                    HolyFarmDetailsDisconnect()
                 end
 
-            elseif runtime.SnapshotReady ~= true
-            and now
-                - (
-                    tonumber(runtime.LastRequestAt)
-                    or 0
-                )
-                >= 5 then
+                runtime.Status =
+                    "Sleeping in Performance Mode"
 
-                HolyFarmDetailsRequestSnapshot()
+                runtime.RefreshQueued =
+                    true
             end
 
             local lowEnd =
                 HolyLowEndModeEnabled()
 
-            local dirtyInterval =
-                lowEnd == true
-                and 1.25
-                or 0.50
+            if panelActive == true then
 
-            local safetyInterval =
-                lowEnd == true
-                and 5
-                or 1
+                if runtime.EventsConnected ~= true
+                and now
+                    - (
+                        tonumber(runtime.LastRequestAt)
+                        or 0
+                    )
+                    >= 5 then
 
-            local elapsed =
-                now
-                - (
-                    tonumber(runtime.LastRenderAt)
-                    or 0
-                )
+                    startPanel()
 
-            local dirtyReady =
-                runtime.RefreshQueued == true
-                and elapsed >= dirtyInterval
+                elseif runtime.SnapshotReady ~= true
+                and now
+                    - (
+                        tonumber(runtime.LastRequestAt)
+                        or 0
+                    )
+                    >= 5 then
 
-            local safetyReady =
-                elapsed >= safetyInterval
+                    HolyFarmDetailsRequestSnapshot()
+                end
 
-            if dirtyReady
-            or safetyReady then
+                local dirtyInterval =
+                    lowEnd == true
+                    and 1.25
+                    or 0.50
 
-                runtime.RefreshQueued =
-                    false
+                local safetyInterval =
+                    lowEnd == true
+                    and 5
+                    or 1
 
-                runtime.LastRenderAt =
+                local elapsed =
                     now
+                    - (
+                        tonumber(runtime.LastRenderAt)
+                        or 0
+                    )
 
-                HolyFarmDetailsRender()
+                local dirtyReady =
+                    runtime.RefreshQueued == true
+                    and elapsed >= dirtyInterval
+
+                local safetyReady =
+                    elapsed >= safetyInterval
+
+                if dirtyReady
+                or safetyReady then
+
+                    runtime.RefreshQueued =
+                        false
+
+                    runtime.LastRenderAt =
+                        now
+
+                    HolyFarmDetailsRender()
+                end
             end
 
+            wasPanelActive =
+                panelActive
+
             task.wait(
-                lowEnd == true
-                and 0.25
-                or 0.10
+                panelActive == true
+                and (
+                    lowEnd == true
+                    and 0.25
+                    or 0.10
+                )
+                or 0.50
             )
         end
     end)
@@ -82810,13 +83149,35 @@ function HolySpecialProtectionStart(reason)
                 return
             end
 
+            local now =
+                os.clock()
+
             if runtime.NoclipEnabled == true then
 
-                HolyNoclipApplyCharacter()
+                local noclipInterval =
+                    HolyPerformanceModeEnabled() == true
+                    and 0.50
+                    or 0
+
+                local lastSweepAt =
+                    tonumber(
+                        runtime.LastNoclipSweepAt
+                    )
+                    or 0
+
+                if noclipInterval <= 0
+                or now - lastSweepAt
+                    >= noclipInterval then
+
+                    runtime.LastNoclipSweepAt =
+                        now
+
+                    HolyNoclipApplyCharacter()
+                end
             end
 
             if runtime.AntiBeeEnabled == true
-            and os.clock() <= (
+            and now <= (
                 tonumber(runtime.BeeActiveUntil)
                 or 0
             ) then
@@ -82827,7 +83188,7 @@ function HolySpecialProtectionStart(reason)
             end
 
             if runtime.AntiMagnetEnabled == true
-            and os.clock() <= (
+            and now <= (
                 tonumber(runtime.MagnetActiveUntil)
                 or 0
             ) then
@@ -87606,6 +87967,21 @@ function HolyAuctionRefreshUI()
 
     HolyAuctionEnsureState()
 
+    local panelActive =
+        HolyPerformancePanelActive(
+            ShopAuctionBox
+        )
+
+    local hudActive =
+        HOLY_SHOP_STATE.AuctionHudEnabled == true
+
+    if panelActive ~= true
+    and hudActive ~= true then
+
+        return HOLY_SHOP_STATE.AuctionLastLots
+            or {}
+    end
+
     HOLY_SHOP_UI =
         type(HOLY_SHOP_UI) == "table"
         and HOLY_SHOP_UI
@@ -87628,7 +88004,7 @@ function HolyAuctionRefreshUI()
     HOLY_SHOP_STATE.AuctionWatchlistUIDirty =
         true
 
-    if HOLY_SHOP_STATE.AuctionHudEnabled == true then
+    if hudActive == true then
 
         HolyAuctionHudRefresh(
             rows
@@ -91475,37 +91851,104 @@ function HolyAuctionStartWatcher()
 
     task.spawn(function()
 
+        local panelWasActive =
+            false
+
         while HOLY_SHOP_STATE.AuctionWatcherStarted == true do
 
-            HolyAuctionPassiveBootstrap(
-                false
-            )
+            local panelActive =
+                HolyPerformancePanelActive(
+                    ShopAuctionBox
+                )
 
-            HolyAuctionRefreshUI()
+            local hudActive =
+                HOLY_SHOP_STATE.AuctionHudEnabled == true
 
-            if HOLY_SHOP_STATE.AutoBuyAuctions == true
-            and HOLY_SHOP_STATE.AuctionNetworkReady == true then
+            local automationActive =
+                HOLY_SHOP_STATE.AutoBuyAuctions == true
 
-                HolyAuctionQueueWorker(
-                    "network watcher"
+            local serviceActive =
+                panelActive == true
+                or hudActive == true
+                or automationActive == true
+
+            if panelActive == true
+            and panelWasActive ~= true then
+
+                HolyAuctionRefreshDropdown(
+                    false
                 )
             end
 
+            if serviceActive == true then
+
+                HolyAuctionPassiveBootstrap(
+                    false
+                )
+
+                if panelActive == true
+                or hudActive == true then
+
+                    HolyAuctionRefreshUI()
+                end
+
+                if automationActive == true
+                and HOLY_SHOP_STATE.AuctionNetworkReady == true then
+
+                    HolyAuctionQueueWorker(
+                        "network watcher"
+                    )
+                end
+            end
+
+            panelWasActive =
+                panelActive
+
+            local waitSeconds =
+                0.75
+
+            if automationActive == true then
+
+                waitSeconds =
+                    0.25
+
+            elseif panelActive == true
+            or hudActive == true then
+
+                waitSeconds =
+                    0.75
+
+            elseif HolyPerformanceModeEnabled() == true then
+
+                waitSeconds =
+                    2
+            end
+
             task.wait(
-                HOLY_SHOP_STATE.AutoBuyAuctions == true
-                and 0.25
-                or 0.75
+                waitSeconds
             )
         end
     end)
 
     task.defer(function()
 
-        HolyAuctionRefreshDropdown(
-            true
-        )
+        local panelActive =
+            HolyPerformancePanelActive(
+                ShopAuctionBox
+            )
 
-        HolyAuctionRefreshUI()
+        if panelActive == true then
+
+            HolyAuctionRefreshDropdown(
+                true
+            )
+        end
+
+        if panelActive == true
+        or HOLY_SHOP_STATE.AuctionHudEnabled == true then
+
+            HolyAuctionRefreshUI()
+        end
 
         if HOLY_SHOP_STATE.AuctionHudEnabled == true then
 
@@ -111511,16 +111954,6 @@ function HolyPerformanceModeDestroy(instance)
         return 0
     end
 
-    local removedCount =
-        1
-
-    pcall(function()
-
-        removedCount =
-            removedCount
-            + #instance:GetDescendants()
-    end)
-
     local destroyed =
         pcall(function()
 
@@ -111538,7 +111971,7 @@ function HolyPerformanceModeDestroy(instance)
             )
             or 0
         )
-        + removedCount
+        + 1
 
     HOLY_PERFORMANCE_STATE.RemovedCount =
         (
@@ -111547,9 +111980,9 @@ function HolyPerformanceModeDestroy(instance)
             )
             or 0
         )
-        + removedCount
+        + 1
 
-    return removedCount
+    return 1
 end
 
 function HolyPerformanceModeShouldDestroyVisual(instance)
@@ -111856,8 +112289,26 @@ end
 
 function HolyPerformanceModeStart(reason)
 
+    HOLY_PERFORMANCE_STATE =
+        type(HOLY_PERFORMANCE_STATE) == "table"
+        and HOLY_PERFORMANCE_STATE
+        or {}
+
+    local alreadyRunning =
+        HOLY_DEV_UI_STATE.PerformanceMode == true
+        and HOLY_PERFORMANCE_STATE
+            .PerformanceModeRunning == true
+
     HOLY_DEV_UI_STATE.PerformanceMode =
         true
+
+    HOLY_PERFORMANCE_STATE.PerformanceModeRunning =
+        true
+
+    HolyPerformanceApplyScriptProfile(
+        reason
+        or "performance mode started"
+    )
 
     HolySaveUISettings()
 
@@ -111866,6 +112317,15 @@ function HolyPerformanceModeStart(reason)
             "PerformanceMode",
             true
         )
+
+    if alreadyRunning == true then
+
+        HolyPerformanceSetStatus(
+            "Performance mode is already active."
+        )
+
+        return true
+    end
 
     HOLY_PERFORMANCE_STATE.PerformanceModeToken =
         (
@@ -111881,7 +112341,7 @@ function HolyPerformanceModeStart(reason)
     if earlyHandled == true then
 
         HolyPerformanceSetStatus(
-            "Performance mode is active from the safe early bootstrap."
+            "Performance mode active · hidden passive dashboards sleep."
         )
 
         return true
@@ -111969,7 +112429,7 @@ function HolyPerformanceModeStart(reason)
         and HOLY_PERFORMANCE_STATE.PerformanceModeToken == token then
 
             HolyPerformanceSetStatus(
-                "Performance mode safely applied after controllers started."
+                "Performance mode active · hidden passive dashboards sleep."
             )
         end
     end)
@@ -111977,11 +112437,23 @@ function HolyPerformanceModeStart(reason)
     return true
 end
 
-
 function HolyPerformanceModeStop(reason)
 
     HOLY_DEV_UI_STATE.PerformanceMode =
         false
+
+    HOLY_PERFORMANCE_STATE =
+        type(HOLY_PERFORMANCE_STATE) == "table"
+        and HOLY_PERFORMANCE_STATE
+        or {}
+
+    HOLY_PERFORMANCE_STATE.PerformanceModeRunning =
+        false
+
+    HolyPerformanceApplyScriptProfile(
+        reason
+        or "performance mode stopped"
+    )
 
     HolySaveUISettings()
 
@@ -112002,13 +112474,11 @@ function HolyPerformanceModeStop(reason)
     HolyPerformanceModeDisconnect()
 
     HolyPerformanceSetStatus(
-        "Performance mode stopped. Rejoin to restore visuals."
+        "Performance mode stopped. Rejoin to restore deleted visuals."
     )
 
     return true
 end
-
-
 
 function HolyPerformanceIsOwnGarden(garden, ownGarden)
 
@@ -123133,6 +123603,10 @@ end
 HOLY_DEV_LIBRARY =
     Library
 
+HolyPerformanceApplyScriptProfile(
+    "library ready"
+)
+
 if type(Library.OnUnload) == "function" then
 
     pcall(function()
@@ -124221,7 +124695,12 @@ function HolyDevStartToolRefresh()
         while runtime.Active == true
         and runtime.RefreshGeneration == generation do
 
-            HolyDevRefreshToolDropdown()
+            if HolyPerformancePanelActive(
+                DevPersistenceBox
+            ) == true then
+
+                HolyDevRefreshToolDropdown()
+            end
 
             task.wait(
                 2
@@ -136620,6 +137099,9 @@ function HolyMoonStart()
     local runtime =
         HOLY_MOON_PREDICTOR_RUNTIME
 
+    local state =
+        HOLY_MOON_PREDICTOR_STATE
+
     if runtime.Running == true then
         return false
     end
@@ -136633,61 +137115,98 @@ function HolyMoonStart()
     runtime.Token =
         token
 
-    HolyMoonRequestBuild(
-        "startup"
-    )
+    local panelActive =
+        HolyPerformancePanelActive(
+            MainMoonPredictorBox
+        )
 
-    if HOLY_MOON_PREDICTOR_STATE.HudEnabled == true then
+    if panelActive == true then
+
+        HolyMoonRequestBuild(
+            "startup"
+        )
+    end
+
+    if state.HudEnabled == true then
 
         HolyMoonHudStart()
     end
+
+    local wasPanelActive =
+        panelActive
 
     task.spawn(function()
 
         while runtime.Token == token do
 
-            HolyMoonRender()
+            panelActive =
+                HolyPerformancePanelActive(
+                    MainMoonPredictorBox
+                )
 
-            local state =
-                HOLY_MOON_PREDICTOR_STATE
+            if panelActive == true then
 
-            local now =
-                HolyMoonGetNow()
-
-            local cycleInfo =
-                state.CycleInfo
-
-            if type(cycleInfo) == "table" then
-
-                local currentCycle =
-                    math.floor(
-                        now
-                        / cycleInfo.FullCycle
-                    )
-
-                local first =
-                    state.Predictions[1]
-
-                local expired =
-                    type(first) == "table"
-                    and tonumber(first.StartsAt)
-                    and tonumber(first.StartsAt) <= now
-
-                if state.Scanning ~= true
-                and (
-                    currentCycle
-                    ~= state.LastBuildCycle
-                    or expired == true
-                ) then
+                if wasPanelActive ~= true then
 
                     HolyMoonRequestBuild(
-                        "cycle advanced"
+                        "panel opened"
                     )
                 end
+
+                HolyMoonRender()
+
+                local now =
+                    HolyMoonGetNow()
+
+                local cycleInfo =
+                    state.CycleInfo
+
+                if type(cycleInfo) == "table" then
+
+                    local currentCycle =
+                        math.floor(
+                            now
+                            / cycleInfo.FullCycle
+                        )
+
+                    local first =
+                        state.Predictions[1]
+
+                    local expired =
+                        type(first) == "table"
+                        and tonumber(first.StartsAt)
+                        and tonumber(first.StartsAt) <= now
+
+                    if state.Scanning ~= true
+                    and (
+                        currentCycle
+                        ~= state.LastBuildCycle
+                        or expired == true
+                    ) then
+
+                        HolyMoonRequestBuild(
+                            "cycle advanced"
+                        )
+                    end
+                end
+
+            elseif HolyPerformanceModeEnabled() == true
+            and state.Scanning == true then
+
+                state.ScanGeneration +=
+                    1
+
+                state.Scanning =
+                    false
             end
 
+            wasPanelActive =
+                panelActive
+
             task.wait(
-                1
+                panelActive == true
+                and 1
+                or 0.75
             )
         end
 
@@ -160175,6 +160694,31 @@ HOLY_MAIL_RUNTIME.Stop =
 
 if type(HOLY_GUILD_RUNTIME) == "table" then
 
+    if type(HolyGuildSessionFlush)
+        == "function" then
+
+        pcall(
+            HolyGuildSessionFlush
+        )
+
+    elseif type(HolyGuildSessionSave)
+        == "function" then
+
+        pcall(
+            HolyGuildSessionSave,
+            true
+        )
+    end
+
+    HOLY_GUILD_SESSION_WORKER_TOKEN =
+        (
+            tonumber(
+                HOLY_GUILD_SESSION_WORKER_TOKEN
+            )
+            or 0
+        )
+        + 1
+
     HOLY_GUILD_RUNTIME.Running =
         false
 
@@ -171158,7 +171702,14 @@ function HolyGuildApplyPendingInvites(source)
                 true
         end
 
-        if invite.GuildId ~= ""
+        if (
+            type(
+                HolyGuildDashboardAwake
+            ) ~= "function"
+            or HolyGuildDashboardAwake()
+                == true
+        )
+        and invite.GuildId ~= ""
         and type(
             HOLY_GUILD_STATE.GuildDetails[
                 invite.GuildId
@@ -172656,9 +173207,16 @@ function HolyGuildRespondInvite(
                 true
             )
 
-            HolyGuildRefreshLeaderboard(
-                true
-            )
+            if type(
+                HolyGuildDashboardAwake
+            ) ~= "function"
+            or HolyGuildDashboardAwake()
+                == true then
+
+                HolyGuildRefreshLeaderboard(
+                    true
+                )
+            end
         end
 
         HolyGuildInvalidateInvitePanels()
@@ -172709,6 +173267,15 @@ function HolyGuildRunInviteAutomation()
         return
     end
 
+    local snapshotReady =
+        (
+            tonumber(
+                HOLY_GUILD_RUNTIME.LastSnapshotAt
+            )
+            or 0
+        )
+        > 0
+
     local hasGuild =
         HolyGuildGetGuildId() ~= ""
 
@@ -172729,7 +173296,8 @@ function HolyGuildRunInviteAutomation()
             ] ~= nil
 
         local shouldAccept =
-            trusted
+            snapshotReady
+            and trusted
             and HOLY_GUILD_STATE.AutoAcceptInvites
                 == true
             and hasGuild ~= true
@@ -173329,9 +173897,29 @@ function HolyGuildSessionInvalidate()
     end
 end
 
-function HolyGuildSessionSave()
+function HolyGuildSessionFlush()
+
+    local runtime =
+        HOLY_GUILD_RUNTIME
+
+    if type(runtime) ~= "table" then
+        return false
+    end
+
+    if runtime.SessionSaveDirty
+        ~= true then
+
+        return true
+    end
 
     if type(writefile) ~= "function" then
+
+        runtime.SessionSaveDirty =
+            false
+
+        runtime.SessionSaveDueAt =
+            0
+
         return false
     end
 
@@ -173339,6 +173927,13 @@ function HolyGuildSessionSave()
         HOLY_GUILD_STATE.Session
 
     if type(session) ~= "table" then
+
+        runtime.SessionSaveDirty =
+            false
+
+        runtime.SessionSaveDueAt =
+            0
+
         return false
     end
 
@@ -173362,6 +173957,11 @@ function HolyGuildSessionSave()
         )
 
     if encodedOk ~= true then
+
+        runtime.SessionSaveDueAt =
+            os.clock()
+            + 15
+
         return false
     end
 
@@ -173388,11 +173988,67 @@ function HolyGuildSessionSave()
 
     if writeOk == true then
 
-        HOLY_GUILD_RUNTIME.LastSessionSaveAt =
+        runtime.LastSessionEncoded =
+            encoded
+
+        runtime.LastSessionSaveAt =
             os.clock()
+
+        runtime.SessionSaveDirty =
+            false
+
+        runtime.SessionSaveDueAt =
+            0
+
+    else
+
+        runtime.SessionSaveDueAt =
+            os.clock()
+            + 15
     end
 
     return writeOk == true
+end
+
+function HolyGuildSessionSave(force)
+
+    local runtime =
+        HOLY_GUILD_RUNTIME
+
+    if type(runtime) ~= "table"
+    or type(
+        HOLY_GUILD_STATE.Session
+    ) ~= "table" then
+
+        return false
+    end
+
+    local wasDirty =
+        runtime.SessionSaveDirty
+        == true
+
+    runtime.SessionSaveDirty =
+        true
+
+    if wasDirty ~= true
+    or (
+        tonumber(
+            runtime.SessionSaveDueAt
+        )
+        or 0
+    ) <= 0 then
+
+        runtime.SessionSaveDueAt =
+            os.clock()
+            + 15
+    end
+
+    if force == true then
+
+        return HolyGuildSessionFlush()
+    end
+
+    return true
 end
 
 function HolyGuildSessionLoad()
@@ -173545,7 +174201,10 @@ function HolyGuildSessionReset(reason)
     HOLY_GUILD_STATE.Session =
         session
 
-    HolyGuildSessionSave()
+    HolyGuildSessionSave(
+        true
+    )
+
     HolyGuildSessionInvalidate()
 
     return session
@@ -174060,7 +174719,10 @@ function HolyGuildSessionRecordServerHop()
     session.LastActivityAt =
         os.time()
 
-    HolyGuildSessionSave()
+    HolyGuildSessionSave(
+        true
+    )
+
     HolyGuildSessionInvalidate()
 
     return true
@@ -176537,30 +177199,291 @@ HOLY_GUILD_SESSION_WORKER_TOKEN =
     )
     + 1
 
-task.spawn(function()
+function HolyGuildPerformanceModeEnabled()
 
-    local token =
-        HOLY_GUILD_SESSION_WORKER_TOKEN
+    return type(HOLY_DEV_UI_STATE)
+        == "table"
+        and HOLY_DEV_UI_STATE.PerformanceMode
+            == true
+end
 
-    while HOLY_GUILD_SESSION_WORKER_TOKEN
-        == token do
+function HolyGuildGuiHierarchyVisible(object)
 
-        task.wait(
-            60
+    if typeof(object) ~= "Instance" then
+        return false
+    end
+
+    local current =
+        object
+
+    while typeof(current)
+        == "Instance" do
+
+        if current:IsA(
+            "GuiObject"
         )
+        and current.Visible ~= true then
 
-        if HOLY_GUILD_SESSION_WORKER_TOKEN
-            ~= token then
-
-            return
+            return false
         end
 
-        HolyGuildSessionObserve()
-        HolyGuildSessionSave()
+        if current:IsA(
+            "LayerCollector"
+        )
+        and current.Enabled ~= true then
+
+            return false
+        end
+
+        current =
+            current.Parent
     end
-end)
+
+    return true
+end
+
+function HolyGuildTabIsOpen()
+
+    local boxes = {
+        HOLY_GUILD_UI.OverviewBox,
+        HOLY_GUILD_UI.ActionsBox,
+        HOLY_GUILD_UI.MembersBox,
+        HOLY_GUILD_UI.SelectedMemberBox,
+        HOLY_GUILD_UI.InvitesBox,
+        HOLY_GUILD_UI.SelectedInviteBox,
+        HOLY_GUILD_UI.ContestBox,
+        HOLY_GUILD_UI.ProgressBox,
+        HOLY_GUILD_UI.LeaderboardBox,
+        HOLY_GUILD_UI.SelectedGuildBox,
+    }
+
+    for _, groupbox in ipairs(
+        boxes
+    ) do
+
+        if type(groupbox) == "table" then
+
+            local holder =
+                groupbox.BoxHolder
+                or groupbox.Holder
+
+            if typeof(holder) == "Instance"
+            and HolyGuildGuiHierarchyVisible(
+                holder
+            ) == true then
+
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function HolyGuildInviteAutomationEnabled()
+
+    return HOLY_GUILD_STATE.AutoAcceptInvites
+        == true
+        or HOLY_GUILD_STATE.AutoDeclineUntrusted
+            == true
+end
+
+function HolyGuildDashboardAwake()
+
+    if HolyGuildPerformanceModeEnabled()
+        ~= true then
+
+        return true
+    end
+
+    return HolyGuildTabIsOpen()
+end
+
+function HolyGuildBackgroundNeeded()
+
+    return HolyGuildDashboardAwake()
+        == true
+        or HolyGuildInviteAutomationEnabled()
+            == true
+        or HOLY_GUILD_RUNTIME.Busy.Action
+            == true
+end
+
+function HolyGuildDiscardPassiveRefreshes()
+
+    HOLY_GUILD_RUNTIME.UIRefreshQueued =
+        false
+
+    HOLY_GUILD_RUNTIME.PresenceRefreshQueued =
+        false
+
+    HOLY_GUILD_RUNTIME.RefreshQueued =
+        false
+
+    HOLY_GUILD_RUNTIME.SnapshotRefreshDueAt =
+        0
+end
+
+function HolyGuildRefreshCurrentPageData()
+
+    if HolyGuildDashboardAwake()
+        ~= true then
+
+        return false
+    end
+
+    local page =
+        HOLY_GUILD_STATE.Page
+
+    if page == "Overview"
+    or page == "Members" then
+
+        HolyGuildRefreshSnapshot(
+            true
+        )
+
+        HolyGuildRefreshPresence(
+            true
+        )
+
+    elseif page == "Invites" then
+
+        if HOLY_GUILD_STATE.Snapshot
+            == nil then
+
+            HolyGuildRefreshSnapshot(
+                true
+            )
+        end
+
+        HolyGuildRefreshInvites(
+            true
+        )
+
+    elseif page == "Contest" then
+
+        HolyGuildRefreshCompetition(
+            true
+        )
+
+        HolyGuildRefreshSnapshot(
+            true
+        )
+
+        HolyGuildRefreshPresence(
+            true
+        )
+
+    elseif page == "Leaderboard" then
+
+        HolyGuildRefreshLeaderboard(
+            true
+        )
+    end
+
+    return true
+end
+
+HOLY_GUILD_PERFORMANCE_BASE_REFRESH_UI =
+    HolyGuildRefreshUI
+
+function HolyGuildRefreshUI()
+
+    if HolyGuildDashboardAwake()
+        ~= true then
+
+        return false
+    end
+
+    HOLY_GUILD_PERFORMANCE_BASE_REFRESH_UI()
+
+    return true
+end
+
+HOLY_GUILD_PERFORMANCE_BASE_SET_STATUS =
+    HolyGuildSetStatus
+
+function HolyGuildSetStatus(status)
+
+    if HolyGuildDashboardAwake()
+        == true then
+
+        return HOLY_GUILD_PERFORMANCE_BASE_SET_STATUS(
+            status
+        )
+    end
+
+    HOLY_GUILD_STATE.Status =
+        tostring(
+            status
+            or "Ready"
+        )
+
+    return true
+end
+
+HOLY_GUILD_PERFORMANCE_BASE_INVITE_ACTIONS =
+    HolyGuildRefreshInviteActions
+
+function HolyGuildRefreshInviteActions()
+
+    if HolyGuildDashboardAwake()
+        ~= true then
+
+        return false
+    end
+
+    HOLY_GUILD_PERFORMANCE_BASE_INVITE_ACTIONS()
+
+    return true
+end
 
 function HolyGuildRefreshInfoPanels()
+
+    if HolyGuildDashboardAwake()
+        ~= true then
+
+        return false
+    end
+
+    if HolyGuildPerformanceModeEnabled()
+        == true then
+
+        local page =
+            HOLY_GUILD_STATE.Page
+
+        if page == "Overview" then
+
+            HolyGuildRefreshOverviewPanel()
+            HolyGuildRefreshInvitePreview()
+            HolyGuildRefreshIconPreview()
+
+        elseif page == "Members" then
+
+            HolyGuildRefreshMemberList()
+            HolyGuildRefreshSelectedMemberPanel()
+
+        elseif page == "Invites" then
+
+            HolyGuildRefreshIncomingInvitesPanel()
+            HolyGuildRefreshSelectedInvitePanel()
+            HolyGuildRefreshTrustedSendersPanel()
+            HolyGuildRefreshInviteActions()
+
+        elseif page == "Contest" then
+
+            HolyGuildRefreshContestPanel()
+            HolyGuildRefreshSessionPanel()
+            HolyGuildRefreshContestProgressPanel()
+
+        elseif page == "Leaderboard" then
+
+            HolyGuildRefreshLeaderboardPanel()
+            HolyGuildRefreshSelectedGuildPanel()
+        end
+
+        return true
+    end
 
     HolyGuildRefreshOverviewPanel()
     HolyGuildRefreshInvitePreview()
@@ -176576,7 +177499,72 @@ function HolyGuildRefreshInfoPanels()
     HolyGuildRefreshLeaderboardPanel()
     HolyGuildRefreshSelectedGuildPanel()
     HolyGuildRefreshInviteActions()
+
+    return true
 end
+
+HOLY_GUILD_RUNTIME.LastSessionObserveAt =
+    os.clock()
+
+task.spawn(function()
+
+    local token =
+        HOLY_GUILD_SESSION_WORKER_TOKEN
+
+    while HOLY_GUILD_SESSION_WORKER_TOKEN
+        == token do
+
+        task.wait(
+            5
+        )
+
+        if HOLY_GUILD_SESSION_WORKER_TOKEN
+            ~= token then
+
+            return
+        end
+
+        local runtime =
+            HOLY_GUILD_RUNTIME
+
+        local now =
+            os.clock()
+
+        if HolyGuildDashboardAwake()
+            == true
+        and now
+            - (
+                tonumber(
+                    runtime.LastSessionObserveAt
+                )
+                or 0
+            )
+            >= 60 then
+
+            runtime.LastSessionObserveAt =
+                now
+
+            pcall(
+                HolyGuildSessionObserve
+            )
+        end
+
+        if runtime.SessionSaveDirty
+            == true
+        and now
+            >= (
+                tonumber(
+                    runtime.SessionSaveDueAt
+                )
+                or 0
+            ) then
+
+            pcall(
+                HolyGuildSessionFlush
+            )
+        end
+    end
+end)
 
 function HolyGuildNormalizePage(value)
 
@@ -176716,6 +177704,13 @@ function HolyGuildSetPage(value)
         or 0
 
     if HOLY_GUILD_RUNTIME.Running == true
+    and (
+        type(
+            HolyGuildDashboardAwake
+        ) ~= "function"
+        or HolyGuildDashboardAwake()
+            == true
+    )
     and previousPage ~= page
     and os.clock() - lastRefresh >= 8 then
 
@@ -176817,9 +177812,16 @@ function HolyGuildStart()
             connection =
             pcall(function()
 
-                return tickSignal:Connect(
-                    HolyGuildHandleTickUpdate
-                )
+                return tickSignal:Connect(function(...)
+
+                    if HolyGuildDashboardAwake()
+                        == true then
+
+                        HolyGuildHandleTickUpdate(
+                            ...
+                        )
+                    end
+                end)
             end)
 
         if connected == true
@@ -176856,9 +177858,13 @@ function HolyGuildStart()
 
                 return mailboxSignal:Connect(function(...)
 
-                    HolyGuildApplyMailboxUpdate(
-                        ...
-                    )
+                    if HolyGuildBackgroundNeeded()
+                        == true then
+
+                        HolyGuildApplyMailboxUpdate(
+                            ...
+                        )
+                    end
                 end)
             end)
 
@@ -176879,7 +177885,11 @@ function HolyGuildStart()
     ] =
         Players.PlayerAdded:Connect(function()
 
-            HolyGuildRefreshPlayerDropdown()
+            if HolyGuildDashboardAwake()
+                == true then
+
+                HolyGuildRefreshPlayerDropdown()
+            end
         end)
 
     HOLY_GUILD_RUNTIME.Connections[
@@ -176895,114 +177905,307 @@ function HolyGuildStart()
                     nil
             end
 
-            HolyGuildRefreshPlayerDropdown()
+            if HolyGuildDashboardAwake()
+                == true then
+
+                HolyGuildRefreshPlayerDropdown()
+            end
         end)
+
+    local teleportConnected,
+        teleportConnection =
+        pcall(function()
+
+            return LocalPlayer.OnTeleport:Connect(function()
+
+                HolyGuildSessionSave(
+                    true
+                )
+            end)
+        end)
+
+    if teleportConnected == true
+    and teleportConnection then
+
+        HOLY_GUILD_RUNTIME.Connections[
+            #HOLY_GUILD_RUNTIME.Connections
+            + 1
+        ] =
+            teleportConnection
+    end
 
     task.spawn(function()
 
         while HOLY_GUILD_RUNTIME.Running == true
         and HOLY_GUILD_RUNTIME.Token == token do
 
-            HolyGuildProcessRefreshQueue()
+            if HolyGuildDashboardAwake()
+                == true then
 
-            task.wait(
-                0.10
+                HolyGuildProcessRefreshQueue()
+
+                task.wait(
+                    0.10
+                )
+
+            else
+
+                HolyGuildDiscardPassiveRefreshes()
+
+                task.wait(
+                    1
+                )
+            end
+        end
+    end)
+
+    task.spawn(function()
+
+        if HOLY_GUILD_RUNTIME.Running ~= true
+        or HOLY_GUILD_RUNTIME.Token ~= token then
+
+            return
+        end
+
+        if HolyGuildPerformanceModeEnabled()
+            ~= true then
+
+            HolyGuildRefreshAll(
+                false
+            )
+
+            HolyGuildRefreshInvites(
+                true
+            )
+
+            return
+        end
+
+        if HolyGuildTabIsOpen()
+            == true then
+
+            HolyGuildRefreshCurrentPageData()
+
+        elseif HolyGuildInviteAutomationEnabled()
+            == true then
+
+            local now =
+                os.clock()
+
+            if HOLY_GUILD_STATE.AutoAcceptInvites
+                == true then
+
+                HOLY_GUILD_RUNTIME.LastBackgroundSnapshotAttemptAt =
+                    now
+
+                HolyGuildRefreshSnapshot(
+                    true
+                )
+            end
+
+            HOLY_GUILD_RUNTIME.LastBackgroundInviteAttemptAt =
+                now
+
+            HolyGuildRefreshInvites(
+                true
             )
         end
     end)
 
     task.spawn(function()
 
-        HolyGuildRefreshAll(
-            false
-        )
+        local tabWasOpen =
+            HolyGuildTabIsOpen()
 
-        HolyGuildRefreshInvites(
-            true
-        )
-    end)
-
-    task.spawn(function()
+        HOLY_GUILD_RUNTIME.GuildTabOpen =
+            tabWasOpen
 
         while HOLY_GUILD_RUNTIME.Running == true
         and HOLY_GUILD_RUNTIME.Token == token do
 
-            local currentPage =
-                HOLY_GUILD_STATE.Page
+            local tabOpen =
+                HolyGuildTabIsOpen()
 
-            if currentPage == "Contest" then
+            local performanceMode =
+                HolyGuildPerformanceModeEnabled()
 
-                HolyGuildRefreshContestPanel()
+            local dashboardAwake =
+                HolyGuildDashboardAwake()
 
-                HolyGuildRefreshSessionPanel()
+            if performanceMode == true
+            and tabOpen == true
+            and tabWasOpen ~= true then
 
-                HolyGuildRefreshContestProgressPanel()
-
-            elseif currentPage == "Invites"
-            and os.clock()
-                - (
-                    HOLY_GUILD_RUNTIME.LastInviteRefreshAt
-                    or 0
-                )
-                >= 8 then
+                HolyGuildRefreshUI()
 
                 task.spawn(function()
 
-                    HolyGuildRefreshInvites(
-                        true
-                    )
+                    HolyGuildRefreshCurrentPageData()
                 end)
             end
 
-            local refreshInterval =
-                currentPage == "Contest"
-                and 60
-                or 180
+            tabWasOpen =
+                tabOpen
 
-            local timeSinceContestRefresh =
-                os.clock()
-                - (
-                    tonumber(
-                        HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt
+            HOLY_GUILD_RUNTIME.GuildTabOpen =
+                tabOpen
+
+            if dashboardAwake == true then
+
+                local currentPage =
+                    HOLY_GUILD_STATE.Page
+
+                if currentPage == "Contest" then
+
+                    HolyGuildRefreshContestPanel()
+                    HolyGuildRefreshSessionPanel()
+                    HolyGuildRefreshContestProgressPanel()
+
+                elseif currentPage == "Invites"
+                and os.clock()
+                    - (
+                        HOLY_GUILD_RUNTIME.LastInviteRefreshAt
+                        or 0
                     )
-                    or 0
-                )
+                    >= 8
+                and HOLY_GUILD_RUNTIME.Busy.Invites
+                    ~= true then
 
-            local competitionBusy =
-                HOLY_GUILD_RUNTIME.Busy.All == true
-                or HOLY_GUILD_RUNTIME.Busy.Competition == true
-                or HOLY_GUILD_RUNTIME.Busy.Snapshot == true
-                or HOLY_GUILD_RUNTIME.Busy.Leaderboard == true
+                    task.spawn(function()
 
-            if timeSinceContestRefresh
-                >= refreshInterval
-            and competitionBusy ~= true then
-
-                HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt =
-                    os.clock()
-
-                task.spawn(function()
-
-                    if HolyGuildRefreshCompetition(
-                        true
-                    ) then
-
-                        HolyGuildRefreshSnapshot(
+                        HolyGuildRefreshInvites(
                             true
                         )
+                    end)
+                end
 
-                        if HOLY_GUILD_STATE.Page
-                            == "Contest" then
+                local refreshInterval =
+                    currentPage == "Contest"
+                    and 60
+                    or 180
 
-                            HolyGuildRefreshLeaderboard(
+                local timeSinceContestRefresh =
+                    os.clock()
+                    - (
+                        tonumber(
+                            HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt
+                        )
+                        or 0
+                    )
+
+                local competitionBusy =
+                    HOLY_GUILD_RUNTIME.Busy.All == true
+                    or HOLY_GUILD_RUNTIME.Busy.Competition
+                        == true
+                    or HOLY_GUILD_RUNTIME.Busy.Snapshot
+                        == true
+                    or HOLY_GUILD_RUNTIME.Busy.Leaderboard
+                        == true
+
+                local competitionNeeded =
+                    performanceMode ~= true
+                    or currentPage == "Contest"
+
+                if competitionNeeded == true
+                and timeSinceContestRefresh
+                    >= refreshInterval
+                and competitionBusy ~= true then
+
+                    HOLY_GUILD_RUNTIME.LastCompetitionRefreshAt =
+                        os.clock()
+
+                    task.spawn(function()
+
+                        if HolyGuildRefreshCompetition(
+                            true
+                        ) then
+
+                            HolyGuildRefreshSnapshot(
                                 true
                             )
-                        end
-                    end
-                end)
-            end
 
-            HolyGuildRunInviteAutomation()
+                            if HOLY_GUILD_STATE.Page
+                                == "Contest" then
+
+                                HolyGuildRefreshLeaderboard(
+                                    true
+                                )
+                            end
+                        end
+                    end)
+                end
+
+                HolyGuildRunInviteAutomation()
+
+            else
+
+                HolyGuildDiscardPassiveRefreshes()
+
+                if HolyGuildInviteAutomationEnabled()
+                    == true then
+
+                    local now =
+                        os.clock()
+
+                    if HOLY_GUILD_STATE.AutoAcceptInvites
+                        == true
+                    and HOLY_GUILD_RUNTIME.Busy.Snapshot
+                        ~= true
+                    and now
+                        - (
+                            tonumber(
+                                HOLY_GUILD_RUNTIME.LastBackgroundSnapshotAttemptAt
+                            )
+                            or 0
+                        )
+                        >= (
+                            (
+                                tonumber(
+                                    HOLY_GUILD_RUNTIME.LastSnapshotAt
+                                )
+                                or 0
+                            )
+                            > 0
+                            and 180
+                            or 15
+                        ) then
+
+                        HOLY_GUILD_RUNTIME.LastBackgroundSnapshotAttemptAt =
+                            now
+
+                        task.spawn(function()
+
+                            HolyGuildRefreshSnapshot(
+                                true
+                            )
+                        end)
+                    end
+
+                    if HOLY_GUILD_RUNTIME.Busy.Invites
+                        ~= true
+                    and now
+                        - (
+                            tonumber(
+                                HOLY_GUILD_RUNTIME.LastBackgroundInviteAttemptAt
+                            )
+                            or 0
+                        )
+                        >= 15 then
+
+                        HOLY_GUILD_RUNTIME.LastBackgroundInviteAttemptAt =
+                            now
+
+                        task.spawn(function()
+
+                            HolyGuildRefreshInvites(
+                                true
+                            )
+                        end)
+                    end
+
+                    HolyGuildRunInviteAutomation()
+                end
+            end
 
             task.wait(
                 1
@@ -183893,7 +185096,9 @@ local Window =
 
             TabSwitch =
                 HOLY_DEV_UI_STATE.InterfaceAnimations
-                ~= false,
+                ~= false
+                and HolyLowEndModeEnabled()
+                    ~= true,
 
             Groupbox = false,
             Dropdown = false,
@@ -207918,7 +209123,10 @@ task.spawn(function()
             break
         end
 
-        if HOLY_SHOP_STATE.AuctionWatchlistUIDirty == true then
+        if HolyPerformancePanelActive(
+            ShopAuctionWatchlistBox
+        ) == true
+        and HOLY_SHOP_STATE.AuctionWatchlistUIDirty == true then
 
             local forceRebuild =
                 HOLY_SHOP_STATE
@@ -211314,7 +212522,9 @@ SettingsUIBox:AddToggle(
             ToggleWindow = false,
 
             TabSwitch =
-                HOLY_DEV_UI_STATE.InterfaceAnimations,
+                HOLY_DEV_UI_STATE.InterfaceAnimations
+                and HolyLowEndModeEnabled()
+                    ~= true,
 
             Groupbox = false,
             Dropdown = false,
@@ -211487,7 +212697,7 @@ SettingsPerformanceBox:AddToggle(
 
             TabSwitch =
                 HOLY_DEV_UI_STATE.InterfaceAnimations ~= false
-                and HOLY_DEV_UI_STATE.LowEndMode ~= true,
+                and HolyLowEndModeEnabled() ~= true,
 
             Groupbox = false,
             Dropdown = false,
